@@ -195,13 +195,25 @@ fn dispatch(input: &str, args: &[&str]) -> String {
     }
 
     // Format accumulated results
-    if results.is_empty() {
+    let response = if results.is_empty() {
         ok_response("\"OK\"")
     } else if results.len() == 1 {
         ok_response(&results[0])
     } else {
         ok_response(&format!("[{}]", results.join(",")))
+    };
+
+    // Guard: Arma output buffer is ~10KB. If the response exceeds it, the
+    // engine would silently truncate. Return an error instead so the caller
+    // knows to use LIMIT/OFFSET for pagination.
+    if response.len() > (OUTPUT_BUF_SIZE.saturating_sub(64)) as usize {
+        return error_response(
+            ErrorCode::Internal,
+            "Result exceeds output buffer (10KB). Use LIMIT/OFFSET to paginate.",
+        );
     }
+
+    response
 }
 
 /// Split SQL by semicolons, respecting string literals.
@@ -413,5 +425,35 @@ mod tests {
     fn dispatch_version() {
         let result = dispatch("version", &[]);
         assert!(result.contains("0.1.0"));
+    }
+
+    #[test]
+    fn dispatch_large_result_truncation_guard() {
+        // Insert enough rows to exceed the 10KB output buffer
+        dispatch(
+            "CREATE TABLE buf_test (id STRING PRIMARY KEY, data STRING)",
+            &[],
+        );
+        let big_str = "x".repeat(500);
+        for i in 0..25 {
+            let sql = format!(
+                "INSERT INTO buf_test VALUES ('k{i}', '{big_payload}')",
+                i = i,
+                big_payload = big_str
+            );
+            dispatch(&sql, &[]);
+        }
+        // SELECT all rows should trigger the overflow guard
+        let result = dispatch("SELECT * FROM buf_test", &[]);
+        assert!(
+            result.contains("ERR_INTERNAL"),
+            "expected overflow error, got: {}",
+            result
+        );
+        assert!(
+            result.contains("LIMIT/OFFSET"),
+            "expected pagination hint, got: {}",
+            result
+        );
     }
 }

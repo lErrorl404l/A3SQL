@@ -244,7 +244,6 @@ act --list           # List all jobs
 ```
 a3db/
 ├── Cargo.toml                  # Workspace → extension/
-├── hemtt.toml                  # HEMTT pre-v1 compat config
 ├── extension/                  # Rust extension crate (cdylib + rlib)
 │   ├── Cargo.toml
 │   ├── .cargo/config.toml      # Cross-compilation linkers
@@ -272,6 +271,7 @@ a3db/
 │       ├── script_component.hpp
 │       ├── fn_init.sqf
 │       ├── fn_execute.sqf
+│       ├── fn_parseResult.sqf
 │       ├── fn_loadJSON.sqf
 │       ├── fn_dumpSQL.sqf
 │       └── $PBOPREFIX$
@@ -284,11 +284,17 @@ a3db/
 │       └── xeh/
 │           └── script_xeh.hpp
 ├── .hemtt/
-│   ├── project.toml            # HEMTT v1 build config
-│   └── lints.toml              # Lint rules
+│   └── project.toml            # HEMTT v1 build config
 ├── .github/workflows/ci.yml    # GitHub Actions CI/CD
 ├── mod.cpp                     # Mod definition (name, logo, etc.)
 ├── meta.cpp                    # Steam Workshop metadata (publishedid)
+├── tools/                      # Development utility scripts
+│   ├── build_current_addon.py
+│   ├── config_style_checker.py
+│   ├── getExtensionHash.py
+│   ├── search_privates.py
+│   ├── search_unused_privates.py
+│   └── sqfvmChecker.py
 └── README.md
 ```
 
