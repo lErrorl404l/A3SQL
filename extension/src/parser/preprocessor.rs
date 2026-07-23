@@ -9,8 +9,6 @@
 ///
 /// The entire `left %% right` span is replaced, including the left operand.
 /// No duplicate text remains.
-
-/// Preprocess a3db SQL for standard sqlparser parsing.
 ///
 /// Finds each `%%` operator outside string literals and rewrites
 /// `left %% right` → `fuzzy_match(left,right)`.
@@ -18,11 +16,7 @@ pub fn preprocess(sql: &str) -> String {
     let mut result = sql.to_string();
     let mut search_start = 0;
 
-    loop {
-        let Some(abs_pos) = find_unescaped_pct(&result, search_start) else {
-            break;
-        };
-
+    while let Some(abs_pos) = find_unescaped_pct(&result, search_start) {
         // ── Left operand (handles identifiers, function calls, parens) ─
         let before = &result[..abs_pos];
         let before_trimmed = before.trim_end();
@@ -106,6 +100,41 @@ fn find_unescaped_pct(s: &str, start: usize) -> Option<usize> {
     }
 
     None
+}
+
+/// Scan backward from `end` to find the start of the left operand of `%%`.
+/// Handles identifiers, dotted paths, and parenthesized expressions (function calls).
+fn find_left_operand_start(text: &str) -> usize {
+    let bytes = text.as_bytes();
+    let mut pos = text.len();
+    let mut paren_depth = 0u32;
+
+    while pos > 0 {
+        let c = bytes[pos - 1] as char;
+
+        if c == ')' {
+            paren_depth += 1;
+            pos -= 1;
+        } else if c == '(' {
+            if paren_depth > 0 {
+                paren_depth -= 1;
+                pos -= 1;
+            } else {
+                // Unmatched '(' shouldn't normally happen, but stop here if it does
+                break;
+            }
+        } else if paren_depth > 0 {
+            // Inside parentheses — consume any char
+            pos -= 1;
+        } else if c.is_alphanumeric() || c == '_' || c == '.' {
+            pos -= 1;
+        } else {
+            // Hit a boundary (whitespace, operator, comma, etc.) at depth 0
+            break;
+        }
+    }
+
+    pos
 }
 
 #[cfg(test)]
@@ -218,39 +247,4 @@ mod tests {
             "WHERE fuzzy_match(COALESCE(a,b,c),'x')"
         );
     }
-}
-
-/// Scan backward from `end` to find the start of the left operand of `%%`.
-/// Handles identifiers, dotted paths, and parenthesized expressions (function calls).
-fn find_left_operand_start(text: &str) -> usize {
-    let bytes = text.as_bytes();
-    let mut pos = text.len();
-    let mut paren_depth = 0u32;
-
-    while pos > 0 {
-        let c = bytes[pos - 1] as char;
-
-        if c == ')' {
-            paren_depth += 1;
-            pos -= 1;
-        } else if c == '(' {
-            if paren_depth > 0 {
-                paren_depth -= 1;
-                pos -= 1;
-            } else {
-                // Unmatched '(' shouldn't normally happen, but stop here if it does
-                break;
-            }
-        } else if paren_depth > 0 {
-            // Inside parentheses — consume any char
-            pos -= 1;
-        } else if c.is_alphanumeric() || c == '_' || c == '.' {
-            pos -= 1;
-        } else {
-            // Hit a boundary (whitespace, operator, comma, etc.) at depth 0
-            break;
-        }
-    }
-
-    pos
 }

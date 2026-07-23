@@ -1,4 +1,0 @@
-# HEMTT pre-v1 compat (v1 config in .hemtt/project.toml)
-name = "a3db"
-prefix = "a3db"
-author = "ABE Team"

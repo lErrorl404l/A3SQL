@@ -359,16 +359,16 @@ impl Table {
 
     /// Type-check: can `val` be stored in a column of type `col_type`?
     fn type_match(col_type: &ColumnType, val: &DbValue) -> bool {
-        match (col_type, val) {
-            (_, DbValue::Null) => true,
-            (ColumnType::Bool, DbValue::Bool(_)) => true,
-            (ColumnType::Int, DbValue::Int(_)) => true,
-            (ColumnType::Float, DbValue::Float(_)) => true,
-            (ColumnType::String, DbValue::String(_)) => true,
-            (ColumnType::Strings, DbValue::Strings(_)) => true,
-            (ColumnType::Floats, DbValue::Floats(_)) => true,
-            _ => false,
-        }
+        matches!(
+            (col_type, val),
+            (_, DbValue::Null)
+                | (ColumnType::Bool, DbValue::Bool(_))
+                | (ColumnType::Int, DbValue::Int(_))
+                | (ColumnType::Float, DbValue::Float(_))
+                | (ColumnType::String, DbValue::String(_))
+                | (ColumnType::Strings, DbValue::Strings(_))
+                | (ColumnType::Floats, DbValue::Floats(_))
+        )
     }
 
     // ── Trigram fuzzy matching ───────────────────────────────────────
