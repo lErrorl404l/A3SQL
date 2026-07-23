@@ -8,7 +8,6 @@ parameters = [
     "-noSplash",
     "-showScriptErrors",
     "-debug",
-    "-filePatching",
     "-world=VR",
 ]
 executable = "arma3_x64"
