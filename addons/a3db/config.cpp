@@ -17,7 +17,6 @@ class CfgFunctions {
             file = QPATHTO_FOLDER(a3db);
             class init {};
             class execute {};
-            class parseResult {};
             class loadJSON {};
             class dumpSQL {};
         };

@@ -6,8 +6,12 @@
     #define COMPONENT_BEAUTIFIED A3DB_Main
 #endif
 
+#ifndef MAINPREFIX
 #define MAINPREFIX z
+#endif
+#ifndef PREFIX
 #define PREFIX a3db
+#endif
 
 #include "script_version.hpp"
 

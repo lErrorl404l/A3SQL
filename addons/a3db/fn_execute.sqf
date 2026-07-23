@@ -7,5 +7,7 @@ params [
 
 if (_sql isEqualTo "") exitWith { ["ERROR", "Empty SQL"] };
 
-private _result = _extension callExtension _sql;
-[_result] call a3db_fnc_parseResult
+private _response = _extension callExtension _sql;
+if (_response isEqualTo "") exitWith { [0, "", []] };
+
+_response call CBA_fnc_parseJSON
