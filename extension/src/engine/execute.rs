@@ -298,7 +298,7 @@ fn exec_select_joins(query: &Query, select: &Select, db: &mut Database) -> Resul
 
     for twj in &select.from {
         let (n, t) = resolve_table_factor(&twj.relation, db)?;
-        let r: Vec<Vec<DbValue>> = t.rows.iter().map(|r| r.clone()).collect();
+        let r: Vec<Vec<DbValue>> = t.rows.to_vec();
         let c = t.columns.len();
         tbls.push(Tbl {
             name: n.clone(),
@@ -310,7 +310,7 @@ fn exec_select_joins(query: &Query, select: &Select, db: &mut Database) -> Resul
         abs += c;
         for j in &twj.joins {
             let (jn, jt) = resolve_table_factor(&j.relation, db)?;
-            let jr: Vec<Vec<DbValue>> = jt.rows.iter().map(|r| r.clone()).collect();
+            let jr: Vec<Vec<DbValue>> = jt.rows.to_vec();
             let jc = jt.columns.len();
             tbls.push(Tbl {
                 name: jn.clone(),
@@ -326,16 +326,16 @@ fn exec_select_joins(query: &Query, select: &Select, db: &mut Database) -> Resul
     // ── Build flat column map ───────────────────────────────────────
     let mut col_map: HashMap<String, usize> = HashMap::new();
     let mut header: Vec<String> = Vec::new();
-    for ti in 0..tbls.len() {
+    for tbl in &tbls {
         let tn = db
-            .get_table(&tbls[ti].name)
+            .get_table(&tbl.name)
             .map_err(|e| format!("JOIN: {}", e))?
             .clone();
         for (ci, col) in tn.columns.iter().enumerate() {
-            let p = tbls[ti].start + ci;
-            col_map.insert(format!("{}.{}", tbls[ti].name, col.name), p);
+            let p = tbl.start + ci;
+            col_map.insert(format!("{}.{}", tbl.name, col.name), p);
             col_map.insert(col.name.clone(), p);
-            header.push(format!("{}.{}", tbls[ti].name, col.name));
+            header.push(format!("{}.{}", tbl.name, col.name));
         }
     }
 
@@ -361,11 +361,12 @@ fn exec_select_joins(query: &Query, select: &Select, db: &mut Database) -> Resul
     // ── Generate combined rows ──────────────────────────────────────
     let mut cidx: Vec<Vec<usize>> = (0..tbls[0].rows.len()).map(|i| vec![i]).collect();
     let no_constraint = JoinConstraint::None;
+    let joins = &select.from[0].joins;
 
-    for ti in 1..tbls.len() {
+    for (ti, tbl) in tbls.iter().enumerate().skip(1) {
         // Get the join operator for this table index
-        let con = if ti <= select.from[0].joins.len() {
-            let join = &select.from[0].joins[ti - 1];
+        let con = if ti <= joins.len() {
+            let join = &joins[ti - 1];
             match &join.join_operator {
                 JoinOperator::Inner(c)
                 | JoinOperator::LeftOuter(c)
@@ -376,16 +377,13 @@ fn exec_select_joins(query: &Query, select: &Select, db: &mut Database) -> Resul
         } else {
             &no_constraint
         };
-        let left = ti <= select.from[0].joins.len()
-            && matches!(
-                select.from[0].joins[ti - 1].join_operator,
-                JoinOperator::LeftOuter(_)
-            );
+        let left =
+            ti <= joins.len() && matches!(joins[ti - 1].join_operator, JoinOperator::LeftOuter(_));
 
         let mut next = Vec::new();
         for ls in &cidx {
             let mut hit = false;
-            for ri in 0..tbls[ti].rows.len() {
+            for ri in 0..tbl.rows.len() {
                 let mut cs = ls.clone();
                 cs.push(ri);
                 let f = bf(&cs);
@@ -517,7 +515,7 @@ fn eval_expr_on_flat_row(
         Expr::Nested(inner) => eval_expr_on_flat_row(inner, row, col_map),
         Expr::Function(func) => {
             let name = func.name.to_string().to_lowercase();
-            if name == "fuzzy_match" || name == "fuzzy_match" {
+            if name == "fuzzy_match" {
                 // Evaluate args against the flat row
                 let args = match &func.args {
                     FunctionArguments::List(list) => &list.args,
@@ -1005,7 +1003,7 @@ fn exec_delete(del: &sqlparser::ast::Delete, db: &mut Database) -> Result<String
 
     // Clone col_index to avoid borrow conflict with table.delete()
     let col_idx = db.get_table(&table_name)?.col_index.clone();
-    let pred = del.selection.as_ref().map(|e| e.clone());
+    let pred = del.selection.clone();
 
     let table = db.get_table_mut(&table_name)?;
     let count = match pred {
