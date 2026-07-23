@@ -12,7 +12,7 @@ virtual_paths = [
     "P:/a3|/a3",  # "{}|/a3".format(os.path.join(addon_base_path, "include", "a3")),
     "P:/a3|/A3",
     "P:/x/cba|/x/cba",
-    "{}|/z/ace".format(addon_base_path),
+    "{}|/z/a3db".format(addon_base_path),
 ]
 
 
@@ -24,12 +24,17 @@ def get_files_to_process(basePath):
                 if file.endswith(".inc.sqf"):
                     continue
                 skipPreprocessing = False
-                for addonTomlPath in [os.path.join(root, "addon.toml"), os.path.join(os.path.dirname(root), "addon.toml")]:
+                for addonTomlPath in [
+                    os.path.join(root, "addon.toml"),
+                    os.path.join(os.path.dirname(root), "addon.toml"),
+                ]:
                     if os.path.isfile(addonTomlPath):
                         with open(addonTomlPath, "rb") as f:
                             tomlFile = tomllib.load(f)
                             try:
-                                skipPreprocessing = tomlFile.get('tools')['sqfvm_skipConfigChecks']
+                                skipPreprocessing = tomlFile.get("tools")[
+                                    "sqfvm_skipConfigChecks"
+                                ]
                             except:
                                 pass
                 if file == "config.cpp" and skipPreprocessing:
@@ -68,8 +73,17 @@ def process_file(filePath, skipA3Warnings=True, skipPragmaHemtt=True):
             if line.startswith("[ERR]"):
                 fileHasError = True
             if not (
-                (skipA3Warnings and line.startswith("[WRN]") and ("a3/" in line) and (("Unexpected IFDEF" in line) or ("defined twice" in line)))
-                or (skipPragmaHemtt and line.startswith("[WRN]") and ("Unknown pragma instruction 'hemtt'" in line))
+                (
+                    skipA3Warnings
+                    and line.startswith("[WRN]")
+                    and ("a3/" in line)
+                    and (("Unexpected IFDEF" in line) or ("defined twice" in line))
+                )
+                or (
+                    skipPragmaHemtt
+                    and line.startswith("[WRN]")
+                    and ("Unknown pragma instruction 'hemtt'" in line)
+                )
             ):
                 print("  {}".format(line))
     return fileHasError

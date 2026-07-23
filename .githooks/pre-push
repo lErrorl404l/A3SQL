@@ -1,0 +1,20 @@
+#!/bin/bash
+# a3db pre-push hook — full test suite
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+FAILED=0
+
+echo "→ cargo test"
+cargo test --manifest-path "$ROOT/extension/Cargo.toml" || FAILED=1
+
+echo "→ cargo build --release"
+cargo build --release --manifest-path "$ROOT/extension/Cargo.toml" || FAILED=1
+
+if [ "$FAILED" -ne 0 ]; then
+    echo ""
+    echo "✗ pre-push hook failed. Fix issues above or use --no-verify to skip."
+    exit 1
+fi
+
+echo "✓ pre-push checks passed"

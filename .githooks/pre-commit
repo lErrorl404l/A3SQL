@@ -1,0 +1,27 @@
+#!/bin/bash
+# a3db pre-commit hook — fast checks only
+set -euo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)"
+FAILED=0
+
+echo "→ cargo fmt --check"
+cargo fmt --manifest-path "$ROOT/extension/Cargo.toml" --check || FAILED=1
+
+echo "→ cargo clippy --all-targets -D warnings"
+cargo clippy --manifest-path "$ROOT/extension/Cargo.toml" --all-targets -- -D warnings || FAILED=1
+
+if command -v hemtt &>/dev/null; then
+    echo "→ hemtt check"
+    hemtt check 2>/dev/null || FAILED=1
+else
+    echo "⚠  hemtt not found, skipping"
+fi
+
+if [ "$FAILED" -ne 0 ]; then
+    echo ""
+    echo "✗ pre-commit hook failed. Fix issues above or use --no-verify to skip."
+    exit 1
+fi
+
+echo "✓ pre-commit checks passed"
