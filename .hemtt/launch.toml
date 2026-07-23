@@ -11,7 +11,7 @@ parameters = [
     "-world=VR",
 ]
 executable = "arma3_x64"
-file_patching = true
+file_patching = false
 
 [test]
 extends = "default"
