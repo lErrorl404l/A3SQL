@@ -5,9 +5,8 @@ author = "ABE Team"
 
 [files]
 include = [
-    "extension/target/release/liba3db*.so",
-    "extension/target/release/a3db_*.so",
-    "extension/target/release/a3db_*.dll",
+    "a3db_x64.dll",
+    "a3db_x64.so",
     "mod.cpp",
     "docs/README.md",
     "meta.cpp",
