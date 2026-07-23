@@ -1,0 +1,8 @@
+#define COMPONENT a3db
+#define COMPONENT_BEAUTIFIED A3DB
+#include "\z\a3db\addons\main\script_mod.hpp"
+
+// #define DEBUG_MODE_FULL
+// #define DISABLE_COMPILE_CACHE
+
+#include "\x\cba\addons\main\script_macros.hpp"

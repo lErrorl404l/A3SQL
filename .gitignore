@@ -1,0 +1,29 @@
+# Rust
+target/
+extension/Cargo.lock
+Cargo.lock
+
+# HEMTT
+.hemttout
+*.cache
+*.biprivatekey
+*.hemttprivatekey
+
+# Arma
+*.pbo
+*.sqfc
+texHeaders.bin
+
+# Editor
+*.swp
+*.swo
+Thumbs.db
+
+# OpenCode session state
+.omo/
+
+# Release artifacts
+@*
+*.zip
+release/
+releases/

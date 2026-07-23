@@ -1,0 +1,12 @@
+name = "A3DB";
+picture = "logo_a3db_ca.paa";
+actionName = "GitHub";
+action = "https://github.com/ABETeam/a3db";
+description = "A3DB - Arma 3 Database Engine";
+logo = "logo_a3db_ca.paa";
+logoOver = "logo_a3db_ca.paa";
+tooltip = "A3DB";
+tooltipOwned = "A3DB Owned";
+overview = "An embeddable SQL database engine for Arma 3 mods. Like SQLite for Arma.";
+author = "ABE Team";
+overviewPicture = "logo_a3db_ca.paa";
