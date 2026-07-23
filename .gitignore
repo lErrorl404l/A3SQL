@@ -22,6 +22,10 @@ Thumbs.db
 # OpenCode session state
 .omo/
 
+# Extension binary symlinks (created for hemtt launch)
+a3db_x64.dll
+a3db_x64.so
+
 # Release artifacts
 @*
 *.zip
