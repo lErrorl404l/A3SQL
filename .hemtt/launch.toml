@@ -2,7 +2,7 @@
 workshop = [
     "450814997", # CBA_A3
 ]
-mission = "test.VR"
+mission = "Z:/ext/Development/a3db/.hemtt/missions/test.VR/mission.sqm"
 parameters = [
     "-skipIntro",
     "-noSplash",
@@ -15,4 +15,4 @@ file_patching = false
 
 [test]
 extends = "default"
-mission = "test.VR"
+mission = "Z:/ext/Development/a3db/.hemtt/missions/test.VR/mission.sqm"
