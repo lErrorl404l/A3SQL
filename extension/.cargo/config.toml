@@ -1,0 +1,12 @@
+# a3db cross-compilation config
+#
+# These linkers are needed when building Windows targets on Linux CI runners.
+# On Ubuntu: sudo apt-get install mingw-w64
+
+[target.x86_64-pc-windows-gnu]
+linker = "x86_64-w64-mingw32-gcc"
+ar = "x86_64-w64-mingw32-gcc-ar"
+
+[target.i686-pc-windows-gnu]
+linker = "i686-w64-mingw32-gcc"
+ar = "i686-w64-mingw32-gcc-ar"
