@@ -1,0 +1,19 @@
+[default]
+workshop = [
+    "450814997", # CBA_A3
+]
+mission = "test.VR"
+parameters = [
+    "-skipIntro",
+    "-noSplash",
+    "-showScriptErrors",
+    "-debug",
+    "-filePatching",
+    "-world=empty",
+]
+executable = "arma3_x64"
+file_patching = true
+
+[test]
+extends = "default"
+mission = "test.VR"
