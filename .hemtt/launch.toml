@@ -9,6 +9,7 @@ parameters = [
     "-showScriptErrors",
     "-debug",
     "-filePatching",
+    "-world=VR",
 ]
 executable = "arma3_x64"
 file_patching = true
