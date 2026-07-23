@@ -8,6 +8,4 @@ params [
 if (_sql isEqualTo "") exitWith { ["ERROR", "Empty SQL"] };
 
 private _result = _extension callExtension _sql;
-_result call a3db_fnc_parseResult;
-
-_result // return
+[_result] call a3db_fnc_parseResult
