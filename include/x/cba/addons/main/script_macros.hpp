@@ -5,7 +5,9 @@
 #define INCLUDED_CBA_SCRIPT_MACROS
 
 #define ADDON COMPONENT
+#ifndef COMPONENT_NAME
 #define COMPONENT_NAME QUOTE(COMPONENT_BEAUTIFIED)
+#endif
 
 #define QUOTE(x) #x
 #define QQUOTE(x) QUOTE(x)
@@ -29,8 +31,10 @@
 
 #define VERSION_CONFIG version = VERSION; versionStr = QUOTE(VERSION); versionAr[] = {VERSION_MAJOR,VERSION_MINOR,VERSION_PATCH}
 
-// Path macros
+// Path macros — PREFIX set by script_mod.hpp or HEMTT auto-defines
+#ifndef PREFIX
 #define PREFIX a3db
+#endif
 #define DOUBLES_PREFIX(var1,var2) var1##_##var2
 #define QPATHTO_FOLDER(var) QUOTE(z\PREFIX\addons\var)
 #define QPATHTO_SYS(var) QUOTE(\z\PREFIX\addons\var)
