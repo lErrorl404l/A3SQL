@@ -1,12 +1,15 @@
 // a3db statement executor — interprets sqlparser AST against Database
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
+use sqlparser::ast::table_constraints::{ForeignKeyConstraint, TableConstraint};
 use sqlparser::ast::{
     BinaryOperator, ColumnOption, DataType, Expr, Function, FunctionArg, FunctionArgExpr, FunctionArguments,
     LimitClause, ObjectName, OrderByKind, Query, Select, SelectItem, SetExpr, Statement, TableFactor, TableWithJoins,
     UnaryOperator, Values,
 };
+
+use super::table::ForeignKeyInfo;
 
 use super::database::Database;
 use super::index::IndexType as A3IndexType;
@@ -197,6 +200,7 @@ fn exec_create_table(def: &sqlparser::ast::CreateTable, db: &mut Database) -> Re
 
     let mut columns: Vec<Column> = Vec::new();
     let mut has_pk = false;
+    let mut check_exprs: Vec<Expr> = Vec::new();
 
     for col_def in &def.columns {
         let col_name = col_def.name.value.to_lowercase();
@@ -249,7 +253,41 @@ fn exec_create_table(def: &sqlparser::ast::CreateTable, db: &mut Database) -> Re
     }
 
     // Table-level PRIMARY KEY constraints — Display-based detection
+    // Collect CHECK constraints from column-level options
+    for col_def in &def.columns {
+        for opt_def in &col_def.options {
+            if let ColumnOption::Check(check) = &opt_def.option {
+                check_exprs.push(*check.expr.clone());
+            }
+        }
+    }
+
+    // Collect FOREIGN KEY constraints from both column and table level
+    let mut foreign_keys: Vec<ForeignKeyInfo> = Vec::new();
+    let extract_fk = |fk: &ForeignKeyConstraint| -> ForeignKeyInfo {
+        ForeignKeyInfo {
+            local_column: fk.columns.first().map(|c| c.value.to_lowercase()).unwrap_or_default(),
+            foreign_table: fk.foreign_table.to_string().to_lowercase(),
+            foreign_column: fk
+                .referred_columns
+                .first()
+                .map(|c| c.value.to_lowercase())
+                .unwrap_or_default(),
+            on_delete: fk.on_delete.clone(),
+            on_update: fk.on_update.clone(),
+        }
+    };
+    for col_def in &def.columns {
+        for opt_def in &col_def.options {
+            if let ColumnOption::ForeignKey(fk) = &opt_def.option {
+                foreign_keys.push(extract_fk(fk));
+            }
+        }
+    }
     for constraint in &def.constraints {
+        if let TableConstraint::ForeignKey(fk) = constraint {
+            foreign_keys.push(extract_fk(fk));
+        }
         let text = format!("{}", constraint).to_uppercase();
         if text.contains("PRIMARY KEY (") {
             // Extract column name from display text: "PRIMARY KEY (col)"
@@ -268,7 +306,9 @@ fn exec_create_table(def: &sqlparser::ast::CreateTable, db: &mut Database) -> Re
         }
     }
 
-    let table = Table::new(table_name.clone(), columns)?;
+    let mut table = Table::new(table_name.clone(), columns)?;
+    table.check_constraints = check_exprs;
+    table.foreign_keys = foreign_keys;
     db.create_table(&table_name, table)?;
     Ok(format!("\"Table '{}' created\"", table_name))
 }
@@ -333,6 +373,20 @@ fn exec_insert(ins: &sqlparser::ast::Insert, db: &mut Database) -> Result<String
         None => return Err("INSERT must have a source".into()),
     };
 
+    // Pre-collect FOREIGN KEY lookup data (foreign table pk_sets) before mutable table borrow
+    let fk_lookups: Vec<(String, HashSet<String>)> = {
+        let self_table = db.get_table(&table_name)?;
+        self_table
+            .foreign_keys
+            .iter()
+            .filter_map(|fk| {
+                db.get_table(&fk.foreign_table)
+                    .ok()
+                    .map(|t| (fk.local_column.clone(), t.pk_set.clone()))
+            })
+            .collect()
+    };
+
     // Now we have the rows; borrow table for column mapping and insertion
     let table = db.get_table_mut(&table_name)?;
 
@@ -387,6 +441,31 @@ fn exec_insert(ins: &sqlparser::ast::Insert, db: &mut Database) -> Result<String
             if matches!(full_row[*ci], DbValue::Null) {
                 full_row[*ci] = DbValue::Int(table.next_auto_inc);
                 table.next_auto_inc += 1;
+            }
+        }
+
+        // Evaluate CHECK constraints
+        for check_expr in &table.check_constraints {
+            let check_val = eval_expr(check_expr, &full_row, &table.col_index)
+                .map_err(|e| format!("CHECK constraint error: {}", e))?;
+            if !is_truthy(&check_val) {
+                return Err(format!("CHECK constraint failed for row"));
+            }
+        }
+
+        // Validate FOREIGN KEY constraints using pre-collected pk_sets
+        for (local_col, ref_pks) in &fk_lookups {
+            if let Some(&col_idx) = table.col_index.get(local_col) {
+                let val = &full_row[col_idx];
+                if !matches!(val, DbValue::Null) {
+                    let pk_str = val.to_string().to_lowercase();
+                    if !ref_pks.contains(&pk_str) {
+                        return Err(format!(
+                            "FOREIGN KEY constraint: '{}' value '{}' not found in referenced table",
+                            local_col, pk_str
+                        ));
+                    }
+                }
             }
         }
 
@@ -1308,16 +1387,41 @@ fn exec_update(upd: &sqlparser::ast::Update, db: &mut Database) -> Result<String
         })
         .collect::<Result<Vec<_>, String>>()?;
 
-    let mut count = 0usize;
-    for i in indices {
-        for (col_idx, val_expr) in &assign_indices {
+    // Collect all assignments and validate CHECK constraints upfront
+    let mut updates: Vec<(usize, usize, DbValue)> = Vec::new();
+
+    for i in &indices {
+        for (col_ci, val_expr) in &assign_indices {
             let new_val = eval_literal_expr(val_expr)?;
-            table.update_cell(i, *col_idx, new_val);
+            updates.push((*i, *col_ci, new_val));
         }
-        count += 1;
     }
 
-    Ok(format!("\"Updated {} row(s)\"", count))
+    // Validate CHECK constraints for each updated row (drop table borrow first)
+    let validated_updates = {
+        let t = db.get_table(&table_name)?;
+        updates
+            .iter()
+            .filter_map(|(row_i, col_ci, val)| {
+                let mut row = t.rows[*row_i].clone();
+                row[*col_ci] = val.clone();
+                for expr in &t.check_constraints {
+                    let v = eval_expr(expr, &row, &t.col_index).ok()?;
+                    if !is_truthy(&v) {
+                        return Some(Err("CHECK constraint failed"));
+                    }
+                }
+                Some(Ok((*row_i, *col_ci, val.clone())))
+            })
+            .collect::<Result<Vec<(usize, usize, DbValue)>, &str>>()
+    }?;
+
+    let t = db.get_table_mut(&table_name)?;
+    for (row_i, col_ci, val) in &validated_updates {
+        t.update_cell(*row_i, *col_ci, val.clone());
+    }
+
+    Ok(format!("\"Updated {} row(s)\"", validated_updates.len()))
 }
 
 // ── DELETE ──────────────────────────────────────────────────────────────
@@ -1339,13 +1443,74 @@ fn exec_delete(del: &sqlparser::ast::Delete, db: &mut Database) -> Result<String
     let col_idx = db.get_table(&table_name)?.col_index.clone();
     let pred = del.selection.clone();
 
+    // Collect referencing tables with FK pointing to this table
+    let fk_refs: Vec<(String, usize)> = {
+        let names: Vec<&str> = db.table_names();
+        let mut refs = Vec::new();
+        for tn in names {
+            let t = db.get_table(tn);
+            if tn != table_name && t.is_ok() {
+                let t = t.unwrap();
+                for fk in &t.foreign_keys {
+                    if fk.foreign_table == table_name {
+                        if let Some(&ci) = t.col_index.get(&fk.foreign_column) {
+                            refs.push((tn.to_string(), ci));
+                        }
+                    }
+                }
+            }
+        }
+        refs
+    };
+
+    // Collect PK values of rows matched for deletion (needed for FK validation)
+    let deleted_pks: Vec<(usize, String)> = {
+        let pk_idx = db.get_table(&table_name)?.columns.iter().position(|c| c.primary_key);
+        match pk_idx {
+            Some(pi) => {
+                let t = db.get_table(&table_name)?;
+                match &pred {
+                    Some(expr) => t
+                        .rows
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, row)| eval_expr(expr, row, &col_idx).map(|v| is_truthy(&v)).unwrap_or(false))
+                        .map(|(i, row)| (i, row[pi].to_string().to_lowercase()))
+                        .collect(),
+                    None => t
+                        .rows
+                        .iter()
+                        .enumerate()
+                        .map(|(i, row)| (i, row[pi].to_string().to_lowercase()))
+                        .collect(),
+                }
+            }
+            None => Vec::new(),
+        }
+    };
+
+    // Validate FK before deleting
+    for (ref_table, ref_col_idx) in &fk_refs {
+        let t = db.get_table(ref_table)?;
+        let ref_pk_set: HashSet<String> = t
+            .rows
+            .iter()
+            .map(|row| row[*ref_col_idx].to_string().to_lowercase())
+            .collect();
+        for (_, pk_val) in &deleted_pks {
+            if ref_pk_set.contains(pk_val) {
+                return Err(format!(
+                    "FOREIGN KEY constraint violation: '{}' references '{}'",
+                    ref_table, pk_val
+                ));
+            }
+        }
+    }
+
     let table = db.get_table_mut(&table_name)?;
     let count = match pred {
         Some(expr) => table.delete(|row| eval_expr(&expr, row, &col_idx).map(|v| is_truthy(&v)).unwrap_or(false)),
-        None => {
-            // Clear using the index-aware delete with a catch-all predicate
-            table.delete(|_| true)
-        }
+        None => table.delete(|_| true),
     };
 
     Ok(format!("\"Deleted {} row(s)\"", count))
