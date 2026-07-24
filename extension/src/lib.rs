@@ -372,13 +372,8 @@ fn substitute_params(sql: &str, args: &[&str]) -> String {
                     // String arg: quote + escape inner quotes. Others: pass through.
                     if val.is_empty() {
                         result.push_str("''");
-                    // ponytail: non-string detection via heuristics — JSON, numbers, NULL pass raw
                     } else if val == "NULL" || val == "null" {
                         result.push_str("NULL");
-                    } else if val.starts_with('\'') && val.ends_with('\'') {
-                        // Already quoted (raw identifier/value)
-                        // ponytail: caller explicitly quoting, trust it
-                        result.push_str(val);
                     } else if val.parse::<i64>().is_ok() || val.parse::<f64>().is_ok() {
                         result.push_str(val);
                     } else if val == "true" || val == "false" {
@@ -1312,6 +1307,93 @@ mod tests {
             result.contains("LIMIT/OFFSET"),
             "expected pagination hint, got: {}",
             result
+        );
+    }
+
+    // ── Parameterised query tests ─────────────────────────────────────
+
+    #[test]
+    fn substitute_params_empty() {
+        assert_eq!(
+            substitute_params("SELECT * FROM t WHERE k = $1", &[]),
+            "SELECT * FROM t WHERE k = $1"
+        );
+    }
+
+    #[test]
+    fn substitute_params_string() {
+        assert_eq!(
+            substitute_params("SELECT * FROM t WHERE k = $1", &["hello"]),
+            "SELECT * FROM t WHERE k = 'hello'"
+        );
+    }
+
+    #[test]
+    fn substitute_params_string_escape_quote() {
+        assert_eq!(
+            substitute_params("SELECT * FROM t WHERE k = $1", &["it's"]),
+            "SELECT * FROM t WHERE k = 'it''s'"
+        );
+    }
+
+    #[test]
+    fn substitute_params_injection_attempt() {
+        // Previously the "already quoted" check would pass this through RAW
+        assert_eq!(
+            substitute_params("SELECT * FROM t WHERE k = $1", &["' OR '1'='1"]),
+            "SELECT * FROM t WHERE k = ''' OR ''1''=''1'"
+        );
+    }
+
+    #[test]
+    fn substitute_params_null() {
+        assert_eq!(
+            substitute_params("SELECT * FROM t WHERE k = $1", &["NULL"]),
+            "SELECT * FROM t WHERE k = NULL"
+        );
+    }
+
+    #[test]
+    fn substitute_params_int() {
+        assert_eq!(
+            substitute_params("SELECT * FROM t WHERE k = $1", &["42"]),
+            "SELECT * FROM t WHERE k = 42"
+        );
+    }
+
+    #[test]
+    fn substitute_params_float() {
+        assert_eq!(
+            substitute_params("SELECT * FROM t WHERE k = $1", &["3.14"]),
+            "SELECT * FROM t WHERE k = 3.14"
+        );
+    }
+
+    #[test]
+    fn substitute_params_bool() {
+        assert_eq!(
+            substitute_params("SELECT * FROM t WHERE k = $1", &["true"]),
+            "SELECT * FROM t WHERE k = true"
+        );
+    }
+
+    #[test]
+    fn substitute_params_multi() {
+        assert_eq!(
+            substitute_params("INSERT INTO t VALUES ($1, $2, $3)", &["a", "42", "hello"]),
+            "INSERT INTO t VALUES ('a', 42, 'hello')"
+        );
+    }
+
+    #[test]
+    fn substitute_params_respects_string_context() {
+        // Placeholders inside string literals should NOT be substituted
+        assert_eq!(
+            substitute_params(
+                "SELECT '$1' AS literal FROM t WHERE k = $2",
+                &["should_not_appear", "real"]
+            ),
+            "SELECT '$1' AS literal FROM t WHERE k = 'real'"
         );
     }
 }
