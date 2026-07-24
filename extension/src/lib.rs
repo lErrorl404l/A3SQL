@@ -1110,7 +1110,7 @@ mod tests {
 
     fn abi_call(input: &str) -> String {
         let cmd = std::ffi::CString::new(input).unwrap();
-        let mut out = vec![0u8; 10240];
+        let mut out = vec![0u8; 102400];
         unsafe {
             RVExtension(out.as_mut_ptr() as *mut c_char, out.len() as u32, cmd.as_ptr());
             std::ffi::CStr::from_ptr(out.as_ptr() as *const c_char)
@@ -1281,6 +1281,9 @@ mod tests {
         let (c, s, _) = validate_response(&r);
         assert_eq!(c, -1);
         assert!(s.starts_with("ERR_"));
+
+        // 11. cleanup
+        abi_call("DROP TABLE IF EXISTS resp_seq");
     }
 
     #[test]

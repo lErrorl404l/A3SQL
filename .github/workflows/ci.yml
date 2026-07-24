@@ -48,7 +48,7 @@ jobs:
       - name: Clippy
         run: cargo clippy --manifest-path extension/Cargo.toml --all-targets -- -D warnings
       - name: Run tests
-        run: cargo test --manifest-path extension/Cargo.toml
+        run: cargo test --manifest-path extension/Cargo.toml -- --test-threads=1
 
   build-linux:
     name: build ${{ matrix.target }}
