@@ -34,6 +34,7 @@ pub struct Column {
     pub primary_key: bool,
     pub not_null: bool,
     pub default: Option<DbValue>,
+    pub auto_increment: bool,
 }
 
 /// Runtime value stored in cells.

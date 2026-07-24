@@ -8,8 +8,8 @@ FAILED=0
 echo "→ cargo fmt --check"
 cargo fmt --manifest-path "$ROOT/extension/Cargo.toml" --check || FAILED=1
 
-echo "→ cargo clippy --all-targets -D warnings"
-cargo clippy --manifest-path "$ROOT/extension/Cargo.toml" --all-targets -- -D warnings || FAILED=1
+echo "→ cargo clippy --all-targets"
+cargo clippy --manifest-path "$ROOT/extension/Cargo.toml" --all-targets 2>&1 | grep -qE "(warning|error)" && FAILED=1 || true
 
 if command -v hemtt &>/dev/null; then
     echo "→ hemtt check"

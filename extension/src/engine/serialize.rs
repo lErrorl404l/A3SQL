@@ -116,6 +116,7 @@ pub fn import_json(table_name: &str, json_str: &str, db: &mut Database) -> Resul
                     primary_key,
                     not_null: obj.get("not_null").and_then(|v| v.as_bool()).unwrap_or(false),
                     default: None,
+                    auto_increment: false,
                 });
             }
             cols
@@ -229,6 +230,7 @@ pub fn import_csv(table_name: &str, csv_str: &str, db: &mut Database) -> Result<
             primary_key: false,
             not_null: false,
             default: None,
+            auto_increment: false,
         })
         .collect();
 
@@ -552,6 +554,7 @@ fn read_bin_table(data: &[u8], mut pos: usize, db: &mut Database) -> Result<usiz
             primary_key,
             not_null: false,
             default: None,
+            auto_increment: false,
         });
     }
 
@@ -733,6 +736,7 @@ mod tests {
                 primary_key: true,
                 not_null: false,
                 default: None,
+                auto_increment: false,
             },
             Column {
                 name: "val".into(),
@@ -740,6 +744,7 @@ mod tests {
                 primary_key: false,
                 not_null: false,
                 default: None,
+                auto_increment: false,
             },
         ];
         let mut table = Table::new("items".into(), cols).unwrap();

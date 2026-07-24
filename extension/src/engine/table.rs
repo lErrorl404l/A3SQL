@@ -24,6 +24,8 @@ pub struct Table {
     pub(crate) pk_set: HashSet<String>,
     /// Secondary indices (BTREE, TRIGRAM) created via CREATE INDEX.
     pub(crate) indices: Vec<(IndexMeta, IndexImpl)>,
+    /// Next AUTO_INCREMENT counter value.
+    pub(crate) next_auto_inc: i64,
 }
 
 impl Table {
@@ -46,6 +48,7 @@ impl Table {
             col_index,
             pk_set: HashSet::new(),
             indices: Vec::new(),
+            next_auto_inc: 1,
         })
     }
 
@@ -298,6 +301,7 @@ impl Table {
             primary_key: false,
             not_null: false,
             default: None,
+            auto_increment: false,
         });
         for row in &mut self.rows {
             row.push(DbValue::Null);
@@ -533,6 +537,7 @@ mod tests {
                 primary_key: true,
                 not_null: false,
                 default: None,
+                auto_increment: false,
             },
             Column {
                 name: "name".into(),
@@ -540,6 +545,7 @@ mod tests {
                 primary_key: false,
                 not_null: false,
                 default: None,
+                auto_increment: false,
             },
             Column {
                 name: "value".into(),
@@ -547,6 +553,7 @@ mod tests {
                 primary_key: false,
                 not_null: false,
                 default: None,
+                auto_increment: false,
             },
         ];
         let mut t = Table::new("test".into(), cols).unwrap();
@@ -573,6 +580,7 @@ mod tests {
             primary_key: false,
             not_null: false,
             default: None,
+            auto_increment: false,
         }];
         assert!(Table::new("t".into(), cols).is_ok());
     }
@@ -591,6 +599,7 @@ mod tests {
             primary_key: true,
             not_null: false,
             default: None,
+            auto_increment: false,
         }];
         let mut t = Table::new("t".into(), cols).unwrap();
         t.insert(vec![DbValue::String("x".into())]).unwrap();
