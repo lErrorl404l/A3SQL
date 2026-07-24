@@ -1297,10 +1297,13 @@ fn has_group_by(select: &Select) -> bool {
 /// Check if SELECT projection contains aggregate functions.
 fn has_aggregate(projection: &[SelectItem]) -> bool {
     for item in projection {
-        if let SelectItem::UnnamedExpr(expr) = item {
-            if contains_aggregate(expr) {
-                return true;
-            }
+        let expr = match item {
+            SelectItem::UnnamedExpr(e) => e,
+            SelectItem::ExprWithAlias { expr, .. } => expr,
+            _ => continue,
+        };
+        if contains_aggregate(expr) {
+            return true;
         }
     }
     false
@@ -1401,6 +1404,7 @@ fn compute_aggregates(
     for item in projection {
         match item {
             SelectItem::UnnamedExpr(expr) => header.push(projection_expr_name(expr)),
+            SelectItem::ExprWithAlias { alias, .. } => header.push(alias.value.to_string()),
             _ => return Err("Unsupported SELECT item in aggregate query".into()),
         }
     }
@@ -1411,11 +1415,15 @@ fn compute_aggregates(
         .map(|group| {
             let cells: Vec<String> = projection
                 .iter()
-                .map(|item| match item {
-                    SelectItem::UnnamedExpr(expr) => eval_projection_expr(expr, group, col_map)
+                .map(|item| {
+                    let expr = match item {
+                        SelectItem::UnnamedExpr(e) => e,
+                        SelectItem::ExprWithAlias { expr, .. } => expr,
+                        _ => return "null".to_string(),
+                    };
+                    eval_projection_expr(expr, group, col_map)
                         .map(|(_, v)| v.to_json_string())
-                        .unwrap_or_else(|_| "null".to_string()),
-                    _ => "null".to_string(),
+                        .unwrap_or_else(|_| "null".to_string())
                 })
                 .collect();
             format!("[{}]", cells.join(","))
@@ -1444,6 +1452,7 @@ fn eval_projection_expr(
     rows: &[&[DbValue]],
     col_map: &HashMap<String, usize>,
 ) -> Result<(String, DbValue), String> {
+    // DBG
     match expr {
         Expr::Function(f) => {
             let name = f.name.to_string().to_lowercase();
@@ -1469,6 +1478,7 @@ fn eval_projection_expr(
                     Ok(("MAX".to_string(), val))
                 }
                 _ => {
+                    // ponytail: unknown function, evaluate as expression on group
                     let val = eval_expr_on_group(expr, rows, col_map)?;
                     Ok((format!("{}", f.name), val))
                 }
