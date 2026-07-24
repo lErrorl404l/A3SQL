@@ -152,6 +152,9 @@ fn dispatch(input: &str, args: &[&str]) -> String {
     if trimmed == "dump_sql" || trimmed == "export_sql" {
         return handle_dump_sql();
     }
+    if trimmed.starts_with("export_to_file") {
+        return handle_export_to_file(trimmed, args);
+    }
     if trimmed.starts_with("export") || trimmed.starts_with("import") {
         let result = if trimmed.starts_with("export") {
             handle_export(trimmed, args)
@@ -415,6 +418,73 @@ fn handle_listen(args: &[&str]) -> String {
     });
 
     ok_response(&format!("\"Listening on {}\"", addr_clone))
+}
+
+// ── Export to file ────────────────────────────────────────────────────
+
+/// Write table data or SQL dump directly to a file on disk.
+/// Format: export_to_file json|csv|sql <table_or_none> <path>
+fn handle_export_to_file(trimmed: &str, args: &[&str]) -> String {
+    let parts: Vec<&str> = trimmed.splitn(4, |c: char| c.is_whitespace()).collect();
+    let format_str = parts.get(1).copied().unwrap_or("json");
+    let has_table = parts.len() > 2 && !parts[2].is_empty();
+    let table_name = if has_table { parts.get(2) } else { None };
+    let cmd_path = if has_table {
+        parts.get(3)
+    } else {
+        parts.get(2)
+    };
+    let file_path: String = match cmd_path.or_else(|| args.first()) {
+        Some(p) => p.to_string(),
+        None => {
+            if format_str == "sql" {
+                "a3db_export.sql".into()
+            } else if let Some(t) = table_name {
+                format!("{}.{}", t, format_str)
+            } else {
+                "a3db_export.txt".into()
+            }
+        }
+    };
+
+    let format: engine::serialize::Format = match format_str.parse() {
+        Ok(f) => f,
+        Err(e) => return error_response(ErrorCode::Exec, &e),
+    };
+
+    let data = match format {
+        engine::serialize::Format::Sql => {
+            let db = DB.lock().unwrap();
+            engine::serialize::export_sql(&db)
+        }
+        engine::serialize::Format::Binary => {
+            let db = DB.lock().unwrap();
+            engine::serialize::hex_encode(&engine::serialize::export_binary(&db))
+        }
+        _ => {
+            let name = match table_name {
+                Some(n) if !n.is_empty() => n,
+                _ => {
+                    return error_response(
+                        ErrorCode::Exec,
+                        "Table name required for json/csv export",
+                    )
+                }
+            };
+            let db = DB.lock().unwrap();
+            let table = match db.get_table(name) {
+                Ok(t) => t,
+                Err(e) => return error_response(ErrorCode::Table, &e),
+            };
+            engine::serialize::export(format, table, &db)
+        }
+    };
+
+    let path_display = file_path.clone();
+    match std::fs::write(&file_path, &data) {
+        Ok(()) => ok_response(&format!("\"Exported to '{}'\"", path_display)),
+        Err(e) => error_response(ErrorCode::Io, &format!("Write failed: {}", e)),
+    }
 }
 
 fn write_output(output: *mut c_char, output_size: u32, s: &str) {

@@ -3,9 +3,9 @@
 use std::collections::HashMap;
 
 use sqlparser::ast::{
-    BinaryOperator, ColumnOption, DataType, Expr, Function, FunctionArg, FunctionArgExpr,
-    FunctionArguments, LimitClause, ObjectName, OrderByKind, Query, Select, SelectItem, SetExpr,
-    Statement, TableFactor, TableWithJoins, UnaryOperator, Values,
+    BinaryOperator, ColumnOption, DataType, Expr, Function, FunctionArg, FunctionArgExpr, FunctionArguments,
+    LimitClause, ObjectName, OrderByKind, Query, Select, SelectItem, SetExpr, Statement, TableFactor, TableWithJoins,
+    UnaryOperator, Values,
 };
 
 use super::database::Database;
@@ -23,9 +23,7 @@ pub fn execute(stmt: &Statement, db: &mut Database) -> Result<String, String> {
         Statement::Update(upd) => exec_update(upd, db),
         Statement::Delete(del) => exec_delete(del, db),
         Statement::CreateIndex(idx) => exec_create_index(idx, db),
-        Statement::Drop {
-            names, object_type, ..
-        } => {
+        Statement::Drop { names, object_type, .. } => {
             let name = object_name_str(&names[0]);
             let type_str = format!("{}", object_type).to_lowercase();
             if type_str.contains("index") {
@@ -64,6 +62,30 @@ pub fn execute(stmt: &Statement, db: &mut Database) -> Result<String, String> {
             db.release_savepoint(&name.to_string())?;
             Ok(format!("\"Savepoint '{}' released\"", name))
         }
+        Statement::AlterTable(at) => {
+            let table_name = object_name_str(&at.name);
+            let mut results = Vec::new();
+            for operation in &at.operations {
+                let result = match operation {
+                    sqlparser::ast::AlterTableOperation::AddColumn { column_def, .. } => {
+                        let col_name = column_def.name.value.to_lowercase();
+                        let dtype = parse_data_type(&column_def.data_type)?;
+                        db.get_table_mut(&table_name)?.add_column(col_name.clone(), dtype)?;
+                        format!("\"Column '{}' added to '{}'\"", col_name, table_name)
+                    }
+                    sqlparser::ast::AlterTableOperation::DropColumn { column_names, .. } => {
+                        for cn in column_names {
+                            let col_name = cn.value.to_lowercase();
+                            db.get_table_mut(&table_name)?.drop_column(&col_name)?;
+                        }
+                        format!("\"Column dropped from '{}'\"", table_name)
+                    }
+                    _ => return Err(format!("ALTER TABLE operation not supported: {:?}", operation)),
+                };
+                results.push(result);
+            }
+            Ok(format!("[{}]", results.join(",")))
+        }
         other => Err(format!("Statement not supported: {:?}", other)),
     }
 }
@@ -76,10 +98,7 @@ fn object_name_str(name: &ObjectName) -> String {
 
 // ── CREATE TABLE ────────────────────────────────────────────────────────
 
-fn exec_create_table(
-    def: &sqlparser::ast::CreateTable,
-    db: &mut Database,
-) -> Result<String, String> {
+fn exec_create_table(def: &sqlparser::ast::CreateTable, db: &mut Database) -> Result<String, String> {
     let table_name = object_name_str(&def.name);
 
     let mut columns: Vec<Column> = Vec::new();
@@ -90,9 +109,19 @@ fn exec_create_table(
         let dtype = parse_data_type(&col_def.data_type)?;
 
         let mut is_pk = false;
+        let mut is_not_null = false;
+        let mut default_val: Option<DbValue> = None;
         for opt_def in &col_def.options {
             match &opt_def.option {
                 ColumnOption::PrimaryKey(_) | ColumnOption::Unique { .. } => is_pk = true,
+                ColumnOption::NotNull => is_not_null = true,
+                ColumnOption::Default(expression) => {
+                    // Evaluate default expression (literal only)
+                    match expression {
+                        Expr::Value(v) => default_val = Some(sql_val_to_db(&v.value)),
+                        _ => return Err("DEFAULT only supports literal values".into()),
+                    }
+                }
                 _ => {}
             }
         }
@@ -108,6 +137,8 @@ fn exec_create_table(
             name: col_name,
             dtype,
             primary_key: is_pk,
+            not_null: is_not_null || is_pk,
+            default: default_val,
         });
     }
 
@@ -150,9 +181,9 @@ fn exec_insert(ins: &sqlparser::ast::Insert, db: &mut Database) -> Result<String
                 .iter()
                 .map(|col_name| {
                     let name = object_name_str(col_name);
-                    table.col_idx(&name).ok_or_else(|| {
-                        format!("Unknown column '{}' in table '{}'", name, table_name)
-                    })
+                    table
+                        .col_idx(&name)
+                        .ok_or_else(|| format!("Unknown column '{}' in table '{}'", name, table_name))
                 })
                 .collect::<Result<Vec<usize>, String>>()?,
         )
@@ -173,6 +204,9 @@ fn exec_insert(ins: &sqlparser::ast::Insert, db: &mut Database) -> Result<String
             .collect::<Vec<Vec<Expr>>>(),
         _ => return Err("Only VALUES-based INSERT supported".into()),
     };
+    // ponytail: check for REPLACE — Insert.or is Some when REPLACE is used
+    #[allow(clippy::useless_conversion)]
+    let is_replace = ins.or.is_some();
 
     let mut inserted = 0usize;
     for row_exprs in &rows {
@@ -195,8 +229,22 @@ fn exec_insert(ins: &sqlparser::ast::Insert, db: &mut Database) -> Result<String
             full_row[col_idx] = eval_literal_expr(expr)?;
         }
 
-        table.insert(full_row)?;
-        inserted += 1;
+        let result = table.insert(full_row.clone());
+        match result {
+            Ok(()) => inserted += 1,
+            Err(e) if is_replace && e.contains("Duplicate primary key") => {
+                // REPLACE: find the old row by PK and replace it
+                if let Some(pk_col) = table.columns.iter().position(|c| c.primary_key) {
+                    let pk_val = &full_row[pk_col];
+                    table.delete_by_pk(pk_val);
+                    table.insert(full_row)?;
+                    inserted += 1;
+                } else {
+                    return Err(e);
+                }
+            }
+            Err(e) => return Err(e),
+        }
     }
 
     Ok(format!("\"Inserted {} row(s)\"", inserted))
@@ -228,11 +276,7 @@ fn exec_select(query: &Query, db: &mut Database) -> Result<String, String> {
             .iter()
             .filter(|row| {
                 where_expr
-                    .map(|expr| {
-                        is_truthy(
-                            &eval_expr(expr, row, &table.col_index).unwrap_or(DbValue::Bool(false)),
-                        )
-                    })
+                    .map(|expr| is_truthy(&eval_expr(expr, row, &table.col_index).unwrap_or(DbValue::Bool(false))))
                     .unwrap_or(true)
             })
             .map(|r| r.as_slice())
@@ -257,6 +301,24 @@ fn exec_select(query: &Query, db: &mut Database) -> Result<String, String> {
         filtered_rows
     };
 
+    // 3.5 DISTINCT — remove duplicate rows
+    let deduped_rows: Vec<&[DbValue]> = if select.distinct.is_some() {
+        let mut seen: Vec<Vec<DbValue>> = Vec::new();
+        grouped_rows
+            .into_iter()
+            .filter(|row| {
+                if seen.iter().any(|s| s.as_slice() == *row) {
+                    false
+                } else {
+                    seen.push(row.to_vec());
+                    true
+                }
+            })
+            .collect()
+    } else {
+        grouped_rows
+    };
+
     // 4. ORDER BY
     let sorted_rows = if let Some(order_by) = &query.order_by {
         let exprs = match &order_by.kind {
@@ -264,12 +326,12 @@ fn exec_select(query: &Query, db: &mut Database) -> Result<String, String> {
             _ => return Err("ORDER BY ALL not supported".into()),
         };
         if !exprs.is_empty() {
-            sort_rows(grouped_rows, exprs, &table.col_index)?
+            sort_rows(deduped_rows, exprs, &table.col_index)?
         } else {
-            grouped_rows
+            deduped_rows
         }
     } else {
-        grouped_rows
+        deduped_rows
     };
 
     // 5. LIMIT / OFFSET
@@ -328,10 +390,7 @@ fn exec_select_joins(query: &Query, select: &Select, db: &mut Database) -> Resul
     let mut col_map: HashMap<String, usize> = HashMap::new();
     let mut header: Vec<String> = Vec::new();
     for tbl in &tbls {
-        let tn = db
-            .get_table(&tbl.name)
-            .map_err(|e| format!("JOIN: {}", e))?
-            .clone();
+        let tn = db.get_table(&tbl.name).map_err(|e| format!("JOIN: {}", e))?.clone();
         for (ci, col) in tn.columns.iter().enumerate() {
             let p = tbl.start + ci;
             col_map.insert(format!("{}.{}", tbl.name, col.name), p);
@@ -355,9 +414,7 @@ fn exec_select_joins(query: &Query, select: &Select, db: &mut Database) -> Resul
         v
     };
 
-    let ef = |e: &Expr, r: &[DbValue]| -> Result<DbValue, String> {
-        eval_expr_on_flat_row(e, r, &col_map)
-    };
+    let ef = |e: &Expr, r: &[DbValue]| -> Result<DbValue, String> { eval_expr_on_flat_row(e, r, &col_map) };
 
     // ── Generate combined rows ──────────────────────────────────────
     let mut cidx: Vec<Vec<usize>> = (0..tbls[0].rows.len()).map(|i| vec![i]).collect();
@@ -378,8 +435,7 @@ fn exec_select_joins(query: &Query, select: &Select, db: &mut Database) -> Resul
         } else {
             &no_constraint
         };
-        let left =
-            ti <= joins.len() && matches!(joins[ti - 1].join_operator, JoinOperator::LeftOuter(_));
+        let left = ti <= joins.len() && matches!(joins[ti - 1].join_operator, JoinOperator::LeftOuter(_));
 
         let mut next = Vec::new();
         for ls in &cidx {
@@ -426,11 +482,7 @@ fn exec_select_joins(query: &Query, select: &Select, db: &mut Database) -> Resul
                     let av = ef(&o.expr, a).unwrap_or(DbValue::Null);
                     let bv = ef(&o.expr, b).unwrap_or(DbValue::Null);
                     let c = value_to_string(&av).cmp(&value_to_string(&bv));
-                    let c = if o.options.asc.unwrap_or(true) {
-                        c
-                    } else {
-                        c.reverse()
-                    };
+                    let c = if o.options.asc.unwrap_or(true) { c } else { c.reverse() };
                     if c != std::cmp::Ordering::Equal {
                         return c;
                     }
@@ -475,11 +527,7 @@ fn exec_select_joins(query: &Query, select: &Select, db: &mut Database) -> Resul
     Ok(format!("[[{}],{}]", h, rj.join(",")))
 }
 
-fn eval_expr_on_flat_row(
-    expr: &Expr,
-    row: &[DbValue],
-    col_map: &HashMap<String, usize>,
-) -> Result<DbValue, String> {
+fn eval_expr_on_flat_row(expr: &Expr, row: &[DbValue], col_map: &HashMap<String, usize>) -> Result<DbValue, String> {
     match expr {
         Expr::Identifier(ident) => {
             let name = ident.value.to_lowercase();
@@ -596,8 +644,7 @@ fn partition_by_group<'a>(
     let mut keys: Vec<Vec<DbValue>> = Vec::new();
 
     'rows: for row in rows {
-        let key: Result<Vec<DbValue>, String> =
-            exprs.iter().map(|e| eval_expr(e, row, col_map)).collect();
+        let key: Result<Vec<DbValue>, String> = exprs.iter().map(|e| eval_expr(e, row, col_map)).collect();
         let key = key?;
 
         for (i, existing_key) in keys.iter().enumerate() {
@@ -733,11 +780,7 @@ fn eval_projection_expr(
 }
 
 /// Evaluate an expression on a group of rows. For non-aggregate columns, uses first row.
-fn eval_expr_on_group(
-    expr: &Expr,
-    rows: &[&[DbValue]],
-    col_map: &HashMap<String, usize>,
-) -> Result<DbValue, String> {
+fn eval_expr_on_group(expr: &Expr, rows: &[&[DbValue]], col_map: &HashMap<String, usize>) -> Result<DbValue, String> {
     // For aggregate queries, non-aggregate columns use the first row's value
     if rows.is_empty() {
         return Ok(DbValue::Null);
@@ -745,11 +788,7 @@ fn eval_expr_on_group(
     eval_expr(expr, rows[0], col_map)
 }
 
-fn aggregate_sum(
-    func: &Function,
-    rows: &[&[DbValue]],
-    col_map: &HashMap<String, usize>,
-) -> Result<DbValue, String> {
+fn aggregate_sum(func: &Function, rows: &[&[DbValue]], col_map: &HashMap<String, usize>) -> Result<DbValue, String> {
     let arg = extract_func_arg(func)?;
     if rows.is_empty() {
         return Ok(DbValue::Null);
@@ -785,11 +824,7 @@ fn aggregate_sum(
     }
 }
 
-fn aggregate_avg(
-    func: &Function,
-    rows: &[&[DbValue]],
-    col_map: &HashMap<String, usize>,
-) -> Result<DbValue, String> {
+fn aggregate_avg(func: &Function, rows: &[&[DbValue]], col_map: &HashMap<String, usize>) -> Result<DbValue, String> {
     let arg = extract_func_arg(func)?;
     if rows.is_empty() {
         return Ok(DbValue::Null);
@@ -818,28 +853,28 @@ fn aggregate_avg(
     }
 }
 
-fn aggregate_min(
-    func: &Function,
-    rows: &[&[DbValue]],
-    col_map: &HashMap<String, usize>,
-) -> Result<DbValue, String> {
+fn aggregate_min(func: &Function, rows: &[&[DbValue]], col_map: &HashMap<String, usize>) -> Result<DbValue, String> {
     let arg = extract_func_arg(func)?;
     rows.iter()
         .filter_map(|r| eval_expr(arg, r, col_map).ok())
-        .min_by(|a, b| value_to_string(a).cmp(&value_to_string(b)))
+        .min_by(db_value_cmp)
         .ok_or_else(|| "MIN on empty set".into())
 }
 
-fn aggregate_max(
-    func: &Function,
-    rows: &[&[DbValue]],
-    col_map: &HashMap<String, usize>,
-) -> Result<DbValue, String> {
+fn aggregate_max(func: &Function, rows: &[&[DbValue]], col_map: &HashMap<String, usize>) -> Result<DbValue, String> {
     let arg = extract_func_arg(func)?;
     rows.iter()
         .filter_map(|r| eval_expr(arg, r, col_map).ok())
-        .max_by(|a, b| value_to_string(a).cmp(&value_to_string(b)))
+        .max_by(db_value_cmp)
         .ok_or_else(|| "MAX on empty set".into())
+}
+
+/// Compare DbValues: numeric comparison when both are numbers, string comparison otherwise.
+fn db_value_cmp(a: &DbValue, b: &DbValue) -> std::cmp::Ordering {
+    match (to_float(a), to_float(b)) {
+        (Some(x), Some(y)) => x.partial_cmp(&y).unwrap_or(std::cmp::Ordering::Equal),
+        _ => value_to_string(a).cmp(&value_to_string(b)),
+    }
 }
 
 /// Extract the first argument expression from a function.
@@ -973,15 +1008,13 @@ fn exec_delete(del: &sqlparser::ast::Delete, db: &mut Database) -> Result<String
     // Table name is in `from` (FromTable), not `tables` (MySQL multi-table)
     use sqlparser::ast::FromTable;
     let table_name = match &del.from {
-        FromTable::WithFromKeyword(tables) | FromTable::WithoutKeyword(tables) => {
-            match tables.first() {
-                Some(tj) => match &tj.relation {
-                    TableFactor::Table { name, .. } => object_name_str(name),
-                    _ => return Err("DELETE: only simple table references supported".into()),
-                },
-                None => return Err("DELETE must specify a table".into()),
-            }
-        }
+        FromTable::WithFromKeyword(tables) | FromTable::WithoutKeyword(tables) => match tables.first() {
+            Some(tj) => match &tj.relation {
+                TableFactor::Table { name, .. } => object_name_str(name),
+                _ => return Err("DELETE: only simple table references supported".into()),
+            },
+            None => return Err("DELETE must specify a table".into()),
+        },
     };
 
     // Clone col_index to avoid borrow conflict with table.delete()
@@ -990,11 +1023,7 @@ fn exec_delete(del: &sqlparser::ast::Delete, db: &mut Database) -> Result<String
 
     let table = db.get_table_mut(&table_name)?;
     let count = match pred {
-        Some(expr) => table.delete(|row| {
-            eval_expr(&expr, row, &col_idx)
-                .map(|v| is_truthy(&v))
-                .unwrap_or(false)
-        }),
+        Some(expr) => table.delete(|row| eval_expr(&expr, row, &col_idx).map(|v| is_truthy(&v)).unwrap_or(false)),
         None => {
             // Clear using the index-aware delete with a catch-all predicate
             table.delete(|_| true)
@@ -1006,17 +1035,11 @@ fn exec_delete(del: &sqlparser::ast::Delete, db: &mut Database) -> Result<String
 
 // ── Expression evaluator ────────────────────────────────────────────────
 
-fn eval_expr(
-    expr: &Expr,
-    row: &[DbValue],
-    col_map: &HashMap<String, usize>,
-) -> Result<DbValue, String> {
+fn eval_expr(expr: &Expr, row: &[DbValue], col_map: &HashMap<String, usize>) -> Result<DbValue, String> {
     match expr {
         Expr::Identifier(ident) => {
             let name = ident.value.to_lowercase();
-            let idx = col_map
-                .get(&name)
-                .ok_or_else(|| format!("Unknown column '{}'", name))?;
+            let idx = col_map.get(&name).ok_or_else(|| format!("Unknown column '{}'", name))?;
             Ok(row[*idx].clone())
         }
         Expr::Value(v) => Ok(sql_val_to_db(v)),
@@ -1039,22 +1062,14 @@ fn eval_expr(
             Ok(DbValue::Bool(!matches!(val, DbValue::Null)))
         }
         Expr::Like {
-            negated,
-            expr,
-            pattern,
-            escape_char: _,
-            ..
+            negated, expr, pattern, ..
         } => {
             let val = eval_expr(expr, row, col_map)?;
             let pat = eval_expr(pattern, row, col_map)?;
             let matched = simple_like(&value_to_string(&val), &value_to_string(&pat));
             Ok(DbValue::Bool(if *negated { !matched } else { matched }))
         }
-        Expr::InList {
-            expr,
-            list,
-            negated,
-        } => {
+        Expr::InList { expr, list, negated } => {
             let val = eval_expr(expr, row, col_map)?;
             let mut found = false;
             for item in list {
@@ -1079,20 +1094,13 @@ fn eval_literal_expr(expr: &Expr) -> Result<DbValue, String> {
             let val = eval_literal_expr(expr)?;
             apply_unary_op(op, &val)
         }
-        _ => Err(format!(
-            "Complex expressions not supported in values: {:?}",
-            expr
-        )),
+        _ => Err(format!("Complex expressions not supported in values: {:?}", expr)),
     }
 }
 
 // ── Function execution ──────────────────────────────────────────────────
 
-fn exec_function(
-    func: &Function,
-    row: &[DbValue],
-    col_map: &HashMap<String, usize>,
-) -> Result<DbValue, String> {
+fn exec_function(func: &Function, row: &[DbValue], col_map: &HashMap<String, usize>) -> Result<DbValue, String> {
     let name = func.name.to_string().to_lowercase();
     match name.as_str() {
         "fuzzy_match" => exec_fuzzy_match(func, row, col_map),
@@ -1112,11 +1120,7 @@ fn get_func_arg_unnamed(arg: &FunctionArg) -> Result<&Expr, String> {
     }
 }
 
-fn exec_fuzzy_match(
-    func: &Function,
-    row: &[DbValue],
-    col_map: &HashMap<String, usize>,
-) -> Result<DbValue, String> {
+fn exec_fuzzy_match(func: &Function, row: &[DbValue], col_map: &HashMap<String, usize>) -> Result<DbValue, String> {
     let args = match &func.args {
         FunctionArguments::List(list) => &list.args,
         _ => return Err("fuzzy_match requires argument list".into()),
@@ -1140,18 +1144,13 @@ fn exec_fuzzy_match(
         0.3
     };
 
-    let similarity =
-        Table::trigram_similarity(&value_to_string(&col_val), &value_to_string(&pat_val));
+    let similarity = Table::trigram_similarity(&value_to_string(&col_val), &value_to_string(&pat_val));
     Ok(DbValue::Bool(similarity >= threshold))
 }
 
 // ── Binary operators ───────────────────────────────────────────────────
 
-fn apply_binary_op(
-    left: &DbValue,
-    op: &BinaryOperator,
-    right: &DbValue,
-) -> Result<DbValue, String> {
+fn apply_binary_op(left: &DbValue, op: &BinaryOperator, right: &DbValue) -> Result<DbValue, String> {
     match op {
         BinaryOperator::Eq => Ok(DbValue::Bool(values_equal(left, right))),
         BinaryOperator::NotEq => Ok(DbValue::Bool(!values_equal(left, right))),
@@ -1272,11 +1271,7 @@ fn value_to_string(v: &DbValue) -> String {
         DbValue::Float(f) => f.to_string(),
         DbValue::String(s) => s.clone(),
         DbValue::Strings(arr) => arr.join(","),
-        DbValue::Floats(arr) => arr
-            .iter()
-            .map(|f| f.to_string())
-            .collect::<Vec<_>>()
-            .join(","),
+        DbValue::Floats(arr) => arr.iter().map(|f| f.to_string()).collect::<Vec<_>>().join(","),
     }
 }
 
@@ -1292,13 +1287,12 @@ fn sql_val_to_db(v: &sqlparser::ast::Value) -> DbValue {
                     .map(DbValue::Float)
                     .unwrap_or(DbValue::String(s.clone()))
             } else {
-                s.parse::<i64>()
-                    .map(DbValue::Int)
-                    .unwrap_or(DbValue::String(s.clone()))
+                s.parse::<i64>().map(DbValue::Int).unwrap_or(DbValue::String(s.clone()))
             }
         }
-        sqlparser::ast::Value::SingleQuotedString(s)
-        | sqlparser::ast::Value::DoubleQuotedString(s) => DbValue::String(s.clone()),
+        sqlparser::ast::Value::SingleQuotedString(s) | sqlparser::ast::Value::DoubleQuotedString(s) => {
+            DbValue::String(s.clone())
+        }
         _ => DbValue::String(format!("{:?}", v)),
     }
 }
@@ -1307,15 +1301,16 @@ fn sql_val_to_db(v: &sqlparser::ast::Value) -> DbValue {
 
 fn parse_data_type(dt: &DataType) -> Result<ColumnType, String> {
     match dt {
-        DataType::Int(_) | DataType::Integer(_) | DataType::BigInt(_) | DataType::SmallInt(_) => {
-            Ok(ColumnType::Int)
+        DataType::Int(_) | DataType::Integer(_) | DataType::BigInt(_) | DataType::SmallInt(_) => Ok(ColumnType::Int),
+        DataType::Float(_)
+        | DataType::Double(_)
+        | DataType::Real
+        | DataType::Decimal(_)
+        | DataType::Dec(_)
+        | DataType::Numeric(_) => Ok(ColumnType::Float),
+        DataType::String(_) | DataType::Text | DataType::Varchar(_) | DataType::Char(_) | DataType::Uuid => {
+            Ok(ColumnType::String)
         }
-        DataType::Float(_) | DataType::Double(_) | DataType::Real => Ok(ColumnType::Float),
-        DataType::String(_)
-        | DataType::Text
-        | DataType::Varchar(_)
-        | DataType::Char(_)
-        | DataType::Uuid => Ok(ColumnType::String),
         DataType::Boolean => Ok(ColumnType::Bool),
         DataType::Array(elem) => {
             use sqlparser::ast::ArrayElemTypeDef;
@@ -1352,10 +1347,7 @@ fn parse_data_type(dt: &DataType) -> Result<ColumnType, String> {
 
 // ── Table resolution ───────────────────────────────────────────────────
 
-fn resolve_single_table<'a>(
-    from: &[TableWithJoins],
-    db: &'a Database,
-) -> Result<&'a Table, String> {
+fn resolve_single_table<'a>(from: &[TableWithJoins], db: &'a Database) -> Result<&'a Table, String> {
     let tf = from.first().ok_or("No FROM clause")?;
     match &tf.relation {
         TableFactor::Table { name, .. } => db.get_table(&object_name_str(name)),
@@ -1382,8 +1374,7 @@ fn try_btree_index<'a>(where_expr: Option<&Expr>, table: &'a Table) -> Option<Ve
             op: BinaryOperator::Eq,
             right,
         } => match (left.as_ref(), right.as_ref()) {
-            (Expr::Identifier(ident), Expr::Value(v))
-            | (Expr::Value(v), Expr::Identifier(ident)) => {
+            (Expr::Identifier(ident), Expr::Value(v)) | (Expr::Value(v), Expr::Identifier(ident)) => {
                 (ident.value.to_lowercase(), sql_val_to_db(&v.value))
             }
             _ => return None,
@@ -1391,20 +1382,12 @@ fn try_btree_index<'a>(where_expr: Option<&Expr>, table: &'a Table) -> Option<Ve
         _ => return None,
     };
     let indices = table.btree_lookup(&col_name, &value)?;
-    Some(
-        indices
-            .into_iter()
-            .map(|i| table.rows[i].as_slice())
-            .collect(),
-    )
+    Some(indices.into_iter().map(|i| table.rows[i].as_slice()).collect())
 }
 
 // ── CREATE INDEX handling ──────────────────────────────────────────────
 
-fn exec_create_index(
-    idx: &sqlparser::ast::CreateIndex,
-    db: &mut Database,
-) -> Result<String, String> {
+fn exec_create_index(idx: &sqlparser::ast::CreateIndex, db: &mut Database) -> Result<String, String> {
     let index_name = match &idx.name {
         Some(name) => object_name_str(name),
         None => return Err("CREATE INDEX requires a name".into()),
@@ -1491,16 +1474,22 @@ mod tests {
                 name: "id".into(),
                 dtype: ColumnType::String,
                 primary_key: true,
+                not_null: false,
+                default: None,
             },
             Column {
                 name: "name".into(),
                 dtype: ColumnType::String,
                 primary_key: false,
+                not_null: false,
+                default: None,
             },
             Column {
                 name: "value".into(),
                 dtype: ColumnType::Int,
                 primary_key: false,
+                not_null: false,
+                default: None,
             },
         ];
         let table = Table::new("items".into(), cols).unwrap();
@@ -1633,11 +1622,15 @@ mod tests {
                 name: "cat".into(),
                 dtype: ColumnType::String,
                 primary_key: false,
+                not_null: false,
+                default: None,
             },
             Column {
                 name: "val".into(),
                 dtype: ColumnType::Int,
                 primary_key: false,
+                not_null: false,
+                default: None,
             },
         ];
         let mut table = Table::new("data".into(), cols).unwrap();
@@ -1652,8 +1645,7 @@ mod tests {
             .unwrap();
         db.create_table("data", table).unwrap();
 
-        let result =
-            parse_and_exec("SELECT cat, SUM(val) FROM data GROUP BY cat", &mut db).unwrap();
+        let result = parse_and_exec("SELECT cat, SUM(val) FROM data GROUP BY cat", &mut db).unwrap();
         assert!(result.contains("30"), "SUM(a) = 30: {}", result);
         assert!(result.contains("30"), "SUM(b) = 30: {}", result);
     }
@@ -1662,11 +1654,7 @@ mod tests {
     fn transaction_rollback() {
         let mut db = make_test_db();
         parse_and_exec("BEGIN", &mut db).unwrap();
-        parse_and_exec(
-            "INSERT INTO items VALUES ('rx', 'rollback_test', 99)",
-            &mut db,
-        )
-        .unwrap();
+        parse_and_exec("INSERT INTO items VALUES ('rx', 'rollback_test', 99)", &mut db).unwrap();
         parse_and_exec("ROLLBACK", &mut db).unwrap();
         let t = db.get_table("items").unwrap();
         assert_eq!(t.rows.len(), 0, "rows should be 0 after rollback");
@@ -1676,11 +1664,7 @@ mod tests {
     fn transaction_commit() {
         let mut db = make_test_db();
         parse_and_exec("BEGIN", &mut db).unwrap();
-        parse_and_exec(
-            "INSERT INTO items VALUES ('cx', 'commit_test', 99)",
-            &mut db,
-        )
-        .unwrap();
+        parse_and_exec("INSERT INTO items VALUES ('cx', 'commit_test', 99)", &mut db).unwrap();
         parse_and_exec("COMMIT", &mut db).unwrap();
         let t = db.get_table("items").unwrap();
         assert_eq!(t.rows.len(), 1, "rows should be 1 after commit");
@@ -1719,21 +1703,21 @@ mod tests {
                 name: "id".into(),
                 dtype: ColumnType::Int,
                 primary_key: false,
+                not_null: false,
+                default: None,
             },
             Column {
                 name: "v".into(),
                 dtype: ColumnType::Int,
                 primary_key: false,
+                not_null: false,
+                default: None,
             },
         ];
         let t = Table::new("bulk".into(), cols).unwrap();
         db.create_table("bulk", t).unwrap();
         for i in 0..500 {
-            parse_and_exec(
-                &format!("INSERT INTO bulk VALUES ({},{})", i, i * 2),
-                &mut db,
-            )
-            .unwrap();
+            parse_and_exec(&format!("INSERT INTO bulk VALUES ({},{})", i, i * 2), &mut db).unwrap();
         }
         let r = parse_and_exec("SELECT COUNT(*) FROM bulk", &mut db).unwrap();
         assert!(r.contains("500"), "count: {}", r);
@@ -1767,11 +1751,15 @@ mod tests {
                 name: "k".into(),
                 dtype: ColumnType::String,
                 primary_key: true,
+                not_null: false,
+                default: None,
             },
             Column {
                 name: "v".into(),
                 dtype: ColumnType::Int,
                 primary_key: false,
+                not_null: false,
+                default: None,
             },
         ];
         let t = Table::new("idx_test".into(), cols).unwrap();
@@ -1779,11 +1767,7 @@ mod tests {
         parse_and_exec("INSERT INTO idx_test VALUES ('a', 10)", &mut db).unwrap();
         parse_and_exec("INSERT INTO idx_test VALUES ('b', 20)", &mut db).unwrap();
         parse_and_exec("CREATE INDEX btree_v ON idx_test (v) USING BTREE", &mut db).unwrap();
-        parse_and_exec(
-            "CREATE INDEX trigram_k ON idx_test (k) USING TRIGRAM",
-            &mut db,
-        )
-        .unwrap();
+        parse_and_exec("CREATE INDEX trigram_k ON idx_test (k) USING TRIGRAM", &mut db).unwrap();
         db
     }
 
@@ -1796,6 +1780,8 @@ mod tests {
             name: "x".into(),
             dtype: ColumnType::Int,
             primary_key: false,
+            not_null: false,
+            default: None,
         }];
         let mut ta = Table::new("ta".into(), ca).unwrap();
         ta.insert(vec![DbValue::Int(1)]).unwrap();
@@ -1805,6 +1791,8 @@ mod tests {
             name: "y".into(),
             dtype: ColumnType::String,
             primary_key: false,
+            not_null: false,
+            default: None,
         }];
         let mut tb = Table::new("tb".into(), cb).unwrap();
         tb.insert(vec![DbValue::String("a".into())]).unwrap();
@@ -1825,29 +1813,35 @@ mod tests {
                 name: "id".into(),
                 dtype: ColumnType::Int,
                 primary_key: false,
+                not_null: false,
+                default: None,
             },
             Column {
                 name: "v".into(),
                 dtype: ColumnType::String,
                 primary_key: false,
+                not_null: false,
+                default: None,
             },
         ];
         let mut ta = Table::new("a".into(), ca).unwrap();
-        ta.insert(vec![DbValue::Int(1), DbValue::String("one".into())])
-            .unwrap();
-        ta.insert(vec![DbValue::Int(2), DbValue::String("two".into())])
-            .unwrap();
+        ta.insert(vec![DbValue::Int(1), DbValue::String("one".into())]).unwrap();
+        ta.insert(vec![DbValue::Int(2), DbValue::String("two".into())]).unwrap();
         db.create_table("a", ta).unwrap();
         let cb = vec![
             Column {
                 name: "id".into(),
                 dtype: ColumnType::Int,
                 primary_key: false,
+                not_null: false,
+                default: None,
             },
             Column {
                 name: "d".into(),
                 dtype: ColumnType::String,
                 primary_key: false,
+                not_null: false,
+                default: None,
             },
         ];
         let mut tb = Table::new("b".into(), cb).unwrap();
@@ -1868,6 +1862,8 @@ mod tests {
             name: "k".into(),
             dtype: ColumnType::String,
             primary_key: false,
+            not_null: false,
+            default: None,
         }];
         let mut ta = Table::new("a".into(), ca).unwrap();
         ta.insert(vec![DbValue::String("x".into())]).unwrap();
@@ -1877,6 +1873,8 @@ mod tests {
             name: "k".into(),
             dtype: ColumnType::String,
             primary_key: false,
+            not_null: false,
+            default: None,
         }];
         let mut tb = Table::new("b".into(), cb).unwrap();
         tb.insert(vec![DbValue::String("x".into())]).unwrap();
@@ -1894,29 +1892,36 @@ mod tests {
                 name: "id".into(),
                 dtype: ColumnType::Int,
                 primary_key: false,
+                not_null: false,
+                default: None,
             },
             Column {
                 name: "n".into(),
                 dtype: ColumnType::String,
                 primary_key: false,
+                not_null: false,
+                default: None,
             },
         ];
         let mut ta = Table::new("u".into(), ca).unwrap();
         ta.insert(vec![DbValue::Int(1), DbValue::String("alice".into())])
             .unwrap();
-        ta.insert(vec![DbValue::Int(2), DbValue::String("bob".into())])
-            .unwrap();
+        ta.insert(vec![DbValue::Int(2), DbValue::String("bob".into())]).unwrap();
         db.create_table("u", ta).unwrap();
         let cb = vec![
             Column {
                 name: "uid".into(),
                 dtype: ColumnType::Int,
                 primary_key: false,
+                not_null: false,
+                default: None,
             },
             Column {
                 name: "r".into(),
                 dtype: ColumnType::String,
                 primary_key: false,
+                not_null: false,
+                default: None,
             },
         ];
         let mut tb = Table::new("r".into(), cb).unwrap();
@@ -1934,11 +1939,7 @@ mod tests {
     #[test]
     fn null_arithmetic() {
         let mut db = make_test_db();
-        parse_and_exec(
-            "INSERT INTO items VALUES ('nx', 'null_test', NULL)",
-            &mut db,
-        )
-        .unwrap();
+        parse_and_exec("INSERT INTO items VALUES ('nx', 'null_test', NULL)", &mut db).unwrap();
         let r = parse_and_exec("SELECT * FROM items WHERE value IS NULL", &mut db).unwrap();
         assert!(r.contains("null_test"), "null: {}", r);
     }

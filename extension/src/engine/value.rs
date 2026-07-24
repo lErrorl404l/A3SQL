@@ -32,6 +32,8 @@ pub struct Column {
     pub name: String,
     pub dtype: ColumnType,
     pub primary_key: bool,
+    pub not_null: bool,
+    pub default: Option<DbValue>,
 }
 
 /// Runtime value stored in cells.

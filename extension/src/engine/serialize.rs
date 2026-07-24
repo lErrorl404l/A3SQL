@@ -48,8 +48,8 @@ pub fn export_json(table: &Table) -> String {
         .iter()
         .map(|c| {
             format!(
-                r#"{{"name":"{}","type":"{}","primary_key":{}}}"#,
-                c.name, c.dtype, c.primary_key
+                r#"{{"name":"{}","type":"{}","primary_key":{},"not_null":{}}}"#,
+                c.name, c.dtype, c.primary_key, c.not_null
             )
         })
         .collect();
@@ -84,8 +84,7 @@ pub fn export_json_db(db: &Database) -> String {
 
 /// Import a table from JSON data.
 pub fn import_json(table_name: &str, json_str: &str, db: &mut Database) -> Result<(), String> {
-    let parsed: serde_json::Value =
-        serde_json::from_str(json_str).map_err(|e| format!("Invalid JSON: {}", e))?;
+    let parsed: serde_json::Value = serde_json::from_str(json_str).map_err(|e| format!("Invalid JSON: {}", e))?;
 
     let obj = parsed.as_object().ok_or("Expected JSON object")?;
 
@@ -100,14 +99,8 @@ pub fn import_json(table_name: &str, json_str: &str, db: &mut Database) -> Resul
                     .and_then(|v| v.as_str())
                     .ok_or("Column missing 'name'")?
                     .to_string();
-                let type_str = col_obj
-                    .get("type")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("String");
-                let primary_key = col_obj
-                    .get("primary_key")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false);
+                let type_str = col_obj.get("type").and_then(|v| v.as_str()).unwrap_or("String");
+                let primary_key = col_obj.get("primary_key").and_then(|v| v.as_bool()).unwrap_or(false);
                 let dtype = match type_str.to_lowercase().as_str() {
                     "bool" | "boolean" => ColumnType::Bool,
                     "int" | "integer" => ColumnType::Int,
@@ -121,6 +114,8 @@ pub fn import_json(table_name: &str, json_str: &str, db: &mut Database) -> Resul
                     name,
                     dtype,
                     primary_key,
+                    not_null: obj.get("not_null").and_then(|v| v.as_bool()).unwrap_or(false),
+                    default: None,
                 });
             }
             cols
@@ -139,9 +134,7 @@ pub fn import_json(table_name: &str, json_str: &str, db: &mut Database) -> Resul
                 let col_type = &table.columns[i].dtype;
                 db_row.push(json_to_dbvalue(cell, col_type));
             }
-            table
-                .insert(db_row)
-                .map_err(|e| format!("Row insert: {}", e))?;
+            table.insert(db_row).map_err(|e| format!("Row insert: {}", e))?;
         }
     }
 
@@ -152,12 +145,8 @@ fn json_to_dbvalue(v: &serde_json::Value, expected: &ColumnType) -> DbValue {
     match (v, expected) {
         (serde_json::Value::Null, _) => DbValue::Null,
         (serde_json::Value::Bool(b), _) => DbValue::Bool(*b),
-        (serde_json::Value::Number(n), ColumnType::Int) => {
-            n.as_i64().map(DbValue::Int).unwrap_or(DbValue::Null)
-        }
-        (serde_json::Value::Number(n), ColumnType::Float) => {
-            n.as_f64().map(DbValue::Float).unwrap_or(DbValue::Null)
-        }
+        (serde_json::Value::Number(n), ColumnType::Int) => n.as_i64().map(DbValue::Int).unwrap_or(DbValue::Null),
+        (serde_json::Value::Number(n), ColumnType::Float) => n.as_f64().map(DbValue::Float).unwrap_or(DbValue::Null),
         (serde_json::Value::Number(n), _) => n
             .as_f64()
             .map(|f| {
@@ -171,10 +160,7 @@ fn json_to_dbvalue(v: &serde_json::Value, expected: &ColumnType) -> DbValue {
         (serde_json::Value::String(s), ColumnType::Strings) => DbValue::Strings(vec![s.clone()]),
         (serde_json::Value::String(s), _) => DbValue::String(s.clone()),
         (serde_json::Value::Array(arr), ColumnType::Strings) => {
-            let strs: Vec<String> = arr
-                .iter()
-                .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                .collect();
+            let strs: Vec<String> = arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect();
             DbValue::Strings(strs)
         }
         (serde_json::Value::Array(arr), ColumnType::Floats) => {
@@ -183,10 +169,7 @@ fn json_to_dbvalue(v: &serde_json::Value, expected: &ColumnType) -> DbValue {
         }
         (serde_json::Value::Array(arr), _) => {
             // Mixed array — try to parse
-            let strs: Vec<String> = arr
-                .iter()
-                .filter_map(|v| v.as_str().map(|s| s.to_string()))
-                .collect();
+            let strs: Vec<String> = arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect();
             if !strs.is_empty() {
                 DbValue::Strings(strs)
             } else {
@@ -244,6 +227,8 @@ pub fn import_csv(table_name: &str, csv_str: &str, db: &mut Database) -> Result<
             name: h.to_lowercase(),
             dtype: ColumnType::String,
             primary_key: false,
+            not_null: false,
+            default: None,
         })
         .collect();
 
@@ -258,11 +243,7 @@ pub fn import_csv(table_name: &str, csv_str: &str, db: &mut Database) -> Result<
         }
         let fields = parse_csv_line(trimmed);
         if fields.len() != col_count {
-            return Err(format!(
-                "CSV row has {} fields, expected {}",
-                fields.len(),
-                col_count
-            ));
+            return Err(format!("CSV row has {} fields, expected {}", fields.len(), col_count));
         }
         let row: Vec<DbValue> = fields.into_iter().map(DbValue::String).collect();
         table.insert(row)?;
@@ -334,20 +315,12 @@ pub fn export_sql(db: &Database) -> String {
                 format!("{} {}{}", c.name, type_str, pk)
             })
             .collect();
-        out.push_str(&format!(
-            "CREATE TABLE {} ({});\n",
-            table.name,
-            col_defs.join(", ")
-        ));
+        out.push_str(&format!("CREATE TABLE {} ({});\n", table.name, col_defs.join(", ")));
 
         // INSERT rows
         for row in &table.rows {
             let vals: Vec<String> = row.iter().map(sql_value).collect();
-            out.push_str(&format!(
-                "INSERT INTO {} VALUES ({});\n",
-                table.name,
-                vals.join(", ")
-            ));
+            out.push_str(&format!("INSERT INTO {} VALUES ({});\n", table.name, vals.join(", ")));
         }
         out.push('\n');
     }
@@ -370,10 +343,7 @@ fn sql_value(v: &DbValue) -> String {
         DbValue::Float(f) => f.to_string(),
         DbValue::String(s) => format!("'{}'", s.replace('\'', "''")),
         DbValue::Strings(arr) => {
-            let inner: Vec<String> = arr
-                .iter()
-                .map(|s| format!("'{}'", s.replace('\'', "''")))
-                .collect();
+            let inner: Vec<String> = arr.iter().map(|s| format!("'{}'", s.replace('\'', "''"))).collect();
             format!("ARRAY[{}]", inner.join(","))
         }
         DbValue::Floats(arr) => {
@@ -580,6 +550,8 @@ fn read_bin_table(data: &[u8], mut pos: usize, db: &mut Database) -> Result<usiz
             name: col_name,
             dtype,
             primary_key,
+            not_null: false,
+            default: None,
         });
     }
 
@@ -599,9 +571,7 @@ fn read_bin_table(data: &[u8], mut pos: usize, db: &mut Database) -> Result<usiz
             row.push(val);
             pos = new_pos;
         }
-        table
-            .insert(row)
-            .map_err(|e| format!("Binary import: {}", e))?;
+        table.insert(row).map_err(|e| format!("Binary import: {}", e))?;
     }
 
     db.create_table(&name, table)?;
@@ -617,8 +587,7 @@ fn read_bin_str(data: &[u8], pos: usize) -> Result<(String, usize), String> {
     if start + len > data.len() {
         return Err("Truncated binary: string data".into());
     }
-    let s = std::str::from_utf8(&data[start..start + len])
-        .map_err(|_| "Invalid UTF-8 in binary".to_string())?;
+    let s = std::str::from_utf8(&data[start..start + len]).map_err(|_| "Invalid UTF-8 in binary".to_string())?;
     Ok((s.to_string(), start + len))
 }
 
@@ -698,11 +667,7 @@ fn value_to_display(v: &DbValue) -> String {
         DbValue::Float(f) => f.to_string(),
         DbValue::String(s) => s.clone(),
         DbValue::Strings(arr) => arr.join(";"),
-        DbValue::Floats(arr) => arr
-            .iter()
-            .map(|f| f.to_string())
-            .collect::<Vec<_>>()
-            .join(";"),
+        DbValue::Floats(arr) => arr.iter().map(|f| f.to_string()).collect::<Vec<_>>().join(";"),
     }
 }
 
@@ -742,12 +707,7 @@ fn hex_decode(hex: &str) -> Result<Vec<u8>, String> {
 }
 
 /// Import in the given format.
-pub fn import(
-    format: Format,
-    table_name: &str,
-    data: &str,
-    db: &mut Database,
-) -> Result<(), String> {
+pub fn import(format: Format, table_name: &str, data: &str, db: &mut Database) -> Result<(), String> {
     match format {
         Format::Json => import_json(table_name, data, db),
         Format::Csv => import_csv(table_name, data, db),
@@ -771,11 +731,15 @@ mod tests {
                 name: "id".into(),
                 dtype: ColumnType::String,
                 primary_key: true,
+                not_null: false,
+                default: None,
             },
             Column {
                 name: "val".into(),
                 dtype: ColumnType::Int,
                 primary_key: false,
+                not_null: false,
+                default: None,
             },
         ];
         let mut table = Table::new("items".into(), cols).unwrap();
