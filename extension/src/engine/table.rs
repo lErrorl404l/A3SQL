@@ -313,14 +313,16 @@ impl Table {
         if self.columns.iter().any(|c| c.name == name) {
             return Err(format!("Column '{}' already exists", name));
         }
+        let idx = self.columns.len();
         self.columns.push(Column {
-            name,
+            name: name.clone(),
             dtype,
             primary_key: false,
             not_null: false,
             default: None,
             auto_increment: false,
         });
+        self.col_index.insert(name, idx);
         for row in &mut self.rows {
             row.push(DbValue::Null);
         }

@@ -173,6 +173,13 @@ pub fn execute(stmt: &Statement, db: &mut Database) -> Result<String, String> {
                         db.get_table_mut(&table_name)?.rename_column(&old_name, &new_name)?;
                         format!("\"Column '{}' renamed to '{}'\"", old_name, new_name)
                     }
+                    sqlparser::ast::AlterTableOperation::RenameTable {
+                        table_name: new_name_info,
+                    } => {
+                        let new_name = new_name_info.to_string().to_lowercase();
+                        db.rename_table(&table_name, &new_name)?;
+                        format!("\"Table renamed to '{}'\"", new_name)
+                    }
                     _ => return Err(format!("ALTER TABLE operation not supported: {:?}", operation)),
                 };
                 results.push(result);
@@ -694,6 +701,44 @@ fn exec_select(query: &Query, db: &mut Database) -> Result<String, String> {
     // Route to multi-table handler if FROM has JOINs OR multiple tables
     if has_multiple_tables(select) {
         return exec_select_joins(query, select, db);
+    }
+
+    // Handle bare SELECT without FROM clause
+    if select.from.is_empty() {
+        let row: &[DbValue] = &[];
+        let empty_cols: HashMap<String, usize> = HashMap::new();
+        let header: Vec<String> = select
+            .projection
+            .iter()
+            .map(|item| match item {
+                SelectItem::UnnamedExpr(e) => projection_expr_name(e),
+                SelectItem::ExprWithAlias { alias, .. } => alias.value.to_lowercase(),
+                SelectItem::Wildcard { .. } => "*".into(),
+                _ => format!("{:?}", item),
+            })
+            .collect();
+        let mut cells: Vec<String> = Vec::new();
+        for item in &select.projection {
+            let expr = match item {
+                SelectItem::UnnamedExpr(e) => e,
+                SelectItem::ExprWithAlias { expr: e, .. } => e,
+                _ => {
+                    cells.push("null".into());
+                    continue;
+                }
+            };
+            match eval_expr(expr, row, &empty_cols) {
+                Ok(v) => cells.push(v.to_json_string()),
+                Err(_) => cells.push("null".into()),
+            }
+        }
+        let h = header
+            .iter()
+            .map(|h| format!("\"{}\"", h))
+            .collect::<Vec<_>>()
+            .join(",");
+        let c = cells.join(",");
+        return Ok(format!("[[{}],[{}]]", h, c));
     }
 
     // Resolve table (single-table)
