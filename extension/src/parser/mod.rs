@@ -20,8 +20,7 @@ mod tests {
 
     #[test]
     fn parse_create_table() {
-        let sql =
-            "CREATE TABLE weapons (id STRING PRIMARY KEY, caliber STRING, barrelLength FLOAT)";
+        let sql = "CREATE TABLE weapons (id STRING PRIMARY KEY, caliber STRING, barrelLength FLOAT)";
         let stmts = parse_sql(sql).unwrap();
         assert!(!stmts.is_empty());
         assert!(matches!(&stmts[0], Statement::CreateTable { .. }));

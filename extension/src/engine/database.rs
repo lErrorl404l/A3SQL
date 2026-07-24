@@ -11,7 +11,7 @@ struct Snapshot {
     tables: HashMap<String, Table>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Database {
     tables: HashMap<String, Table>,
     /// Stack of savepoints for transaction rollback.

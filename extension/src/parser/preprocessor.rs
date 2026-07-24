@@ -143,10 +143,7 @@ mod tests {
 
     #[test]
     fn normal_sql_unchanged() {
-        assert_eq!(
-            preprocess("SELECT * FROM t WHERE x = 1"),
-            "SELECT * FROM t WHERE x = 1"
-        );
+        assert_eq!(preprocess("SELECT * FROM t WHERE x = 1"), "SELECT * FROM t WHERE x = 1");
     }
 
     #[test]
@@ -159,10 +156,7 @@ mod tests {
 
     #[test]
     fn fuzzy_table_col() {
-        assert_eq!(
-            preprocess("WHERE t.col %% 'test'"),
-            "WHERE fuzzy_match(t.col,'test')"
-        );
+        assert_eq!(preprocess("WHERE t.col %% 'test'"), "WHERE fuzzy_match(t.col,'test')");
     }
 
     #[test]
@@ -218,10 +212,7 @@ mod tests {
 
     #[test]
     fn identifier_with_underscores() {
-        assert_eq!(
-            preprocess("WHERE my_col %% 'val'"),
-            "WHERE fuzzy_match(my_col,'val')"
-        );
+        assert_eq!(preprocess("WHERE my_col %% 'val'"), "WHERE fuzzy_match(my_col,'val')");
     }
 
     #[test]

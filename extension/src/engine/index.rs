@@ -90,10 +90,7 @@ impl BTreeIndex {
 
     /// Scan all entries.
     pub fn all_entries(&self) -> Vec<usize> {
-        self.entries
-            .values()
-            .flat_map(|v| v.iter().copied())
-            .collect()
+        self.entries.values().flat_map(|v| v.iter().copied()).collect()
     }
 }
 
@@ -223,11 +220,7 @@ fn value_to_plain(v: &DbValue) -> String {
         DbValue::Float(f) => f.to_string(),
         DbValue::String(s) => s.clone(),
         DbValue::Strings(arr) => arr.join(" "),
-        DbValue::Floats(arr) => arr
-            .iter()
-            .map(|f| f.to_string())
-            .collect::<Vec<_>>()
-            .join(" "),
+        DbValue::Floats(arr) => arr.iter().map(|f| f.to_string()).collect::<Vec<_>>().join(" "),
     }
 }
 
@@ -286,11 +279,7 @@ mod tests {
         idx.insert(2, &DbValue::String("hlc_ak74".into()));
 
         let candidates = idx.candidates("rhs_m4");
-        assert!(
-            candidates.contains(&0),
-            "rhs_m4a1 should match, got: {:?}",
-            candidates
-        );
+        assert!(candidates.contains(&0), "rhs_m4a1 should match, got: {:?}", candidates);
         assert!(candidates.contains(&1), "rhs_m4a1_carryhandle should match");
     }
 

@@ -12,6 +12,7 @@ use super::database::Database;
 use super::index::IndexType as A3IndexType;
 use super::table::Table;
 use super::value::{Column, ColumnType, DbValue};
+use crate::DB;
 
 // ── Public entry point ──────────────────────────────────────────────────
 
@@ -1082,6 +1083,16 @@ fn eval_expr(expr: &Expr, row: &[DbValue], col_map: &HashMap<String, usize>) -> 
             Ok(DbValue::Bool(if *negated { !found } else { found }))
         }
         Expr::Function(func) => exec_function(func, row, col_map),
+        Expr::InSubquery {
+            expr,
+            subquery,
+            negated,
+        } => {
+            let val = eval_expr(expr, row, col_map)?;
+            let subq_result = exec_subquery(subquery)?;
+            let found = subq_result.contains(&val);
+            Ok(DbValue::Bool(if *negated { !found } else { found }))
+        }
         _ => Err(format!("Unsupported expression: {:?}", expr)),
     }
 }
@@ -1383,6 +1394,57 @@ fn try_btree_index<'a>(where_expr: Option<&Expr>, table: &'a Table) -> Option<Ve
     };
     let indices = table.btree_lookup(&col_name, &value)?;
     Some(indices.into_iter().map(|i| table.rows[i].as_slice()).collect())
+}
+
+// ── Subquery execution ────────────────────────────────────────────────
+
+/// Execute a subquery (SELECT) and return the first column of each row.
+/// Uses the global DB — must NOT be called while the DB mutex is held.
+fn exec_subquery(query: &Query) -> Result<Vec<DbValue>, String> {
+    // Clone the DB state to avoid deadlock (eval_expr is called with DB locked)
+    let db_snapshot = {
+        let db_guard = DB.lock().unwrap();
+        Database::clone(&db_guard)
+    };
+    let mut db_copy = db_snapshot;
+    let result_str = exec_select(query, &mut db_copy)?;
+    // Parse the JSON result to extract first-column values
+    // Result format: [0,"OK",[["header1"],[val1],[val2],...]]
+    let mut values = Vec::new();
+    if let Some(data_start) = result_str.find("[0,\"OK\",[") {
+        let after = &result_str[data_start + 9..];
+        if let Some(data_end) = after.rfind("]]") {
+            let inner = &after[..data_end + 1]; // includes inner array's closing ]
+                                                // Parse inner as JSON array: [["header"],[val1],[val2]]
+            if let Ok(parsed) = serde_json::from_str::<Vec<serde_json::Value>>(inner) {
+                for row in parsed.iter().skip(1) {
+                    if let Some(arr) = row.as_array() {
+                        if let Some(first) = arr.first() {
+                            values.push(json_value_to_dbvalue(first));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(values)
+}
+
+/// Convert a serde_json::Value to a DbValue.
+fn json_value_to_dbvalue(v: &serde_json::Value) -> DbValue {
+    match v {
+        serde_json::Value::Null => DbValue::Null,
+        serde_json::Value::Bool(b) => DbValue::Bool(*b),
+        serde_json::Value::Number(n) => {
+            if let Some(i) = n.as_i64() {
+                DbValue::Int(i)
+            } else {
+                DbValue::Float(n.as_f64().unwrap_or(0.0))
+            }
+        }
+        serde_json::Value::String(s) => DbValue::String(s.clone()),
+        _ => DbValue::String(v.to_string()),
+    }
 }
 
 // ── CREATE INDEX handling ──────────────────────────────────────────────

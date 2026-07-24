@@ -22,16 +22,14 @@ use std::os::raw::c_char;
 use std::sync::{LazyLock, Mutex};
 
 /// Global database instance (single-threaded, mutex-protected).
-static DB: LazyLock<Mutex<engine::Database>> =
-    LazyLock::new(|| Mutex::new(engine::Database::new()));
+pub(crate) static DB: LazyLock<Mutex<engine::Database>> = LazyLock::new(|| Mutex::new(engine::Database::new()));
 
 /// Optional pointer to the SQF callback function registered by the engine.
 static CALLBACK: LazyLock<Mutex<Option<unsafe extern "C" fn(i32, *mut std::os::raw::c_char)>>> =
     LazyLock::new(|| Mutex::new(None));
 
 // ponytail: external TCP listener — global lock on a single listener
-static LISTENER: LazyLock<Mutex<Option<std::net::TcpListener>>> =
-    LazyLock::new(|| Mutex::new(None));
+static LISTENER: LazyLock<Mutex<Option<std::net::TcpListener>>> = LazyLock::new(|| Mutex::new(None));
 
 // ── ABI ─────────────────────────────────────────────────────────────────────
 
@@ -56,11 +54,7 @@ pub unsafe extern "C" fn RVExtensionVersion(output: *mut c_char, output_size: u3
 /// # Safety
 /// `output` and `function` must be valid, non-null pointers to C string buffers.
 #[no_mangle]
-pub unsafe extern "C" fn RVExtension(
-    output: *mut c_char,
-    output_size: u32,
-    function: *const c_char,
-) {
+pub unsafe extern "C" fn RVExtension(output: *mut c_char, output_size: u32, function: *const c_char) {
     if output.is_null() || function.is_null() {
         return;
     }
@@ -127,9 +121,7 @@ pub unsafe extern "C" fn RVExtensionArgs(
 /// # Safety
 /// `callbackProc` must be a valid function pointer provided by the Arma engine.
 #[no_mangle]
-pub unsafe extern "C" fn RVExtensionRegisterCallback(
-    callbackProc: Option<unsafe extern "C" fn(i32, *mut c_char)>,
-) {
+pub unsafe extern "C" fn RVExtensionRegisterCallback(callbackProc: Option<unsafe extern "C" fn(i32, *mut c_char)>) {
     let mut cb = CALLBACK.lock().unwrap();
     *cb = callbackProc;
 }
@@ -429,11 +421,7 @@ fn handle_export_to_file(trimmed: &str, args: &[&str]) -> String {
     let format_str = parts.get(1).copied().unwrap_or("json");
     let has_table = parts.len() > 2 && !parts[2].is_empty();
     let table_name = if has_table { parts.get(2) } else { None };
-    let cmd_path = if has_table {
-        parts.get(3)
-    } else {
-        parts.get(2)
-    };
+    let cmd_path = if has_table { parts.get(3) } else { parts.get(2) };
     let file_path: String = match cmd_path.or_else(|| args.first()) {
         Some(p) => p.to_string(),
         None => {
@@ -464,12 +452,7 @@ fn handle_export_to_file(trimmed: &str, args: &[&str]) -> String {
         _ => {
             let name = match table_name {
                 Some(n) if !n.is_empty() => n,
-                _ => {
-                    return error_response(
-                        ErrorCode::Exec,
-                        "Table name required for json/csv export",
-                    )
-                }
+                _ => return error_response(ErrorCode::Exec, "Table name required for json/csv export"),
             };
             let db = DB.lock().unwrap();
             let table = match db.get_table(name) {
@@ -528,11 +511,7 @@ mod tests {
     #[test]
     fn dispatch_bad_sql() {
         let result = dispatch("NOT VALID SQL $$$", &[]);
-        assert!(
-            result.contains("ERR_PARSE"),
-            "expected ERR_PARSE, got: {}",
-            result
-        );
+        assert!(result.contains("ERR_PARSE"), "expected ERR_PARSE, got: {}", result);
     }
 
     #[test]
@@ -605,10 +584,7 @@ mod tests {
 
     #[test]
     fn abi_fuzzy_match() {
-        let r = dispatch(
-            "CREATE TABLE abi_fuzzy (id STRING PRIMARY KEY, val STRING)",
-            &[],
-        );
+        let r = dispatch("CREATE TABLE abi_fuzzy (id STRING PRIMARY KEY, val STRING)", &[]);
         if !r.contains("\"OK\"") && !r.contains("already exists") {
             panic!("create: {}", r);
         }
@@ -616,10 +592,7 @@ mod tests {
         assert!(r.contains("\"OK\""), "insert1: {}", r);
         let r = dispatch("INSERT INTO abi_fuzzy VALUES ('f2_m4', 'rhs_m4_gl')", &[]);
         assert!(r.contains("\"OK\""), "insert2: {}", r);
-        dispatch(
-            "INSERT INTO abi_fuzzy VALUES ('f3_other', 'other_thing')",
-            &[],
-        );
+        dispatch("INSERT INTO abi_fuzzy VALUES ('f3_other', 'other_thing')", &[]);
 
         // 'rhs_m4' has Jaccard ~0.5 with 'rhs_m4a1' and 'rhs_m4_gl' — above 0.3 threshold
         let r = dispatch("SELECT id FROM abi_fuzzy WHERE val %% 'rhs_m4'", &[]);
@@ -628,10 +601,7 @@ mod tests {
         assert!(!r.contains("f3_other"), "fuzzy no match: {}", r);
 
         // Fuzzy with CONCAT on LHS
-        let r = dispatch(
-            "SELECT * FROM abi_fuzzy WHERE CONCAT(val, 'X') %% 'hell'",
-            &[],
-        );
+        let r = dispatch("SELECT * FROM abi_fuzzy WHERE CONCAT(val, 'X') %% 'hell'", &[]);
         assert!(r.contains("\"OK\""), "fuzzy concat: {}", r);
     }
 
@@ -695,10 +665,7 @@ mod tests {
     #[test]
     fn abi_export_import_json_roundtrip() {
         // JSON export via dispatch("export json <table>", &[])
-        dispatch(
-            "CREATE TABLE abi_ej (k STRING PRIMARY KEY, val STRING)",
-            &[],
-        );
+        dispatch("CREATE TABLE abi_ej (k STRING PRIMARY KEY, val STRING)", &[]);
         dispatch("INSERT INTO abi_ej VALUES ('a', 'alpha')", &[]);
         dispatch("INSERT INTO abi_ej VALUES ('b', 'beta')", &[]);
 
@@ -783,18 +750,12 @@ mod tests {
 
     #[test]
     fn abi_aggregates() {
-        dispatch(
-            "CREATE TABLE abi_ag (k STRING PRIMARY KEY, grp STRING, v INT)",
-            &[],
-        );
+        dispatch("CREATE TABLE abi_ag (k STRING PRIMARY KEY, grp STRING, v INT)", &[]);
         dispatch("INSERT INTO abi_ag VALUES ('a', 'x', 10)", &[]);
         dispatch("INSERT INTO abi_ag VALUES ('b', 'x', 20)", &[]);
         dispatch("INSERT INTO abi_ag VALUES ('c', 'y', 30)", &[]);
 
-        let r = dispatch(
-            "SELECT COUNT(*), SUM(v), AVG(v), MIN(v), MAX(v) FROM abi_ag",
-            &[],
-        );
+        let r = dispatch("SELECT COUNT(*), SUM(v), AVG(v), MIN(v), MAX(v) FROM abi_ag", &[]);
         assert!(r.contains("3"), "count: {}", r);
         assert!(r.contains("60"), "sum: {}", r);
         assert!(r.contains("20"), "avg: {}", r);
@@ -847,10 +808,7 @@ mod tests {
 
     #[test]
     fn abi_like_operator() {
-        dispatch(
-            "CREATE TABLE abi_lk (k STRING PRIMARY KEY, val STRING)",
-            &[],
-        );
+        dispatch("CREATE TABLE abi_lk (k STRING PRIMARY KEY, val STRING)", &[]);
         dispatch("INSERT INTO abi_lk VALUES ('a', 'hello')", &[]);
         dispatch("INSERT INTO abi_lk VALUES ('b', 'help')", &[]);
         dispatch("INSERT INTO abi_lk VALUES ('c', 'world')", &[]);
@@ -864,10 +822,7 @@ mod tests {
     #[test]
     fn dispatch_large_result_truncation_guard() {
         // Insert enough rows to exceed the 10KB output buffer
-        dispatch(
-            "CREATE TABLE buf_test (id STRING PRIMARY KEY, data STRING)",
-            &[],
-        );
+        dispatch("CREATE TABLE buf_test (id STRING PRIMARY KEY, data STRING)", &[]);
         let big_str = "x".repeat(500);
         for i in 0..25 {
             let sql = format!(
