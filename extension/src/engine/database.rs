@@ -43,9 +43,11 @@ impl Database {
     }
 
     /// Rollback the active transaction — restore the snapshot.
+    /// No-op when no transaction is active (matching PostgreSQL behaviour).
     pub fn rollback(&mut self) -> Result<(), String> {
-        let snap = self.savepoints.pop().ok_or("No active transaction".to_string())?;
-        self.tables = snap.tables;
+        if let Some(snap) = self.savepoints.pop() {
+            self.tables = snap.tables;
+        }
         Ok(())
     }
 
