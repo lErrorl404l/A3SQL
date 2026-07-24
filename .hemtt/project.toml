@@ -22,5 +22,15 @@ minor = 1
 patch = 0
 git_hash = 0
 
+[hemtt.launch.default]
+workshop = [
+    "450814997", # CBA_A3
+]
+mission = "test.VR"
+parameters = [
+    "-world=VR",
+]
+file_patching = false
+
 [hemtt.release]
 folder = "a3db"
