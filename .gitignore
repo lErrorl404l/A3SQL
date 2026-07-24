@@ -33,3 +33,4 @@ a3db.so
 *.zip
 release/
 releases/
+docs/wiki/.git
