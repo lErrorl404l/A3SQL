@@ -152,3 +152,25 @@ jobs:
         with:
           files: ./a3db-release.zip
           name: a3db-${{ github.event.release.tag_name }}
+
+  workshop:
+    name: Publish to Steam Workshop
+    if: github.event_name == 'release' && secrets.STEAM_WORKSHOP_PUBLISHEDID != ''
+    needs: [build-addon]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install HEMTT
+        uses: arma-actions/hemtt@v1
+      - name: Download addon
+        uses: actions/download-artifact@v4
+        with:
+          name: a3db-addon
+          path: .hemttout/build
+      - name: Set publishedid
+        run: |
+          echo 'publishedid = ${{ secrets.STEAM_WORKSHOP_PUBLISHEDID }}' > meta.cpp
+      - name: Publish
+        run: hemtt publish --steam-user '${{ secrets.STEAM_USERNAME }}' --steam-pass '${{ secrets.STEAM_PASSWORD }}'
+        env:
+          HEMTT_STEAM_GUARD_CODE: ${{ secrets.STEAM_GUARD_CODE }}
