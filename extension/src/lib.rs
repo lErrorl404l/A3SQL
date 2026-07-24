@@ -387,12 +387,27 @@ fn handle_export(input: &str, _args: &[&str]) -> String {
     match format {
         engine::serialize::Format::Sql => {
             let sql = engine::serialize::export_sql(&db);
-            ok_response(&sql)
+            let encoded = ::serde_json::to_string(&sql).unwrap_or_else(|_| "\"\"".into());
+            ok_response(&encoded)
         }
         engine::serialize::Format::Binary => {
             let bytes = engine::serialize::export_binary(&db);
             let hex = engine::serialize::hex_encode(&bytes);
             ok_response(&format!("\"{}\"", hex))
+        }
+        engine::serialize::Format::Csv => {
+            let name = match table_name {
+                Some(n) if !n.is_empty() => n,
+                _ => return error_response(ErrorCode::Exec, "Usage: export <format> <table>"),
+            };
+            match db.get_table(name) {
+                Ok(table) => {
+                    let data = engine::serialize::export(format, table, &db);
+                    let encoded = ::serde_json::to_string(&data).unwrap_or_else(|_| "\"\"".into());
+                    ok_response(&encoded)
+                }
+                Err(e) => error_response(ErrorCode::Table, &e),
+            }
         }
         _ => {
             let name = match table_name {
@@ -439,7 +454,9 @@ fn handle_import(input: &str, args: &[&str]) -> String {
 fn handle_dump_sql() -> String {
     let db = DB.lock().unwrap();
     let sql = engine::serialize::export_sql(&db);
-    ok_response(&format!("\"{}\"", sql.replace('"', "\"\"")))
+    // JSON-encode the SQL string so it survives CBA_fnc_parseJSON
+    let encoded = ::serde_json::to_string(&sql).unwrap_or_else(|_| format!("\"{}\"", ""));
+    ok_response(&encoded)
 }
 
 fn handle_save(args: &[&str]) -> String {
@@ -1019,7 +1036,12 @@ mod tests {
     }
 
     #[test]
-    fn abi_extern_version() {
+    fn abi_extern_full_sequence() {
+        // Single sequential test for all C ABI calls. The global DB is shared by ALL
+        // parallel tests, so running these as separate functions would cause conflicts.
+        // This simulates the EXACT callExtension path Arma 3 uses.
+
+        // 1. RVExtensionVersion
         let mut out = vec![0u8; 256];
         unsafe {
             RVExtensionVersion(out.as_mut_ptr() as *mut c_char, out.len() as u32);
@@ -1028,56 +1050,134 @@ mod tests {
                 .into_owned();
             assert!(v.len() > 5 && v.contains("0.1.0"), "RVExtensionVersion: {}", v);
         }
-    }
 
-    #[test]
-    fn abi_extern_string() {
+        // 2. RVExtension string form — simulates: "a3db" callExtension "version"
         let r = abi_call("version");
-        assert!(r.starts_with("[0,"), "version via string ABI: {}", r);
-    }
+        assert!(r.starts_with("[0,"), "string ABI version: {}", r);
 
-    #[test]
-    fn abi_extern_create_insert_select() {
-        // Full round-trip through the C ABI — exact path Arma 3 uses
-        // Use unique table name to avoid conflicts with parallel tests
-        let r = abi_call("CREATE TABLE abi_ext2 (id STRING PRIMARY KEY, val INT)");
-        assert!(r.contains("\"OK\""), "create: {}", r);
-
-        let r = abi_call("INSERT INTO abi_ext2 VALUES ('a', 10)");
-        assert!(r.contains("\"OK\""), "insert: {}", r);
-
-        let r = abi_call("INSERT INTO abi_ext2 VALUES ('b', 20)");
-        assert!(r.contains("\"OK\""), "insert2: {}", r);
-
-        let r = abi_call("SELECT * FROM abi_ext2");
-        assert!(r.contains("a"), "select: {}", r);
-        assert!(r.contains("b"), "select: {}", r);
-        assert!(r.contains("10"), "select val: {}", r);
-    }
-
-    #[test]
-    fn abi_extern_args() {
-        // Test the array callExtension path (RVExtensionArgs)
+        // 3. RVExtensionArgs array form — simulates: "a3db" callExtension ["version", []]
         let r = abi_call_args("version", &[]);
-        assert!(r.starts_with("[0,"), "args version: {}", r);
+        assert!(r.starts_with("[0,"), "args ABI version: {}", r);
+
+        // 4. Full CRUD lifecycle through string ABI
+        let tname = "abi_ext_seq";
+        let r = abi_call(&format!("CREATE TABLE {} (id STRING PRIMARY KEY, val INT)", tname));
+        assert!(r.contains("\"OK\""), "create: {}", r);
+        let r = abi_call(&format!("INSERT INTO {} VALUES ('a', 10)", tname));
+        assert!(r.contains("\"OK\""), "insert: {}", r);
+        let r = abi_call(&format!("INSERT INTO {} VALUES ('b', 20)", tname));
+        assert!(r.contains("\"OK\""), "insert2: {}", r);
+        let r = abi_call(&format!("SELECT * FROM {}", tname));
+        assert!(r.contains("a"), "select a: {}", r);
+        assert!(r.contains("b"), "select b: {}", r);
+
+        // 5. Parameterized query — simulates secure SQF pattern
+        let evil = "foo' OR '1'='1";
+        let r = abi_call_args(&format!("SELECT * FROM {} WHERE id = $1", tname), &[evil]);
+        assert!(r.contains("\"OK\""), "injection should be blocked: {}", r);
+        assert!(r.len() < 80, "injection returned data: {}", r);
+    }
+
+    // ── Response format validation — every SQF function's return matches CBA_fnc_parseJSON ──
+
+    /// Validate that a response string is a CBA-parseable array: [code, "OK|ERR_*", data].
+    /// Returns the parsed (code, status, data_len) tuple for further assertions.
+    fn validate_response(resp: &str) -> (i64, String, usize) {
+        // Must start with '[' and end with ']'
+        assert!(resp.starts_with('['), "must start with [: {}", resp);
+        assert!(resp.ends_with(']'), "must end with ]: {}", resp);
+
+        // Parse as JSON array of 3 elements
+        let parsed: Vec<::serde_json::Value> =
+            ::serde_json::from_str(resp).unwrap_or_else(|e| panic!("invalid JSON response '{}': {}", resp, e));
+
+        assert_eq!(parsed.len(), 3, "response must be a 3-element array: {}", resp);
+
+        let code = parsed[0]
+            .as_i64()
+            .unwrap_or_else(|| panic!("element[0] must be integer: {}", resp));
+        assert!((-1..=0).contains(&code), "error code must be -1 or 0: got {}", code);
+
+        let status = parsed[1]
+            .as_str()
+            .unwrap_or_else(|| panic!("element[1] must be string: {}", resp))
+            .to_string();
+        assert!(
+            status == "OK" || status.starts_with("ERR_"),
+            "status must be 'OK' or 'ERR_*': got '{}'",
+            status
+        );
+
+        // Third element can be anything — string, array, object
+        let data_len = parsed[2].to_string().len();
+
+        (code, status, data_len)
     }
 
     #[test]
-    fn abi_extern_sql_injection_via_params() {
-        // Create own table — tests share global DB, can't depend on other tests
-        abi_call("CREATE TABLE abi_ext3 (id STRING PRIMARY KEY, val INT)");
-        abi_call("INSERT INTO abi_ext3 VALUES ('a', 10)");
+    fn resp_fmt_full_sequence() {
+        // Sequential: all response-format validations in one test to avoid DB conflicts
 
-        // Simulate safe SQF: callExtension ["SELECT * FROM users WHERE name = $1", [evil_input]]
-        let evil = "foo' OR '1'='1";
-        let r = abi_call_args("SELECT * FROM abi_ext3 WHERE id = $1", &[evil]);
-        // With parameterized query, the $1 is escaped as a string literal, so the query
-        // becomes: SELECT * FROM abi_ext WHERE id = 'foo'' OR ''1''=''1'
-        // The escaped value should match no rows — response OK with headers only
-        // Verify: no injection (no rows returned for the OR injection)
-        assert!(r.contains("\"OK\""), "injection test: {}", r);
-        // Headers-only response for abi_ext has ~50 chars; rows returned would be longer
-        assert!(r.len() < 80, "injection returned data (exploit): {}", r);
+        // 1. version
+        let r = abi_call("version");
+        let (c, s, _) = validate_response(&r);
+        assert_eq!(c, 0);
+        assert_eq!(s, "OK");
+
+        // 2. CREATE
+        let r = abi_call("CREATE TABLE resp_seq (id STRING PRIMARY KEY, val INT)");
+        let (c, _, _) = validate_response(&r);
+        assert_eq!(c, 0, "create: {}", r);
+
+        // 3. INSERT
+        let r = abi_call("INSERT INTO resp_seq VALUES ('a', 10)");
+        let (c, _, _) = validate_response(&r);
+        assert_eq!(c, 0);
+
+        // 4. SELECT
+        let r = abi_call("SELECT * FROM resp_seq");
+        let (_, s, _) = validate_response(&r);
+        assert_eq!(s, "OK");
+
+        // 5. export json
+        let r = abi_call("export json resp_seq");
+        let (c, _, _) = validate_response(&r);
+        assert_eq!(c, 0, "export json: {}", r);
+
+        // 6. export csv
+        let r = abi_call("export csv resp_seq");
+        let (c, _, _) = validate_response(&r);
+        assert_eq!(c, 0, "export csv: {}", r);
+
+        // 7. dump_sql
+        let r = abi_call("dump_sql");
+        let (c, s, _) = validate_response(&r);
+        assert_eq!(c, 0);
+        assert_eq!(s, "OK");
+
+        // 8. save/load
+        let tmp = std::env::temp_dir().join("a3db_resp_seq.bin");
+        let path = tmp.to_string_lossy().to_string();
+        let r = abi_call_args("save", &[&path]);
+        let (c, _, _) = validate_response(&r);
+        assert_eq!(c, 0);
+        let r = abi_call_args("load", &[&path]);
+        let (c, s, _) = validate_response(&r);
+        assert_eq!(c, 0, "load: {}", r);
+        assert_eq!(s, "OK");
+        let _ = std::fs::remove_file(&path);
+
+        // 9. error: bad table
+        let r = abi_call("SELECT * FROM resp_bad");
+        let (c, s, _) = validate_response(&r);
+        assert_eq!(c, -1);
+        assert!(s.starts_with("ERR_"));
+
+        // 10. error: bad SQL
+        let r = abi_call("NOT VALID SQL");
+        let (c, s, _) = validate_response(&r);
+        assert_eq!(c, -1);
+        assert!(s.starts_with("ERR_"));
     }
 
     #[test]
