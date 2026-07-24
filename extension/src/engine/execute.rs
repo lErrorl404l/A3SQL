@@ -165,10 +165,21 @@ fn exec_create_table(def: &sqlparser::ast::CreateTable, db: &mut Database) -> Re
         let mut is_pk = false;
         let mut is_not_null = false;
         let mut default_val: Option<DbValue> = None;
+        let mut auto_inc = false;
         for opt_def in &col_def.options {
             match &opt_def.option {
                 ColumnOption::PrimaryKey(_) | ColumnOption::Unique { .. } => is_pk = true,
                 ColumnOption::NotNull => is_not_null = true,
+                ColumnOption::DialectSpecific(tokens) => {
+                    let has_auto = tokens.iter().any(|t| {
+                        let s = t.to_string().to_lowercase().replace('"', "");
+                        s == "auto_increment" || s == "autoincrement"
+                    });
+                    if has_auto {
+                        is_pk = true;
+                        auto_inc = true;
+                    }
+                }
                 ColumnOption::Default(expression) => {
                     // Evaluate default expression (literal only)
                     match expression {
@@ -191,8 +202,9 @@ fn exec_create_table(def: &sqlparser::ast::CreateTable, db: &mut Database) -> Re
             name: col_name,
             dtype,
             primary_key: is_pk,
-            not_null: is_not_null || is_pk,
+            not_null: is_not_null,
             default: default_val,
+            auto_increment: auto_inc,
         });
     }
 
@@ -283,6 +295,16 @@ fn exec_insert(ins: &sqlparser::ast::Insert, db: &mut Database) -> Result<String
 
     // Now we have the rows; borrow table for column mapping and insertion
     let table = db.get_table_mut(&table_name)?;
+
+    // Pre-collect auto_increment indices before the row loop (avoids borrow conflicts)
+    let auto_inc_cols: Vec<usize> = table
+        .columns
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| c.auto_increment)
+        .map(|(i, _)| i)
+        .collect();
+
     let explicit_cols: Option<Vec<usize>> = if !ins.columns.is_empty() {
         Some(
             ins.columns
@@ -318,6 +340,14 @@ fn exec_insert(ins: &sqlparser::ast::Insert, db: &mut Database) -> Result<String
         for (j, expr) in row_exprs.iter().enumerate() {
             let col_idx = col_indices[j];
             full_row[col_idx] = eval_literal_expr(expr)?;
+        }
+
+        // Apply AUTO_INCREMENT: fill NULL auto-inc columns with next sequence value
+        for ci in &auto_inc_cols {
+            if matches!(full_row[*ci], DbValue::Null) {
+                full_row[*ci] = DbValue::Int(table.next_auto_inc);
+                table.next_auto_inc += 1;
+            }
         }
 
         let result = table.insert(full_row.clone());
@@ -2145,6 +2175,7 @@ mod tests {
                 primary_key: true,
                 not_null: false,
                 default: None,
+                auto_increment: false,
             },
             Column {
                 name: "name".into(),
@@ -2152,6 +2183,7 @@ mod tests {
                 primary_key: false,
                 not_null: false,
                 default: None,
+                auto_increment: false,
             },
             Column {
                 name: "value".into(),
@@ -2159,6 +2191,7 @@ mod tests {
                 primary_key: false,
                 not_null: false,
                 default: None,
+                auto_increment: false,
             },
         ];
         let table = Table::new("items".into(), cols).unwrap();
@@ -2293,6 +2326,7 @@ mod tests {
                 primary_key: false,
                 not_null: false,
                 default: None,
+                auto_increment: false,
             },
             Column {
                 name: "val".into(),
@@ -2300,6 +2334,7 @@ mod tests {
                 primary_key: false,
                 not_null: false,
                 default: None,
+                auto_increment: false,
             },
         ];
         let mut table = Table::new("data".into(), cols).unwrap();
@@ -2374,6 +2409,7 @@ mod tests {
                 primary_key: false,
                 not_null: false,
                 default: None,
+                auto_increment: false,
             },
             Column {
                 name: "v".into(),
@@ -2381,6 +2417,7 @@ mod tests {
                 primary_key: false,
                 not_null: false,
                 default: None,
+                auto_increment: false,
             },
         ];
         let t = Table::new("bulk".into(), cols).unwrap();
@@ -2422,6 +2459,7 @@ mod tests {
                 primary_key: true,
                 not_null: false,
                 default: None,
+                auto_increment: false,
             },
             Column {
                 name: "v".into(),
@@ -2429,6 +2467,7 @@ mod tests {
                 primary_key: false,
                 not_null: false,
                 default: None,
+                auto_increment: false,
             },
         ];
         let t = Table::new("idx_test".into(), cols).unwrap();
@@ -2451,6 +2490,7 @@ mod tests {
             primary_key: false,
             not_null: false,
             default: None,
+            auto_increment: false,
         }];
         let mut ta = Table::new("ta".into(), ca).unwrap();
         ta.insert(vec![DbValue::Int(1)]).unwrap();
@@ -2462,6 +2502,7 @@ mod tests {
             primary_key: false,
             not_null: false,
             default: None,
+            auto_increment: false,
         }];
         let mut tb = Table::new("tb".into(), cb).unwrap();
         tb.insert(vec![DbValue::String("a".into())]).unwrap();
@@ -2484,6 +2525,7 @@ mod tests {
                 primary_key: false,
                 not_null: false,
                 default: None,
+                auto_increment: false,
             },
             Column {
                 name: "v".into(),
@@ -2491,6 +2533,7 @@ mod tests {
                 primary_key: false,
                 not_null: false,
                 default: None,
+                auto_increment: false,
             },
         ];
         let mut ta = Table::new("a".into(), ca).unwrap();
@@ -2504,6 +2547,7 @@ mod tests {
                 primary_key: false,
                 not_null: false,
                 default: None,
+                auto_increment: false,
             },
             Column {
                 name: "d".into(),
@@ -2511,6 +2555,7 @@ mod tests {
                 primary_key: false,
                 not_null: false,
                 default: None,
+                auto_increment: false,
             },
         ];
         let mut tb = Table::new("b".into(), cb).unwrap();
@@ -2533,6 +2578,7 @@ mod tests {
             primary_key: false,
             not_null: false,
             default: None,
+            auto_increment: false,
         }];
         let mut ta = Table::new("a".into(), ca).unwrap();
         ta.insert(vec![DbValue::String("x".into())]).unwrap();
@@ -2544,6 +2590,7 @@ mod tests {
             primary_key: false,
             not_null: false,
             default: None,
+            auto_increment: false,
         }];
         let mut tb = Table::new("b".into(), cb).unwrap();
         tb.insert(vec![DbValue::String("x".into())]).unwrap();
@@ -2563,6 +2610,7 @@ mod tests {
                 primary_key: false,
                 not_null: false,
                 default: None,
+                auto_increment: false,
             },
             Column {
                 name: "n".into(),
@@ -2570,6 +2618,7 @@ mod tests {
                 primary_key: false,
                 not_null: false,
                 default: None,
+                auto_increment: false,
             },
         ];
         let mut ta = Table::new("u".into(), ca).unwrap();
@@ -2584,6 +2633,7 @@ mod tests {
                 primary_key: false,
                 not_null: false,
                 default: None,
+                auto_increment: false,
             },
             Column {
                 name: "r".into(),
@@ -2591,6 +2641,7 @@ mod tests {
                 primary_key: false,
                 not_null: false,
                 default: None,
+                auto_increment: false,
             },
         ];
         let mut tb = Table::new("r".into(), cb).unwrap();

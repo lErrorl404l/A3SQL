@@ -162,6 +162,7 @@ mod tests {
                 primary_key: true,
                 not_null: false,
                 default: None,
+                auto_increment: false,
             },
             Column {
                 name: "val".into(),
@@ -169,6 +170,7 @@ mod tests {
                 primary_key: false,
                 not_null: false,
                 default: None,
+                auto_increment: false,
             },
         ];
         let table = Table::new("items".into(), cols).unwrap();
@@ -199,6 +201,7 @@ mod tests {
             primary_key: false,
             not_null: false,
             default: None,
+            auto_increment: false,
         }];
         let t2 = Table::new("items".into(), cols).unwrap();
         assert!(db.create_table("items", t2).is_err());
@@ -213,6 +216,7 @@ mod tests {
             primary_key: false,
             not_null: false,
             default: None,
+            auto_increment: false,
         }];
         db.create_table("a", Table::new("a".into(), cols.clone()).unwrap())
             .unwrap();
