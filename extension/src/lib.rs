@@ -148,6 +148,9 @@ pub fn dispatch(input: &str, args: &[&str]) -> String {
     // ── Custom commands (handled before SQL parsing) ──────────────────
     // Normalise to lowercase for case-insensitive command matching
     let lowered = trimmed.to_lowercase();
+    if lowered == "ping" {
+        return ok_response("\"PONG\"");
+    }
     if lowered == "version" {
         return ok_response("\"a3db 0.1.0\"");
     }
