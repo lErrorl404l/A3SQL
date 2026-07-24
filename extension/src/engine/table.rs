@@ -306,6 +306,29 @@ impl Table {
     }
 
     /// Drop a column from the table. Removes the column and all its data.
+    /// Rename a column.
+    pub fn rename_column(&mut self, old_name: &str, new_name: &str) -> Result<(), String> {
+        let col = self
+            .columns
+            .iter_mut()
+            .find(|c| c.name == old_name)
+            .ok_or_else(|| format!("Column '{}' not found", old_name))?;
+        col.name = new_name.to_string();
+        // Update col_index map
+        self.col_index.remove(old_name);
+        self.col_index.insert(
+            new_name.to_string(),
+            self.columns.iter().position(|c| c.name == new_name).unwrap(),
+        );
+        Ok(())
+    }
+
+    /// Truncate — remove all rows.
+    pub fn truncate(&mut self) -> Result<(), String> {
+        self.rows.clear();
+        Ok(())
+    }
+
     pub fn drop_column(&mut self, name: &str) -> Result<(), String> {
         let idx = self
             .columns
@@ -381,6 +404,11 @@ impl Table {
             }
         }
         None
+    }
+
+    /// Check if an index with the given name exists.
+    pub fn has_index(&self, name: &str) -> bool {
+        self.indices.iter().any(|(m, _)| m.name == name)
     }
 
     /// Get the index implementation for a column, by type.

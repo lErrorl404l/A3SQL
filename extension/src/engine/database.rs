@@ -132,6 +132,16 @@ impl Database {
         self.tables.contains_key(name)
     }
 
+    /// Rename a table.
+    pub fn rename_table(&mut self, old_name: &str, new_name: &str) -> Result<(), String> {
+        let table = self
+            .tables
+            .remove(old_name)
+            .ok_or_else(|| format!("Table '{}' not found", old_name))?;
+        self.tables.insert(new_name.to_string(), table);
+        Ok(())
+    }
+
     /// Clear all tables (for testing / reset).
     pub fn clear(&mut self) {
         self.tables.clear();
