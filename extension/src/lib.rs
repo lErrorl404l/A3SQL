@@ -16,6 +16,7 @@ mod parser;
 
 use engine::error::{error_response, ok_response, A3dbError, ErrorCode};
 use engine::execute as engine_execute;
+
 use parser::parse_sql;
 use std::ffi::CStr;
 use std::os::raw::c_char;
@@ -31,6 +32,8 @@ static CALLBACK: LazyLock<Mutex<Option<unsafe extern "C" fn(i32, *mut std::os::r
 // ponytail: external TCP listener — global lock on a single listener
 static LISTENER: LazyLock<Mutex<Option<std::net::TcpListener>>> = LazyLock::new(|| Mutex::new(None));
 
+/// Stored credentials for TCP authentication. Empty = anonymous access.
+static CREDENTIALS: LazyLock<Mutex<(String, String)>> = LazyLock::new(|| Mutex::new((String::new(), String::new())));
 // Flag set by dispatch() when REPLACE INTO is detected before SQL parsing.
 // Read by exec_insert() to handle PK conflict via delete+re-insert.
 pub(crate) static REPLACE_FLAG: AtomicBool = AtomicBool::new(false);
@@ -179,6 +182,12 @@ fn dispatch(input: &str, args: &[&str]) -> String {
     }
     if trimmed == "stop_listen" || trimmed == "stop" {
         return handle_stop_listen();
+    }
+    if trimmed == "set_credentials" || trimmed.starts_with("set_credentials") {
+        let user = args.first().unwrap_or(&"");
+        let pass = args.get(1).copied().unwrap_or("");
+        *CREDENTIALS.lock().unwrap() = (user.to_string(), pass.to_string());
+        return ok_response("\"Credentials set\"");
     }
     if trimmed == "listen" || trimmed.starts_with("listen ") {
         let mut listen_args = args.to_vec();
@@ -476,7 +485,6 @@ fn handle_listen(args: &[&str]) -> String {
     *LISTENER.lock().unwrap() = None;
 
     let addr = format!("127.0.0.1:{}", port);
-    // ponytail: retry bind with delay to handle TIME_WAIT on stop+re-listen
     fn try_bind(addr: &str) -> Result<std::net::TcpListener, String> {
         let mut last_err = String::new();
         for i in 0..6 {
@@ -497,27 +505,69 @@ fn handle_listen(args: &[&str]) -> String {
         Err(e) => return error_response(ErrorCode::Io, &e),
     };
 
+    fn has_auth() -> bool {
+        let (user, pass) = CREDENTIALS.lock().unwrap().clone();
+        !user.is_empty() || !pass.is_empty()
+    }
+
+    fn check_login(user: &str, pass: &str) -> bool {
+        let expected = CREDENTIALS.lock().unwrap().clone();
+        user == expected.0 && pass == expected.1
+    }
+
     let addr_clone = addr.clone();
     *LISTENER.lock().unwrap() = Some(listener.try_clone().unwrap_or_else(|_| panic!("clone")));
 
     std::thread::spawn(move || {
-        // ponytail: one-query-per-connection, no keep-alive or threading
-        #[allow(clippy::significant_drop_in_scrutinee)]
+        use std::io::{BufRead, BufReader, Write};
+
         for stream in listener.incoming() {
-            match stream {
-                Ok(mut stream) => {
-                    use std::io::{BufRead, BufReader, Write};
-                    let mut line = String::new();
-                    let mut reader = BufReader::new(&stream);
-                    if reader.read_line(&mut line).is_ok() {
-                        let trimmed = line.trim();
-                        if !trimmed.is_empty() {
-                            let result = dispatch(trimmed, &[]);
-                            let _ = writeln!(stream, "{}", result);
-                        }
-                    }
-                }
+            let mut stream = match stream {
+                Ok(s) => s,
                 Err(_) => break,
+            };
+
+            let mut reader = match stream.try_clone() {
+                Ok(c) => BufReader::new(c),
+                Err(_) => break,
+            };
+            let mut authenticated = !has_auth();
+            let mut line = String::new();
+
+            loop {
+                line.clear();
+                match reader.read_line(&mut line) {
+                    Ok(0) | Err(_) => break,
+                    Ok(_) => {}
+                }
+
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                if trimmed == "QUIT" || trimmed == "EXIT" {
+                    break;
+                }
+
+                if !authenticated {
+                    if let Some(rest) = trimmed.strip_prefix("LOGIN ") {
+                        let parts: Vec<&str> = rest.splitn(2, ' ').collect();
+                        if parts.len() >= 2 && check_login(parts[0], parts[1]) {
+                            let _ = writeln!(stream, "[0,\"OK\",\"Authenticated\"]");
+                            authenticated = true;
+                        } else {
+                            let _ = writeln!(stream, "[-1,\"ERR_AUTH\",\"Invalid credentials\"]");
+                            break;
+                        }
+                    } else {
+                        let _ = writeln!(stream, "[-1,\"ERR_AUTH\",\"LOGIN <user> <pass> required\"]");
+                        break;
+                    }
+                    continue;
+                }
+
+                let result = dispatch(trimmed, &[]);
+                let _ = writeln!(stream, "{}", result);
             }
         }
     });

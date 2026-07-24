@@ -9,8 +9,14 @@ if (_log_level >= 2) then {
     diag_log text format ["[A3DB] %1", _version];
 };
 
-// Start TCP listener at game startup (not mission start)
-// Removes the need to join a mission before the listener is available.
+// Pass credentials to Rust extension for TCP auth (does nothing if empty)
+private _user = missionNamespace getVariable ["a3db_listener_user", ""];
+private _pass = missionNamespace getVariable ["a3db_listener_password", ""];
+if (_user != "" && _pass != "") then {
+    _extension callExtension ["set_credentials", [_user, _pass]];
+};
+
+// Fallback: start listener if PreInit didn't already start it
 if (missionNamespace getVariable ["a3db_listener_enabled", true]) then {
     private _port_str = missionNamespace getVariable ["a3db_listener_port", "33306"];
     private _port = parseNumber _port_str;
