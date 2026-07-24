@@ -190,6 +190,16 @@ pub fn execute(stmt: &Statement, db: &mut Database) -> Result<String, String> {
             }
             Ok(format!("[{}]", results.join(",")))
         }
+        Statement::Explain {
+            statement: inner,
+            analyze,
+            ..
+        } => {
+            if *analyze {
+                return Err("EXPLAIN ANALYZE is not supported".into());
+            }
+            explain_statement(inner, db)
+        }
         other => Err(format!("Statement not supported: {:?}", other)),
     }
 }
@@ -341,6 +351,7 @@ fn exec_create_table(def: &sqlparser::ast::CreateTable, db: &mut Database) -> Re
 
 fn exec_insert(ins: &sqlparser::ast::Insert, db: &mut Database) -> Result<String, String> {
     let table_name = ins.table.to_string().to_lowercase();
+    let returning = ins.returning.clone();
 
     // Parse source into expression rows — do this BEFORE borrowing table mutably
     // since SetExpr::Select needs a mutable db reference via exec_select.
@@ -440,6 +451,7 @@ fn exec_insert(ins: &sqlparser::ast::Insert, db: &mut Database) -> Result<String
     };
 
     let mut inserted = 0usize;
+    let mut inserted_rows: Vec<Vec<DbValue>> = Vec::new();
     for row_exprs in &rows {
         let col_indices: &[usize] = match &explicit_cols {
             Some(indices) => indices.as_slice(),
@@ -495,12 +507,16 @@ fn exec_insert(ins: &sqlparser::ast::Insert, db: &mut Database) -> Result<String
 
         let result = table.insert(full_row.clone());
         match result {
-            Ok(()) => inserted += 1,
+            Ok(()) => {
+                inserted += 1;
+                inserted_rows.push(full_row);
+            }
             Err(e) if is_replace && e.contains("Duplicate primary key") => {
                 // REPLACE: find the old row by PK and replace it
                 if let Some(pk_col) = table.columns.iter().position(|c| c.primary_key) {
                     let pk_val = &full_row[pk_col];
                     table.delete_by_pk(pk_val);
+                    inserted_rows.push(full_row.clone());
                     table.insert(full_row)?;
                     inserted += 1;
                 } else {
@@ -509,6 +525,12 @@ fn exec_insert(ins: &sqlparser::ast::Insert, db: &mut Database) -> Result<String
             }
             Err(e) => return Err(e),
         }
+    }
+
+    if let Some(returning) = &returning {
+        let table = db.get_table(&table_name)?;
+        let ref_rows: Vec<&[DbValue]> = inserted_rows.iter().map(|r| r.as_slice()).collect();
+        return Ok(format_projected_result(ref_rows, returning, &table.col_index, table));
     }
 
     Ok(format!("\"Inserted {} row(s)\"", inserted))
@@ -1458,7 +1480,26 @@ fn eval_projection_expr(
             let name = f.name.to_string().to_lowercase();
             match name.as_str() {
                 "count" => {
-                    let count = DbValue::Int(rows.len() as i64);
+                    let is_distinct = matches!(
+                        f.args,
+                        sqlparser::ast::FunctionArguments::List(ref list)
+                            if list.duplicate_treatment == Some(sqlparser::ast::DuplicateTreatment::Distinct)
+                    );
+                    let count = if is_distinct {
+                        let mut seen: Vec<DbValue> = Vec::new();
+                        for r in rows {
+                            if let Ok(arg) = extract_func_arg(f) {
+                                if let Ok(val) = eval_expr(arg, r, col_map) {
+                                    if !seen.contains(&val) {
+                                        seen.push(val);
+                                    }
+                                }
+                            }
+                        }
+                        DbValue::Int(seen.len() as i64)
+                    } else {
+                        DbValue::Int(rows.len() as i64)
+                    };
                     Ok(("COUNT".to_string(), count))
                 }
                 "sum" => {
@@ -1682,6 +1723,7 @@ fn parse_expr_as_usize(expr: Option<&Expr>) -> Option<usize> {
 
 fn exec_update(upd: &sqlparser::ast::Update, db: &mut Database) -> Result<String, String> {
     let table_name = resolve_table_from_joins(&upd.table)?;
+    let returning = upd.returning.clone();
     let table = db.get_table_mut(&table_name)?;
 
     let where_expr = upd.selection.as_ref();
@@ -1743,9 +1785,28 @@ fn exec_update(upd: &sqlparser::ast::Update, db: &mut Database) -> Result<String
             .collect::<Result<Vec<(usize, usize, DbValue)>, &str>>()
     }?;
 
+    // Capture old rows for RETURNING (before applying updates)
+    let old_rows: Vec<Vec<DbValue>> = if returning.is_some() {
+        let t = db.get_table(&table_name)?;
+        let mut seen = HashSet::new();
+        validated_updates
+            .iter()
+            .filter(|(row_i, _, _)| seen.insert(*row_i))
+            .map(|(row_i, _, _)| t.rows[*row_i].clone())
+            .collect()
+    } else {
+        Vec::new()
+    };
+
     let t = db.get_table_mut(&table_name)?;
     for (row_i, col_ci, val) in &validated_updates {
         t.update_cell(*row_i, *col_ci, val.clone());
+    }
+
+    if let Some(returning) = &returning {
+        let table = db.get_table(&table_name)?;
+        let ref_rows: Vec<&[DbValue]> = old_rows.iter().map(|r| r.as_slice()).collect();
+        return Ok(format_projected_result(ref_rows, returning, &table.col_index, table));
     }
 
     Ok(format!("\"Updated {} row(s)\"", validated_updates.len()))
@@ -1765,6 +1826,8 @@ fn exec_delete(del: &sqlparser::ast::Delete, db: &mut Database) -> Result<String
             None => return Err("DELETE must specify a table".into()),
         },
     };
+
+    let returning = del.returning.clone();
 
     // Clone col_index to avoid borrow conflict with table.delete()
     let col_idx = db.get_table(&table_name)?.col_index.clone();
@@ -1835,11 +1898,33 @@ fn exec_delete(del: &sqlparser::ast::Delete, db: &mut Database) -> Result<String
         }
     }
 
+    // Capture old rows for RETURNING (before deletion)
+    let old_rows: Vec<Vec<DbValue>> = if returning.is_some() {
+        let t = db.get_table(&table_name)?;
+        match &pred {
+            Some(expr) => t
+                .rows
+                .iter()
+                .filter(|row| eval_expr(expr, row, &col_idx).map(|v| is_truthy(&v)).unwrap_or(false))
+                .cloned()
+                .collect(),
+            None => t.rows.to_vec(),
+        }
+    } else {
+        Vec::new()
+    };
+
     let table = db.get_table_mut(&table_name)?;
     let count = match pred {
         Some(expr) => table.delete(|row| eval_expr(&expr, row, &col_idx).map(|v| is_truthy(&v)).unwrap_or(false)),
         None => table.delete(|_| true),
     };
+
+    if let Some(returning) = &returning {
+        let table = db.get_table(&table_name)?;
+        let ref_rows: Vec<&[DbValue]> = old_rows.iter().map(|r| r.as_slice()).collect();
+        return Ok(format_projected_result(ref_rows, returning, &table.col_index, table));
+    }
 
     Ok(format!("\"Deleted {} row(s)\"", count))
 }
@@ -2682,6 +2767,232 @@ fn drop_index_by_name(db: &mut Database, name: &str) -> bool {
     false
 }
 
+// ── EXPLAIN ─────────────────────────────────────────────────────────────
+
+/// Generate an EXPLAIN plan description as a JSON array of plan nodes.
+fn explain_statement(stmt: &Statement, db: &Database) -> Result<String, String> {
+    use serde_json::json;
+
+    match stmt {
+        Statement::Query(query) => {
+            let mut steps: Vec<serde_json::Value> = Vec::new();
+
+            if let SetExpr::Select(select) = &*query.body {
+                let select = select.as_ref();
+
+                // FROM clause — table scans and joins
+                for twj in &select.from {
+                    match &twj.relation {
+                        TableFactor::Table { name, .. } => {
+                            let tname = name.to_string().to_lowercase();
+                            let mut scan = json!({"type": "SeqScan", "table": tname});
+
+                            // Show available indexes on this table
+                            if let Ok(table) = db.get_table(&tname) {
+                                if !table.indices.is_empty() {
+                                    let idxs: Vec<&str> = table.indices.iter().map(|(m, _)| m.name.as_str()).collect();
+                                    scan["indexes"] = json!(idxs);
+                                }
+                            }
+                            steps.push(scan);
+                        }
+                        _ => {
+                            steps.push(json!({"type": "SubQuery"}));
+                        }
+                    }
+
+                    for join in &twj.joins {
+                        let rel = match &join.relation {
+                            TableFactor::Table { name, .. } => name.to_string(),
+                            _ => "<subquery>".into(),
+                        };
+                        steps.push(json!({"type": "Join", "relation": rel}));
+                    }
+                }
+
+                // Bare SELECT (no FROM)
+                if select.from.is_empty() {
+                    steps.push(json!({"type": "Projection"}));
+                }
+
+                // WHERE clause
+                if let Some(expr) = &select.selection {
+                    steps.push(json!({"type": "Filter", "condition": format!("{}", expr)}));
+                }
+
+                // GROUP BY
+                use sqlparser::ast::GroupByExpr;
+                if let GroupByExpr::Expressions(exprs, _) = &select.group_by {
+                    if !exprs.is_empty() {
+                        let gb: Vec<String> = exprs.iter().map(|e| format!("{}", e)).collect();
+                        steps.push(json!({"type": "GroupBy", "columns": gb}));
+                    }
+                }
+
+                // HAVING
+                if let Some(expr) = &select.having {
+                    steps.push(json!({"type": "Having", "condition": format!("{}", expr)}));
+                }
+
+                // ORDER BY
+                if let Some(order_by) = &query.order_by {
+                    if let OrderByKind::Expressions(exprs) = &order_by.kind {
+                        if !exprs.is_empty() {
+                            let ob: Vec<String> = exprs.iter().map(|e| format!("{}", e.expr)).collect();
+                            steps.push(json!({"type": "OrderBy", "columns": ob}));
+                        }
+                    }
+                }
+
+                // LIMIT / OFFSET
+                if let Some(lc) = &query.limit_clause {
+                    if let LimitClause::LimitOffset { limit, offset, .. } = lc {
+                        let mut l = serde_json::Map::new();
+                        l.insert("type".into(), json!("Limit"));
+                        if let Some(e) = limit {
+                            l.insert("limit".into(), json!(format!("{}", e)));
+                        }
+                        if let Some(o) = offset {
+                            l.insert("offset".into(), json!(format!("{}", o.value)));
+                        }
+                        steps.push(serde_json::Value::Object(l));
+                    } else if let LimitClause::OffsetCommaLimit { offset, limit } = lc {
+                        steps.push(json!({
+                            "type": "Limit",
+                            "limit": format!("{}", limit),
+                            "offset": format!("{}", offset),
+                        }));
+                    }
+                }
+            }
+
+            if steps.is_empty() {
+                steps.push(json!({"type": "Unknown"}));
+            }
+
+            serde_json::to_string(&steps).map_err(|e| e.to_string())
+        }
+
+        Statement::Insert(ins) => {
+            let tname = ins.table.to_string().to_lowercase();
+            let ncols = ins.columns.len();
+            let mut plan = json!({"type": "Insert", "table": tname});
+            if ncols > 0 {
+                let cols: Vec<String> = ins.columns.iter().map(|c| c.to_string().to_lowercase()).collect();
+                plan["columns"] = json!(cols);
+            }
+            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
+        }
+
+        Statement::CreateTable(def) => {
+            let tname = def.name.to_string().to_lowercase();
+            let ncols = def.columns.len();
+            let plan = json!({"type": "CreateTable", "table": tname, "columns": ncols});
+            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
+        }
+
+        Statement::CreateIndex(idx) => {
+            let iname = idx
+                .name
+                .as_ref()
+                .map(|n| n.to_string())
+                .unwrap_or_default()
+                .to_lowercase();
+            let tname = idx.table_name.to_string().to_lowercase();
+            let plan = json!({"type": "CreateIndex", "index": iname, "table": tname});
+            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
+        }
+
+        Statement::Update(upd) => {
+            let tname = resolve_table_from_joins(&upd.table).unwrap_or_default();
+            let plan = json!({"type": "Update", "table": tname});
+            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
+        }
+
+        Statement::Delete(del) => {
+            let tname = match &del.from {
+                sqlparser::ast::FromTable::WithFromKeyword(tables)
+                | sqlparser::ast::FromTable::WithoutKeyword(tables) => match tables.first() {
+                    Some(tj) => match &tj.relation {
+                        TableFactor::Table { name, .. } => name.to_string().to_lowercase(),
+                        _ => String::new(),
+                    },
+                    None => String::new(),
+                },
+            };
+            let plan = json!({"type": "Delete", "table": tname});
+            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
+        }
+
+        Statement::Drop { names, object_type, .. } => {
+            let oname = names.first().map(|n| n.to_string()).unwrap_or_default();
+            let otype = format!("{}", object_type).to_lowercase();
+            let plan = json!({"type": "Drop", "object_type": otype, "name": oname});
+            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
+        }
+
+        Statement::Truncate(trunc) => {
+            let tname = trunc
+                .table_names
+                .first()
+                .map(|t| t.name.to_string())
+                .unwrap_or_default();
+            let plan = json!({"type": "Truncate", "table": tname.to_lowercase()});
+            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
+        }
+
+        Statement::AlterTable(at) => {
+            let tname = at.name.to_string().to_lowercase();
+            let ops: Vec<String> = at.operations.iter().map(|o| format!("{}", o)).collect();
+            let plan = json!({"type": "AlterTable", "table": tname, "operations": ops});
+            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
+        }
+
+        Statement::RenameTable(rt) => {
+            let old = rt[0].old_name.to_string().to_lowercase();
+            let new = rt[0].new_name.to_string().to_lowercase();
+            let plan = json!({"type": "RenameTable", "old_name": old, "new_name": new});
+            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
+        }
+
+        Statement::ShowTables { .. } => {
+            let plan = json!({"type": "ShowTables"});
+            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
+        }
+
+        Statement::StartTransaction { .. } => {
+            let plan = json!({"type": "StartTransaction"});
+            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
+        }
+
+        Statement::Commit { .. } => {
+            let plan = json!({"type": "Commit"});
+            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
+        }
+
+        Statement::Rollback { .. } => {
+            let plan = json!({"type": "Rollback"});
+            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
+        }
+
+        Statement::Savepoint { name, .. } => {
+            let plan = json!({"type": "Savepoint", "name": name.to_string()});
+            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
+        }
+
+        Statement::ReleaseSavepoint { name, .. } => {
+            let plan = json!({"type": "ReleaseSavepoint", "name": name.to_string()});
+            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
+        }
+
+        // Fallback for unsupported statement types — show the SQL text
+        other => {
+            let plan = json!({"type": format!("{}", other)});
+            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
+        }
+    }
+}
+
 // ── LIKE pattern matching ──────────────────────────────────────────────
 
 fn simple_like(value: &str, pattern: &str) -> bool {
@@ -2916,6 +3227,16 @@ mod tests {
         parse_and_exec("INSERT INTO items VALUES ('b', 'beta', 20)", &mut db).unwrap();
         let result = parse_and_exec("SELECT COUNT(*) FROM items", &mut db).unwrap();
         assert!(result.contains("2"), "COUNT should be 2: {}", result);
+    }
+
+    #[test]
+    fn count_distinct() {
+        let mut db = make_test_db();
+        parse_and_exec("INSERT INTO items VALUES ('a', 'alpha', 10)", &mut db).unwrap();
+        parse_and_exec("INSERT INTO items VALUES ('b', 'beta', 10)", &mut db).unwrap();
+        parse_and_exec("INSERT INTO items VALUES ('c', 'gamma', 20)", &mut db).unwrap();
+        let result = parse_and_exec("SELECT COUNT(DISTINCT value) FROM items", &mut db).unwrap();
+        assert!(result.contains("2"), "COUNT(DISTINCT value) should be 2: {}", result);
     }
 
     #[test]
@@ -3487,5 +3808,118 @@ mod tests {
         db.create_table("b", b).unwrap();
         let r = parse_and_exec("SELECT a.k FROM a INNER JOIN b ON a.k = b.k ORDER BY a.k ASC", &mut db).unwrap();
         assert!(r.contains("a") && r.contains("b"), "join order: {}", r);
+    }
+
+    // ── EXPLAIN tests ──────────────────────────────────────────────────
+
+    #[test]
+    fn explain_select() {
+        let mut db = make_test_db();
+        let r = parse_and_exec("EXPLAIN SELECT * FROM items", &mut db).unwrap();
+        assert!(r.contains("SeqScan"), "explain select: {}", r);
+        assert!(r.contains("items"), "table name: {}", r);
+    }
+
+    #[test]
+    fn explain_insert() {
+        let mut db = make_test_db();
+        let r = parse_and_exec("EXPLAIN INSERT INTO items VALUES ('a', 'b', 1)", &mut db).unwrap();
+        assert!(r.contains("Insert"), "explain insert: {}", r);
+        assert!(r.contains("items"), "table name: {}", r);
+    }
+
+    #[test]
+    fn explain_create_table() {
+        let mut db = Database::new();
+        let r = parse_and_exec("EXPLAIN CREATE TABLE et (id STRING PRIMARY KEY)", &mut db).unwrap();
+        assert!(r.contains("CreateTable"), "explain create: {}", r);
+        assert!(r.contains("et"), "table name: {}", r);
+    }
+
+    #[test]
+    fn explain_update() {
+        let mut db = make_test_db();
+        let r = parse_and_exec("EXPLAIN UPDATE items SET name = 'x' WHERE id = 'a'", &mut db).unwrap();
+        assert!(r.contains("Update"), "explain update: {}", r);
+    }
+
+    #[test]
+    fn explain_delete() {
+        let mut db = make_test_db();
+        let r = parse_and_exec("EXPLAIN DELETE FROM items WHERE id = 'a'", &mut db).unwrap();
+        assert!(r.contains("Delete"), "explain delete: {}", r);
+    }
+
+    #[test]
+    fn explain_with_where() {
+        let mut db = make_test_db();
+        let r = parse_and_exec("EXPLAIN SELECT * FROM items WHERE name = 'test'", &mut db).unwrap();
+        assert!(r.contains("Filter"), "explain filter: {}", r);
+        assert!(r.contains("SeqScan"), "explain scan: {}", r);
+    }
+
+    #[test]
+    fn explain_with_order_limit() {
+        let mut db = make_test_db();
+        let r = parse_and_exec("EXPLAIN SELECT * FROM items ORDER BY name LIMIT 5", &mut db).unwrap();
+        assert!(r.contains("OrderBy"), "explain order: {}", r);
+        assert!(r.contains("Limit"), "explain limit: {}", r);
+    }
+
+    #[test]
+    fn explain_analyze_rejected() {
+        let mut db = make_test_db();
+        let r = parse_and_exec("EXPLAIN ANALYZE SELECT * FROM items", &mut db);
+        assert!(r.is_err(), "ANALYZE should be rejected");
+        if let Err(e) = r {
+            assert!(e.contains("ANALYZE"), "err msg: {}", e);
+        }
+    }
+
+    #[test]
+    fn explain_show_tables() {
+        let mut db = Database::new();
+        let r = parse_and_exec("EXPLAIN SHOW TABLES", &mut db).unwrap();
+        assert!(r.contains("ShowTables"), "explain show tables: {}", r);
+    }
+
+    #[test]
+    fn explain_transaction() {
+        let mut db = Database::new();
+        let r = parse_and_exec("EXPLAIN BEGIN", &mut db).unwrap();
+        assert!(r.contains("StartTransaction"), "explain begin: {}", r);
+        let r = parse_and_exec("EXPLAIN COMMIT", &mut db).unwrap();
+        assert!(r.contains("Commit"), "explain commit: {}", r);
+        let r = parse_and_exec("EXPLAIN ROLLBACK", &mut db).unwrap();
+        assert!(r.contains("Rollback"), "explain rollback: {}", r);
+    }
+
+    #[test]
+    fn explain_create_index() {
+        let mut db = make_test_db();
+        let r = parse_and_exec("EXPLAIN CREATE INDEX my_idx ON items (name)", &mut db).unwrap();
+        assert!(r.contains("CreateIndex"), "explain create index: {}", r);
+    }
+
+    #[test]
+    fn explain_with_indexes() {
+        let mut db = make_indexed_db();
+        let r = parse_and_exec("EXPLAIN SELECT * FROM idx_test WHERE v = 10", &mut db).unwrap();
+        assert!(r.contains("indexes"), "should show indexes: {}", r);
+        assert!(r.contains("btree_v"), "should list btree_v: {}", r);
+    }
+
+    #[test]
+    fn explain_alter_table() {
+        let mut db = make_test_db();
+        let r = parse_and_exec("EXPLAIN ALTER TABLE items ADD COLUMN extra INT", &mut db).unwrap();
+        assert!(r.contains("AlterTable"), "explain alter: {}", r);
+    }
+
+    #[test]
+    fn explain_truncate() {
+        let mut db = make_test_db();
+        let r = parse_and_exec("EXPLAIN TRUNCATE items", &mut db).unwrap();
+        assert!(r.contains("Truncate"), "explain truncate: {}", r);
     }
 }
