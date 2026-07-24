@@ -2,8 +2,20 @@
 
 use std::collections::{HashMap, HashSet};
 
+use sqlparser::ast::Expr;
+
 use super::index::{BTreeIndex, IndexMeta, IndexType, TrigramIndex};
 use super::value::{Column, ColumnType, DbValue};
+
+/// A foreign key constraint referencing another table's column.
+#[derive(Debug, Clone)]
+pub struct ForeignKeyInfo {
+    pub local_column: String,
+    pub foreign_table: String,
+    pub foreign_column: String,
+    pub on_delete: Option<sqlparser::ast::ReferentialAction>,
+    pub on_update: Option<sqlparser::ast::ReferentialAction>,
+}
 
 /// Runtime index implementation.
 #[derive(Debug, Clone)]
@@ -26,6 +38,10 @@ pub struct Table {
     pub(crate) indices: Vec<(IndexMeta, IndexImpl)>,
     /// Next AUTO_INCREMENT counter value.
     pub(crate) next_auto_inc: i64,
+    /// CHECK constraint expressions evaluated against each row on INSERT/UPDATE.
+    pub(crate) check_constraints: Vec<Expr>,
+    /// FOREIGN KEY constraints referencing other tables.
+    pub(crate) foreign_keys: Vec<ForeignKeyInfo>,
 }
 
 impl Table {
@@ -49,6 +65,8 @@ impl Table {
             pk_set: HashSet::new(),
             indices: Vec::new(),
             next_auto_inc: 1,
+            check_constraints: Vec::new(),
+            foreign_keys: Vec::new(),
         })
     }
 
