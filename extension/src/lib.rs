@@ -146,53 +146,67 @@ pub fn dispatch(input: &str, args: &[&str]) -> String {
     let trimmed = input.trim();
 
     // ── Custom commands (handled before SQL parsing) ──────────────────
-    if trimmed == "version" {
+    // Normalise to lowercase for case-insensitive command matching
+    let lowered = trimmed.to_lowercase();
+    if lowered == "version" {
         return ok_response("\"a3db 0.1.0\"");
     }
-    if trimmed == "dump_sql" || trimmed == "export_sql" {
+    if lowered == "dump_sql" || lowered == "export_sql" {
         return handle_dump_sql();
     }
-    if trimmed.starts_with("export_to_file") {
+    if lowered.starts_with("export_to_file") {
         return handle_export_to_file(trimmed, args);
     }
-    if trimmed.starts_with("export") || trimmed.starts_with("import") {
-        let result = if trimmed.starts_with("export") {
+    if lowered.starts_with("export") || lowered.starts_with("import") {
+        let result = if lowered.starts_with("export") {
             handle_export(trimmed, args)
         } else {
             handle_import(trimmed, args)
         };
         return result;
     }
-    if trimmed == "save" || trimmed.starts_with("save ") {
+    if lowered == "save" || lowered.starts_with("save ") {
         let mut save_args = args.to_vec();
         if let Some(path) = trimmed.strip_prefix("save ") {
+            if !path.is_empty() && save_args.is_empty() {
+                save_args.push(path);
+            }
+        } else if let Some(path) = trimmed.strip_prefix("SAVE ") {
             if !path.is_empty() && save_args.is_empty() {
                 save_args.push(path);
             }
         }
         return handle_save(&save_args);
     }
-    if trimmed == "load" || trimmed.starts_with("load ") {
+    if lowered == "load" || lowered.starts_with("load ") {
         let mut load_args = args.to_vec();
         if let Some(path) = trimmed.strip_prefix("load ") {
+            if !path.is_empty() && load_args.is_empty() {
+                load_args.push(path);
+            }
+        } else if let Some(path) = trimmed.strip_prefix("LOAD ") {
             if !path.is_empty() && load_args.is_empty() {
                 load_args.push(path);
             }
         }
         return handle_load(&load_args);
     }
-    if trimmed == "stop_listen" || trimmed == "stop" {
+    if lowered == "stop_listen" || lowered == "stop" {
         return handle_stop_listen();
     }
-    if trimmed == "set_credentials" || trimmed.starts_with("set_credentials") {
+    if lowered == "set_credentials" || lowered.starts_with("set_credentials") {
         let user = args.first().unwrap_or(&"");
         let pass = args.get(1).copied().unwrap_or("");
         *CREDENTIALS.lock().unwrap() = (user.to_string(), pass.to_string());
         return ok_response("\"Credentials set\"");
     }
-    if trimmed == "listen" || trimmed.starts_with("listen ") {
+    if lowered == "listen" || lowered.starts_with("listen ") {
         let mut listen_args = args.to_vec();
         if let Some(port) = trimmed.strip_prefix("listen ") {
+            if !port.is_empty() && listen_args.is_empty() {
+                listen_args.push(port);
+            }
+        } else if let Some(port) = trimmed.strip_prefix("LISTEN ") {
             if !port.is_empty() && listen_args.is_empty() {
                 listen_args.push(port);
             }
@@ -201,7 +215,7 @@ pub fn dispatch(input: &str, args: &[&str]) -> String {
     }
 
     // Remote server connection for network replication
-    if trimmed == "connect" || trimmed.starts_with("connect ") {
+    if lowered == "connect" || lowered.starts_with("connect ") {
         let parts: Vec<&str> = trimmed.splitn(3, |c: char| c.is_whitespace()).collect();
         let host = parts.get(1).unwrap_or(&"127.0.0.1");
         let port: u16 = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(33306);
@@ -215,7 +229,7 @@ pub fn dispatch(input: &str, args: &[&str]) -> String {
         };
     }
 
-    if trimmed == "disconnect" {
+    if lowered == "disconnect" {
         *REMOTE.lock().unwrap() = None;
         return ok_response("\"Disconnected\"");
     }
@@ -230,8 +244,8 @@ pub fn dispatch(input: &str, args: &[&str]) -> String {
         return result;
     }
 
-    // Handle DESCRIBE table / SHOW CREATE TABLE before SQL parsing
-    if let Some(rest) = trimmed.strip_prefix("describe ") {
+    // Handle DESCRIBE table / SHOW CREATE TABLE before SQL parsing (case-insensitive)
+    if let Some(rest) = lowered.strip_prefix("describe ") {
         let name = rest.trim();
         if !name.is_empty() {
             let db = DB.lock().unwrap();
@@ -241,7 +255,7 @@ pub fn dispatch(input: &str, args: &[&str]) -> String {
             };
         }
     }
-    if let Some(rest) = trimmed.strip_prefix("show create table ") {
+    if let Some(rest) = lowered.strip_prefix("show create table ") {
         let name = rest.trim();
         if !name.is_empty() {
             let db = DB.lock().unwrap();

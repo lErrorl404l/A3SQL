@@ -2346,7 +2346,7 @@ fn parse_data_type(dt: &DataType) -> Result<ColumnType, String> {
         DataType::String(_) | DataType::Text | DataType::Varchar(_) | DataType::Char(_) | DataType::Uuid => {
             Ok(ColumnType::String)
         }
-        DataType::Boolean => Ok(ColumnType::Bool),
+        DataType::Boolean | DataType::Bool => Ok(ColumnType::Bool),
         DataType::Array(elem) => {
             use sqlparser::ast::ArrayElemTypeDef;
             let inner = match elem {
