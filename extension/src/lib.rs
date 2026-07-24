@@ -502,6 +502,10 @@ fn handle_export_to_file(trimmed: &str, args: &[&str]) -> String {
     };
 
     let path_display = file_path.clone();
+    // Create parent directory if needed
+    if let Some(parent) = std::path::Path::new(&file_path).parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
     match std::fs::write(&file_path, &data) {
         Ok(()) => ok_response(&format!("\"Exported to '{}'\"", path_display)),
         Err(e) => error_response(ErrorCode::Io, &format!("Write failed: {}", e)),

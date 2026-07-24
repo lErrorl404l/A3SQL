@@ -30,18 +30,46 @@ pub fn execute(stmt: &Statement, db: &mut Database) -> Result<String, String> {
         Statement::Update(upd) => exec_update(upd, db),
         Statement::Delete(del) => exec_delete(del, db),
         Statement::CreateIndex(idx) => exec_create_index(idx, db),
-        Statement::Drop { names, object_type, .. } => {
+        Statement::Drop {
+            names,
+            object_type,
+            if_exists,
+            ..
+        } => {
             let name = object_name_str(&names[0]);
             let type_str = format!("{}", object_type).to_lowercase();
             if type_str.contains("index") {
-                // DROP INDEX — find which table owns it, drop from there
                 if !drop_index_by_name(db, &name) {
+                    if *if_exists {
+                        return Ok(format!("\"Index '{}' not found\"", name));
+                    }
                     return Err(format!("Index '{}' not found", name));
                 }
                 Ok(format!("\"Dropped index '{}'\"", name))
             } else {
+                if !db.has_table(&name) {
+                    if *if_exists {
+                        return Ok(format!("\"Table '{}' not found\"", name));
+                    }
+                    return Err(format!("Table '{}' not found", name));
+                }
                 db.drop_table(&name)?;
                 Ok(format!("\"Dropped table '{}'\"", name))
+            }
+        }
+        Statement::RenameTable(rt) => {
+            let old = object_name_str(&rt[0].old_name);
+            let new = object_name_str(&rt[0].new_name);
+            db.rename_table(&old, &new)?;
+            Ok(format!("\"Table '{}' renamed to '{}'\"", old, new))
+        }
+        Statement::Truncate(trunc) => {
+            let name = object_name_str(&trunc.table_names[0].name);
+            if trunc.if_exists && !db.has_table(&name) {
+                Ok(format!("\"Table '{}' not found\"", name))
+            } else {
+                db.get_table_mut(&name)?.truncate()?;
+                Ok(format!("\"Table '{}' truncated\"", name))
             }
         }
         Statement::ShowTables { .. } => {
@@ -87,6 +115,15 @@ pub fn execute(stmt: &Statement, db: &mut Database) -> Result<String, String> {
                         }
                         format!("\"Column dropped from '{}'\"", table_name)
                     }
+                    sqlparser::ast::AlterTableOperation::RenameColumn {
+                        old_column_name,
+                        new_column_name,
+                    } => {
+                        let old_name = old_column_name.value.to_lowercase();
+                        let new_name = new_column_name.value.to_lowercase();
+                        db.get_table_mut(&table_name)?.rename_column(&old_name, &new_name)?;
+                        format!("\"Column '{}' renamed to '{}'\"", old_name, new_name)
+                    }
                     _ => return Err(format!("ALTER TABLE operation not supported: {:?}", operation)),
                 };
                 results.push(result);
@@ -107,6 +144,10 @@ fn object_name_str(name: &ObjectName) -> String {
 
 fn exec_create_table(def: &sqlparser::ast::CreateTable, db: &mut Database) -> Result<String, String> {
     let table_name = object_name_str(&def.name);
+
+    if def.if_not_exists && db.has_table(&table_name) {
+        return Ok(format!("\"Table '{}' already exists\"", table_name));
+    }
 
     let mut columns: Vec<Column> = Vec::new();
     let mut has_pk = false;
@@ -177,11 +218,65 @@ fn exec_create_table(def: &sqlparser::ast::CreateTable, db: &mut Database) -> Re
 // ── INSERT ──────────────────────────────────────────────────────────────
 
 fn exec_insert(ins: &sqlparser::ast::Insert, db: &mut Database) -> Result<String, String> {
-    // Extract table name from the table field (TableObject)
     let table_name = ins.table.to_string().to_lowercase();
-    let table = db.get_table_mut(&table_name)?;
 
-    // Determine column mapping (ins.columns is Vec<ObjectName>)
+    // Parse source into expression rows — do this BEFORE borrowing table mutably
+    // since SetExpr::Select needs a mutable db reference via exec_select.
+    let (rows, is_replace): (Vec<Vec<Expr>>, bool) = match &ins.source {
+        Some(q) => match &*q.as_ref().body {
+            SetExpr::Values(Values { rows, .. }) => (
+                rows.iter().map(|parens| parens.content.clone()).collect(),
+                ins.or.is_some() || crate::REPLACE_FLAG.load(std::sync::atomic::Ordering::SeqCst),
+            ),
+            SetExpr::Select(s) => {
+                let sq = Query {
+                    with: None,
+                    body: Box::new(SetExpr::Select(s.clone())),
+                    order_by: None,
+                    limit_clause: None,
+                    fetch: None,
+                    locks: vec![],
+                    for_clause: None,
+                    settings: None,
+                    format_clause: None,
+                    pipe_operators: vec![],
+                };
+                let json = exec_select(&sq, db)?;
+                let parsed: Vec<Vec<serde_json::Value>> =
+                    serde_json::from_str(&json).map_err(|e| format!("SELECT parse: {}", e))?;
+                let to_val = |v: &serde_json::Value| -> Expr {
+                    use sqlparser::ast::Value as V;
+                    Expr::Value(
+                        match v {
+                            serde_json::Value::String(s) => V::SingleQuotedString(s.clone()),
+                            serde_json::Value::Number(n) => V::Number(
+                                n.as_i64()
+                                    .map_or_else(|| format!("{}", n.as_f64().unwrap_or(0.0)), |i| format!("{}", i)),
+                                false,
+                            ),
+                            serde_json::Value::Bool(b) => V::Boolean(*b),
+                            serde_json::Value::Null => V::Null,
+                            other => V::SingleQuotedString(format!("{}", other)),
+                        }
+                        .into(),
+                    )
+                };
+                (
+                    parsed
+                        .iter()
+                        .skip(1)
+                        .map(|row| row.iter().map(to_val).collect())
+                        .collect(),
+                    ins.or.is_some(),
+                )
+            }
+            _ => return Err("INSERT source must be VALUES or SELECT".into()),
+        },
+        None => return Err("INSERT must have a source".into()),
+    };
+
+    // Now we have the rows; borrow table for column mapping and insertion
+    let table = db.get_table_mut(&table_name)?;
     let explicit_cols: Option<Vec<usize>> = if !ins.columns.is_empty() {
         Some(
             ins.columns
@@ -197,23 +292,6 @@ fn exec_insert(ins: &sqlparser::ast::Insert, db: &mut Database) -> Result<String
     } else {
         None
     };
-
-    // Extract values from source (Option<Box<Query>>)
-    let source = match &ins.source {
-        Some(q) => q.as_ref(),
-        None => return Err("INSERT must have a source".into()),
-    };
-
-    let rows = match &*source.body {
-        SetExpr::Values(Values { rows, .. }) => rows
-            .iter()
-            .map(|parens| parens.content.clone())
-            .collect::<Vec<Vec<Expr>>>(),
-        _ => return Err("Only VALUES-based INSERT supported".into()),
-    };
-    // Check for REPLACE — either Insert.or (from INSERT OR REPLACE) or
-    // the REPLACE_FLAG set by dispatch() for raw REPLACE INTO syntax.
-    let is_replace = ins.or.is_some() || crate::REPLACE_FLAG.load(std::sync::atomic::Ordering::SeqCst);
 
     let mut inserted = 0usize;
     for row_exprs in &rows {
@@ -299,12 +377,41 @@ fn exec_select(query: &Query, db: &mut Database) -> Result<String, String> {
         } else {
             vec![filtered_rows] // single group: all rows
         };
+        // HAVING — filter partitions after grouping
+        let group_partitions = if let Some(having) = &select.having {
+            let flattened: Vec<Vec<&[DbValue]>> = group_partitions
+                .into_iter()
+                .filter(|group| {
+                    if group.is_empty() {
+                        return false;
+                    }
+                    is_truthy(&eval_expr(having, group[0], &table.col_index).unwrap_or(DbValue::Bool(false)))
+                })
+                .collect();
+            flattened
+        } else {
+            group_partitions
+        };
         return compute_aggregates(&group_partitions, &select.projection, &table.col_index);
     }
 
     // 3. GROUP BY without aggregates — simple dedup
     let grouped_rows = if has_group_by(select) {
         let partitions = partition_by_group(&filtered_rows, select, &table.col_index)?;
+        // HAVING — filter after grouping
+        let partitions: Vec<Vec<&[DbValue]>> = if let Some(having) = &select.having {
+            partitions
+                .into_iter()
+                .filter(|group| {
+                    if group.is_empty() {
+                        return false;
+                    }
+                    is_truthy(&eval_expr(having, group[0], &table.col_index).unwrap_or(DbValue::Bool(false)))
+                })
+                .collect()
+        } else {
+            partitions
+        };
         partitions.into_iter().map(|p| p[0]).collect()
     } else {
         filtered_rows
@@ -647,7 +754,6 @@ fn eval_expr_on_flat_row(expr: &Expr, row: &[DbValue], col_map: &HashMap<String,
         Expr::Function(func) => {
             let name = func.name.to_string().to_lowercase();
             if name == "fuzzy_match" {
-                // Evaluate args against the flat row
                 let args = match &func.args {
                     FunctionArguments::List(list) => &list.args,
                     _ => return Err("fuzzy_match requires args".into()),
@@ -660,8 +766,62 @@ fn eval_expr_on_flat_row(expr: &Expr, row: &[DbValue], col_map: &HashMap<String,
                 let sim = Table::trigram_similarity(&value_to_string(&a1), &value_to_string(&a2));
                 Ok(DbValue::Bool(sim >= 0.3))
             } else {
-                Err(format!("Unsupported function in JOIN: {}", name))
+                exec_std_function(func, name, row, col_map)
             }
+        }
+        Expr::IsNull(expr) => {
+            let val = eval_expr_on_flat_row(expr, row, col_map)?;
+            Ok(DbValue::Bool(matches!(val, DbValue::Null)))
+        }
+        Expr::IsNotNull(expr) => {
+            let val = eval_expr_on_flat_row(expr, row, col_map)?;
+            Ok(DbValue::Bool(!matches!(val, DbValue::Null)))
+        }
+        Expr::Like {
+            negated, expr, pattern, ..
+        } => {
+            let val = eval_expr_on_flat_row(expr, row, col_map)?;
+            let pat = eval_expr_on_flat_row(pattern, row, col_map)?;
+            let matched = simple_like(&value_to_string(&val), &value_to_string(&pat));
+            Ok(DbValue::Bool(if *negated { !matched } else { matched }))
+        }
+        Expr::Case {
+            operand,
+            conditions,
+            else_result,
+            ..
+        } => {
+            let operand_val = operand
+                .as_ref()
+                .map(|o| eval_expr_on_flat_row(o, row, col_map))
+                .transpose()?;
+            for cw in conditions.iter() {
+                let matched = match &operand_val {
+                    Some(ref op_val) => *op_val == eval_expr_on_flat_row(&cw.condition, row, col_map)?,
+                    None => is_truthy(&eval_expr_on_flat_row(&cw.condition, row, col_map)?),
+                };
+                if matched {
+                    return eval_expr_on_flat_row(&cw.result, row, col_map);
+                }
+            }
+            match else_result {
+                Some(expr) => eval_expr_on_flat_row(expr, row, col_map),
+                None => Ok(DbValue::Null),
+            }
+        }
+        Expr::Between {
+            expr,
+            low,
+            high,
+            negated,
+        } => {
+            let val = eval_expr_on_flat_row(expr, row, col_map)?;
+            let l = eval_expr_on_flat_row(low, row, col_map)?;
+            let h = eval_expr_on_flat_row(high, row, col_map)?;
+            use std::cmp::Ordering;
+            let ge = db_value_cmp(&val, &l) != Ordering::Less;
+            let le = db_value_cmp(&val, &h) != Ordering::Greater;
+            Ok(DbValue::Bool(if *negated { !(ge && le) } else { ge && le }))
         }
         _ => Err(format!("Unsupported expression in JOIN: {:?}", expr)),
     }
@@ -1174,6 +1334,45 @@ fn eval_expr(expr: &Expr, row: &[DbValue], col_map: &HashMap<String, usize>) -> 
             let found = subq_result.contains(&val);
             Ok(DbValue::Bool(if *negated { !found } else { found }))
         }
+        Expr::Case {
+            operand,
+            conditions,
+            else_result,
+            ..
+        } => {
+            let operand_val = operand.as_ref().map(|o| eval_expr(o, row, col_map)).transpose()?;
+            for cw in conditions.iter() {
+                let matched = match &operand_val {
+                    Some(ref op_val) => *op_val == eval_expr(&cw.condition, row, col_map)?,
+                    None => is_truthy(&eval_expr(&cw.condition, row, col_map)?),
+                };
+                if matched {
+                    return eval_expr(&cw.result, row, col_map);
+                }
+            }
+            match else_result {
+                Some(expr) => eval_expr(expr, row, col_map),
+                None => Ok(DbValue::Null),
+            }
+        }
+        Expr::Between {
+            expr,
+            low,
+            high,
+            negated,
+        } => {
+            let val = eval_expr(expr, row, col_map)?;
+            let l = eval_expr(low, row, col_map)?;
+            let h = eval_expr(high, row, col_map)?;
+            use std::cmp::Ordering;
+            let ge = db_value_cmp(&val, &l) != Ordering::Less;
+            let le = db_value_cmp(&val, &h) != Ordering::Greater;
+            Ok(DbValue::Bool(if *negated { !(ge && le) } else { ge && le }))
+        }
+        Expr::Exists { subquery, negated } => {
+            let vals = exec_subquery(subquery)?;
+            Ok(DbValue::Bool(if *negated { vals.is_empty() } else { !vals.is_empty() }))
+        }
         _ => Err(format!("Unsupported expression: {:?}", expr)),
     }
 }
@@ -1194,8 +1393,116 @@ fn eval_literal_expr(expr: &Expr) -> Result<DbValue, String> {
 
 fn exec_function(func: &Function, row: &[DbValue], col_map: &HashMap<String, usize>) -> Result<DbValue, String> {
     let name = func.name.to_string().to_lowercase();
+    // Keep "fuzzy_match" as the only custom function; all others are standard SQL
     match name.as_str() {
         "fuzzy_match" => exec_fuzzy_match(func, row, col_map),
+        _ => exec_std_function(func, name, row, col_map),
+    }
+}
+
+/// Evaluate a standard SQL scalar function.
+fn exec_std_function(
+    func: &Function,
+    name: String,
+    row: &[DbValue],
+    col_map: &HashMap<String, usize>,
+) -> Result<DbValue, String> {
+    let args = match &func.args {
+        FunctionArguments::List(list) => &list.args,
+        _ => return Err(format!("Function '{}' requires argument list", name)),
+    };
+
+    let eval_args = |count: usize| -> Result<Vec<DbValue>, String> {
+        if args.len() < count {
+            return Err(format!("'{}' requires {} argument(s)", name, count));
+        }
+        args.iter()
+            .take(count)
+            .map(|a| eval_expr(get_func_arg_unnamed(a)?, row, col_map))
+            .collect()
+    };
+
+    match name.as_str() {
+        "upper" | "ucase" => {
+            let vals = eval_args(1)?;
+            let s = value_to_string(&vals[0]);
+            Ok(DbValue::String(s.to_uppercase()))
+        }
+        "lower" | "lcase" => {
+            let vals = eval_args(1)?;
+            let s = value_to_string(&vals[0]);
+            Ok(DbValue::String(s.to_lowercase()))
+        }
+        "length" | "len" => {
+            let vals = eval_args(1)?;
+            let s = value_to_string(&vals[0]);
+            Ok(DbValue::Int(s.len() as i64))
+        }
+        "substr" | "substring" => {
+            let vals = eval_args(3).or_else(|_| eval_args(2))?;
+            let s = value_to_string(&vals[0]);
+            let start = match vals[1] {
+                DbValue::Int(i) => i.max(1) as usize - 1, // SQL is 1-indexed
+                _ => return Err("SUBSTR start must be integer".into()),
+            };
+            if vals.len() >= 3 {
+                let length = match vals[2] {
+                    DbValue::Int(i) => i as usize,
+                    _ => return Err("SUBSTR length must be integer".into()),
+                };
+                Ok(DbValue::String(s.chars().skip(start).take(length).collect()))
+            } else {
+                Ok(DbValue::String(s.chars().skip(start).collect()))
+            }
+        }
+        "trim" => {
+            let vals = eval_args(1)?;
+            let s = value_to_string(&vals[0]);
+            Ok(DbValue::String(s.trim().to_string()))
+        }
+        "coalesce" | "ifnull" => {
+            for a in args {
+                let v = eval_expr(get_func_arg_unnamed(a)?, row, col_map)?;
+                if v != DbValue::Null {
+                    return Ok(v);
+                }
+            }
+            Ok(DbValue::Null)
+        }
+        "round" => {
+            let vals = eval_args(2).or_else(|_| eval_args(1))?;
+            let num = match vals[0] {
+                DbValue::Float(f) => f,
+                DbValue::Int(i) => i as f64,
+                _ => return Err("ROUND requires numeric argument".into()),
+            };
+            let decimals = if vals.len() >= 2 {
+                match vals[1] {
+                    DbValue::Int(i) => i as u32,
+                    _ => return Err("ROUND decimals must be integer".into()),
+                }
+            } else {
+                0
+            };
+            let multiplier = 10_f64.powi(decimals as i32);
+            Ok(DbValue::Float((num * multiplier).round() / multiplier))
+        }
+        "abs" => {
+            let v = eval_args(1)?.swap_remove(0);
+            match v {
+                DbValue::Int(i) => Ok(DbValue::Int(i.abs())),
+                DbValue::Float(f) => Ok(DbValue::Float(f.abs())),
+                _ => Err("ABS requires numeric argument".into()),
+            }
+        }
+        "concat" => {
+            let mut result = String::new();
+            for a in args {
+                let v = eval_expr(get_func_arg_unnamed(a)?, row, col_map)?;
+                result.push_str(&value_to_string(&v));
+            }
+            Ok(DbValue::String(result))
+        }
         _ => Err(format!("Unknown function '{}'", name)),
     }
 }
@@ -1393,7 +1700,11 @@ fn sql_val_to_db(v: &sqlparser::ast::Value) -> DbValue {
 
 fn parse_data_type(dt: &DataType) -> Result<ColumnType, String> {
     match dt {
-        DataType::Int(_) | DataType::Integer(_) | DataType::BigInt(_) | DataType::SmallInt(_) => Ok(ColumnType::Int),
+        DataType::Int(_)
+        | DataType::Integer(_)
+        | DataType::BigInt(_)
+        | DataType::SmallInt(_)
+        | DataType::TinyInt(_) => Ok(ColumnType::Int),
         DataType::Float(_)
         | DataType::Double(_)
         | DataType::Real
@@ -1427,7 +1738,7 @@ fn parse_data_type(dt: &DataType) -> Result<ColumnType, String> {
                 "STRINGS" => Ok(ColumnType::Strings),
                 "FLOATS" => Ok(ColumnType::Floats),
                 "STRING" => Ok(ColumnType::String),
-                "INT" | "INTEGER" | "BIGINT" => Ok(ColumnType::Int),
+                "INT" | "INTEGER" | "BIGINT" | "TINYINT" | "SMALLINT" => Ok(ColumnType::Int),
                 "FLOAT" | "DOUBLE" => Ok(ColumnType::Float),
                 "BOOL" | "BOOLEAN" => Ok(ColumnType::Bool),
                 _ => Err(format!("Unknown custom type '{}'", s)),
@@ -1490,39 +1801,47 @@ fn exec_subquery(query: &Query) -> Result<Vec<DbValue>, String> {
     })?;
     let mut db_copy = db_snapshot;
     let result_str = exec_select(query, &mut db_copy)?;
-    // Parse the JSON result to extract first-column values
-    // Result format: [0,"OK",[["header1"],[val1],[val2],...]]
+
+    // Parse the full JSON response: [0,"OK",[["h"],[v1],[v2],...]]
     let mut values = Vec::new();
-    // Result format: [0,"OK",[["header1"],[val1],[val2],...]]
-    if let Some(data_start) = result_str.find("[0,\"OK\",") {
-        // Find the inner array starting at position 8 (after the response array prefix)
-        let after_prefix = &result_str[data_start + 8..];
-        // after_prefix starts with [[header],[val1],...]]]
-        // Find the matching closing for the data array by tracking bracket depth
-        let mut depth = 0i32;
-        let mut data_end = 0;
-        for (i, ch) in after_prefix.char_indices() {
-            match ch {
-                '[' => depth += 1,
-                ']' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        data_end = i + 1;
-                        break;
-                    }
-                }
-                _ => {}
-            }
-        }
-        if data_end > 0 {
-            let inner = &after_prefix[..data_end];
-            // Parse inner as JSON array: [["header"],[val1],[val2]]
-            if let Ok(parsed) = serde_json::from_str::<Vec<serde_json::Value>>(inner) {
-                for row in parsed.iter().skip(1) {
+    match serde_json::from_str::<Vec<serde_json::Value>>(&result_str) {
+        Ok(full) if full.len() >= 3 => {
+            if let Some(rows) = full[2].as_array() {
+                for row in rows.iter().skip(1) {
                     if let Some(arr) = row.as_array() {
                         if let Some(first) = arr.first() {
                             values.push(json_value_to_dbvalue(first));
                         }
+                    }
+                }
+            }
+        }
+        Ok(_) => {
+            // Response parsed but doesn't have the expected structure
+        }
+        Err(_) => {
+            // Fallback: try to extract from the raw string
+            // Find data between the first [[ and the last ]]
+            if let Some(start) = result_str.find("[[") {
+                if let Some(end) = result_str.rfind("]]") {
+                    let inner = &result_str[start + 1..end];
+                    // Split by ], [ to get individual rows
+                    for row_str in inner.split("],[") {
+                        let cleaned = row_str.trim_matches('[').trim_matches(']').trim();
+                        if !cleaned.is_empty() {
+                            let val = cleaned.trim_matches('"');
+                            if let Ok(n) = val.parse::<i64>() {
+                                values.push(DbValue::Int(n));
+                            } else if let Ok(f) = val.parse::<f64>() {
+                                values.push(DbValue::Float(f));
+                            } else {
+                                values.push(DbValue::String(val.to_string()));
+                            }
+                        }
+                    }
+                    // Remove header (first value)
+                    if values.len() > 1 {
+                        values.remove(0);
                     }
                 }
             }
@@ -1556,6 +1875,14 @@ fn exec_create_index(idx: &sqlparser::ast::CreateIndex, db: &mut Database) -> Re
         None => return Err("CREATE INDEX requires a name".into()),
     };
     let table_name = object_name_str(&idx.table_name);
+
+    // IF NOT EXISTS — silently return if index already exists
+    if idx.if_not_exists {
+        let table = db.get_table(&table_name)?;
+        if table.has_index(&index_name) {
+            return Ok(format!("\"Index '{}' already exists\"", index_name));
+        }
+    }
 
     // Determine index type from USING clause (default BTREE)
     use sqlparser::ast::IndexType as SqlIdx;
