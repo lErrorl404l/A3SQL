@@ -307,17 +307,37 @@ pub fn export_sql(db: &Database) -> String {
             Err(_) => continue,
         };
 
-        // CREATE TABLE
+        // CREATE TABLE with constraints
         let col_defs: Vec<String> = table
             .columns
             .iter()
             .map(|c| {
-                let type_str = format!("{}", c.dtype);
-                let pk = if c.primary_key { " PRIMARY KEY" } else { "" };
-                format!("{} {}{}", c.name, type_str, pk)
+                let mut parts: Vec<String> = Vec::new();
+                parts.push(format!("{} {}", c.name, c.dtype));
+                if c.primary_key {
+                    parts.push("PRIMARY KEY".into());
+                }
+                if c.auto_increment {
+                    parts.push("AUTO_INCREMENT".into());
+                }
+                if c.not_null {
+                    parts.push("NOT NULL".into());
+                }
+                if let Some(ref def) = c.default {
+                    parts.push(format!("DEFAULT {}", def));
+                }
+                parts.join(" ")
             })
             .collect();
-        out.push_str(&format!("CREATE TABLE {} ({});\n", table.name, col_defs.join(", ")));
+        let mut fk_parts: Vec<String> = Vec::new();
+        for fk in &table.foreign_keys {
+            fk_parts.push(format!(
+                "FOREIGN KEY ({}) REFERENCES {} ({})",
+                fk.local_column, fk.foreign_table, fk.foreign_column
+            ));
+        }
+        let all_parts: Vec<String> = col_defs.into_iter().chain(fk_parts).collect();
+        out.push_str(&format!("CREATE TABLE {} ({});\n", table.name, all_parts.join(", ")));
 
         // INSERT rows
         for row in &table.rows {
