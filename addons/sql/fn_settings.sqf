@@ -2,7 +2,7 @@
 
 ["a3db_listener_enabled", "CHECKBOX",
     ["Enable TCP Listener", "Start TCP listener on mission start for external queries."],
-    "A3DB", false, false
+    "A3DB", true, false
 ] call CBA_fnc_addSetting;
 
 ["a3db_listener_port", "STRING",
