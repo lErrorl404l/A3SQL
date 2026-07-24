@@ -1,0 +1,22 @@
+[config.file_type]
+options.allow_no_extension = true
+
+[config.cfgpatches_scope]
+enabled = true
+
+[sqf.banned_commands]
+enabled = true
+
+[sqf.banned_macros]
+options.release = [
+    "DEBUG_MODE_FULL",
+    "DISABLE_COMPILE_CACHE",
+    "ENABLE_PERFORMANCE_COUNTERS",
+]
+
+[sqf.undefined]
+enabled = true
+options.check_orphan_code = true
+
+[sqf.not_private]
+enabled = true

@@ -22,6 +22,18 @@ env:
   RUSTFLAGS: -D warnings
 
 jobs:
+  validate:
+    name: SQF + config validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup HEMTT
+        uses: arma-actions/hemtt@v1
+        with:
+          annotate: true
+      - name: HEMTT check
+        run: hemtt check
+
   test:
     name: cargo test + lint
     runs-on: ubuntu-latest

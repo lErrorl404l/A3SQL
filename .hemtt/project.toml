@@ -1,19 +1,16 @@
-name = "a3db"
+name = "A3DB"
 prefix = "a3db"
 mainprefix = "z"
 author = "ABE Team"
 
 [files]
 include = [
-    "a3db.dll",
-    "a3db.so",
-    "a3db_*.dll",
-    "a3db_*.so",
-    "extension/target/release/a3db_*.dll",
-    "extension/target/release/a3db_*.so",
+    "*.dll",
+    "*.so",
     "mod.cpp",
-    "docs/README.md",
     "meta.cpp",
+    "LICENSE",
+    "logo_*.paa",
 ]
 
 [version]
@@ -22,15 +19,17 @@ minor = 1
 patch = 0
 git_hash = 0
 
+# ── Hooks ────────────────────────────────────────────────────────────────
+[hemtt.hooks]
+pre_build = ["01_set_version"]
+
+# ── Launch profiles ──────────────────────────────────────────────────────
 [hemtt.launch.default]
-workshop = [
-    "450814997", # CBA_A3
-]
+workshop = ["450814997"]  # CBA_A3
 mission = "test.VR"
-parameters = [
-    "-world=VR",
-]
+parameters = ["-world=VR"]
 file_patching = false
 
+# ── Release ──────────────────────────────────────────────────────────────
 [hemtt.release]
 folder = "a3db"
