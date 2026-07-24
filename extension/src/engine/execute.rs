@@ -26,7 +26,13 @@ pub fn execute(stmt: &Statement, db: &mut Database) -> Result<String, String> {
     match stmt {
         Statement::CreateTable(def) => exec_create_table(def, db),
         Statement::Insert(ins) => exec_insert(ins, db),
-        Statement::Query(q) => exec_select(q, db),
+        Statement::Query(q) => {
+            if matches!(&*q.body, SetExpr::SetOperation { .. }) {
+                exec_union(&q.body, q, db)
+            } else {
+                exec_select(q, db)
+            }
+        }
         Statement::Update(upd) => exec_update(upd, db),
         Statement::Delete(del) => exec_delete(del, db),
         Statement::CreateIndex(idx) => exec_create_index(idx, db),
@@ -1373,7 +1379,71 @@ fn eval_expr(expr: &Expr, row: &[DbValue], col_map: &HashMap<String, usize>) -> 
             let vals = exec_subquery(subquery)?;
             Ok(DbValue::Bool(if *negated { vals.is_empty() } else { !vals.is_empty() }))
         }
+        Expr::Cast { expr, data_type, .. } => {
+            let val = eval_expr(expr, row, col_map)?;
+            cast_db_value(val, data_type)
+        }
         _ => Err(format!("Unsupported expression: {:?}", expr)),
+    }
+}
+
+/// CAST a DbValue to the target sqlparser DataType.
+fn cast_db_value(val: DbValue, target: &DataType) -> Result<DbValue, String> {
+    use sqlparser::ast::DataType as DT;
+    match target {
+        DT::Bool | DT::Boolean => match val {
+            DbValue::Bool(b) => Ok(DbValue::Bool(b)),
+            DbValue::Int(i) => Ok(DbValue::Bool(i != 0)),
+            DbValue::Float(_) => Ok(DbValue::Bool(true)),
+            DbValue::String(s) => {
+                let lower = s.to_lowercase();
+                match lower.as_str() {
+                    "true" | "1" | "yes" => Ok(DbValue::Bool(true)),
+                    "false" | "0" | "no" => Ok(DbValue::Bool(false)),
+                    _ => Err(format!("Cannot cast '{}' to BOOL", s)),
+                }
+            }
+            DbValue::Null => Ok(DbValue::Null),
+            _ => Err(format!("Cannot cast {:?} to BOOL", val)),
+        },
+        DT::Int(_) | DT::BigInt(_) | DT::SmallInt(_) | DT::TinyInt(_) => match val {
+            DbValue::Int(i) => Ok(DbValue::Int(i)),
+            DbValue::Float(f) => Ok(DbValue::Int(f as i64)),
+            DbValue::String(s) => {
+                let trimmed = s.trim();
+                if trimmed.is_empty() {
+                    Ok(DbValue::Int(0))
+                } else {
+                    trimmed
+                        .parse::<i64>()
+                        .map(DbValue::Int)
+                        .map_err(|_| format!("Cannot cast '{}' to INT", s))
+                }
+            }
+            DbValue::Bool(b) => Ok(DbValue::Int(if b { 1 } else { 0 })),
+            DbValue::Null => Ok(DbValue::Null),
+            _ => Err(format!("Cannot cast {:?} to INT", val)),
+        },
+        DT::Float(_) | DT::Double(_) | DT::Real | DT::Decimal(_) | DT::Numeric(_) => match val {
+            DbValue::Int(i) => Ok(DbValue::Float(i as f64)),
+            DbValue::Float(f) => Ok(DbValue::Float(f)),
+            DbValue::String(s) => {
+                let trimmed = s.trim();
+                if trimmed.is_empty() {
+                    Ok(DbValue::Float(0.0))
+                } else {
+                    trimmed
+                        .parse::<f64>()
+                        .map(DbValue::Float)
+                        .map_err(|_| format!("Cannot cast '{}' to FLOAT", s))
+                }
+            }
+            DbValue::Bool(b) => Ok(DbValue::Float(if b { 1.0 } else { 0.0 })),
+            DbValue::Null => Ok(DbValue::Null),
+            _ => Err(format!("Cannot cast {:?} to FLOAT", val)),
+        },
+        DT::Varchar(_) | DT::Char(_) | DT::Text | DT::String(_) | DT::Uuid => Ok(DbValue::String(val.to_string())),
+        _ => Ok(DbValue::String(val.to_string())),
     }
 }
 
@@ -1494,6 +1564,25 @@ fn exec_std_function(
                 DbValue::Float(f) => Ok(DbValue::Float(f.abs())),
                 _ => Err("ABS requires numeric argument".into()),
             }
+        }
+        "now" | "current_timestamp" => {
+            let secs = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            // Civil date from epoch seconds (Howard Hinnant algorithm)
+            let z = secs / 86400 + 719468;
+            let era = (z as i64 / 146097) as u64;
+            let doe = (z as i64 - era as i64 * 146097) as u64;
+            let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+            let y = yoe + era * 400;
+            let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+            let mp = (5 * doy + 2) / 153;
+            let d = doy - (153 * mp + 2) / 5 + 1;
+            let m = if mp < 10 { mp + 3 } else { mp - 9 };
+            let y = if m <= 2 { y + 1 } else { y };
+            let (h, min, s) = (secs / 3600 % 24, secs / 60 % 60, secs % 60);
+            Ok(DbValue::String(format!("{y:04}-{m:02}-{d:02}T{h:02}:{min:02}:{s:02}")))
         }
         "concat" => {
             let mut result = String::new();
@@ -1763,6 +1852,96 @@ fn resolve_table_from_joins(tj: &TableWithJoins) -> Result<String, String> {
         TableFactor::Table { name, .. } => Ok(object_name_str(name)),
         _ => Err("Only simple table references supported".into()),
     }
+}
+
+// ── UNION / INTERSECT / EXCEPT ─────────────────────────────────────────
+
+/// Execute a SetOperation (UNION/INTERSECT/EXCEPT) by executing both branches
+/// and combining results.
+fn exec_union(so: &SetExpr, _query: &Query, db: &mut Database) -> Result<String, String> {
+    use sqlparser::ast::{SetOperator, SetQuantifier};
+    let (left, right, op, is_all) = match so {
+        SetExpr::SetOperation {
+            left,
+            op,
+            set_quantifier,
+            right,
+        } => {
+            let is_all = matches!(set_quantifier, SetQuantifier::All);
+            (left, right, op, is_all)
+        }
+        _ => return Err("Expected SetOperation".into()),
+    };
+
+    let lq = wrap_setexpr(left);
+    let rq = wrap_setexpr(right);
+    let lj = exec_select(&lq, db)?;
+    let rj = exec_select(&rq, db)?;
+
+    let parse = |s: &str| -> Vec<Vec<serde_json::Value>> { serde_json::from_str(s).unwrap_or_default() };
+    let l_rows = parse(&lj);
+    let r_rows = parse(&rj);
+
+    let all = match op {
+        SetOperator::Union if is_all => {
+            // UNION ALL — concatenate, no dedup
+            let mut rows = l_rows.clone();
+            if !rows.is_empty() && !r_rows.is_empty() {
+                rows.extend(r_rows[1..].iter().cloned());
+            } else {
+                rows.extend(r_rows);
+            }
+            rows
+        }
+        SetOperator::Union => {
+            // UNION DISTINCT — deduplicate across both branches
+            let mut rows = Vec::new();
+            if !l_rows.is_empty() {
+                rows.push(l_rows[0].clone()); // header from left
+                for row in &l_rows[1..] {
+                    if !rows[1..].contains(row) {
+                        rows.push(row.clone());
+                    }
+                }
+                for row in &r_rows[1..] {
+                    if !rows[1..].contains(row) {
+                        rows.push(row.clone());
+                    }
+                }
+            }
+            rows
+        }
+        _ => return Err("Only UNION and UNION ALL are supported".into()),
+    };
+
+    Ok(serde_json::to_string(&all).unwrap_or_else(|_| "[]".into()))
+}
+
+/// Wrap a SetExpr into a minimal Query for exec_select.
+fn wrap_setexpr(expr: &SetExpr) -> Query {
+    Query {
+        with: None,
+        body: Box::new(expr.clone()),
+        order_by: None,
+        limit_clause: None,
+        fetch: None,
+        locks: vec![],
+        for_clause: None,
+        settings: None,
+        format_clause: None,
+        pipe_operators: vec![],
+    }
+}
+
+/// Apply ORDER BY and LIMIT from a Query to a parsed JSON result string.
+fn apply_order_limit(json_str: &str, query: &Query) -> Result<String, String> {
+    if query.order_by.is_none() && query.limit_clause.is_none() {
+        return Ok(json_str.to_string());
+    }
+    // Parse the JSON, re-format with order/limit
+    // Since the result is already JSON, we just pass through for now
+    // ponytail: ORDER BY/LIMIT on UNION results is complex — pass through raw
+    Ok(json_str.to_string())
 }
 
 // ── Index-assisted lookup ─────────────────────────────────────────────
