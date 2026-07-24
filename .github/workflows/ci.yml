@@ -119,7 +119,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: a3db-addon
-          path: .hemttout/release/
+          path: .hemttout/build/
 
   release:
     name: Create release
