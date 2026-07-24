@@ -316,7 +316,7 @@ Built following the same conventions as ACE3 and CBA_A3:
 | **Prefix** | `prefix = "a3db"`, `mainprefix = "z"` |
 | **PBO path** | `z\a3db\addons\{addon_name}` |
 | **Include path** | `\z\a3db\addons\main\script_mod.hpp` |
-| **CBA dependency** | CBA_A3 required (`cba_main`) |
+| **CBA dependency** | CBA_A3 required (`cba_main`, `cba_xeh`) |
 | **Build system** | HEMTT v1 (`.hemtt/project.toml`) |
 | **Rust workspace** | Workspace at root, crate in `extension/` |
 | **Release profile** | `opt-level = "z"`, `lto = true`, `strip = true` |
