@@ -2673,6 +2673,65 @@ fn like_match(val: &[char], pat: &[char], vi: usize, pi: usize) -> bool {
 
 // ── Tests ──────────────────────────────────────────────────────────────
 
+// ── Schema introspection ─────────────────────────────────────────────────
+
+/// DESCRIBE table — returns a JSON array of column definitions.
+pub fn describe_table(db: &crate::engine::database::Database, table_name: &str) -> Result<String, String> {
+    let table = db.get_table(table_name)?;
+    let mut rows = vec!["[\"Field\",\"Type\",\"Null\",\"Key\",\"Default\",\"Extra\"]".into()];
+    for col in &table.columns {
+        let null_s = if col.not_null { "\"NO\"" } else { "\"YES\"" };
+        let key_s = if col.primary_key {
+            "\"PRI\"".to_string()
+        } else {
+            "\"\"".to_string()
+        };
+        let dflt = match &col.default {
+            Some(v) => format!("\"{}\"", v),
+            None => "\"\"".into(),
+        };
+        let extra = if col.auto_increment {
+            "\"auto_increment\""
+        } else {
+            "\"\""
+        };
+        rows.push(format!(
+            "[\"{}\",\"{}\",{},{},{},{}]",
+            col.name, col.dtype, null_s, key_s, dflt, extra
+        ));
+    }
+    Ok(format!("[{}]", rows.join(",")))
+}
+
+/// SHOW CREATE TABLE — returns a CREATE TABLE SQL statement.
+pub fn show_create_table(db: &crate::engine::database::Database, table_name: &str) -> Result<String, String> {
+    let table = db.get_table(table_name)?;
+    let mut sql = format!("CREATE TABLE \"{}\" (\n", table_name);
+    let col_defs: Vec<String> = table
+        .columns
+        .iter()
+        .map(|col| {
+            let mut def = format!("  \"{}\" {}", col.name, col.dtype);
+            if col.primary_key {
+                def += " PRIMARY KEY";
+            }
+            if col.not_null && !col.primary_key {
+                def += " NOT NULL";
+            }
+            if let Some(ref d) = col.default {
+                def += &format!(" DEFAULT {}", d);
+            }
+            if col.auto_increment {
+                def += " AUTO_INCREMENT";
+            }
+            def
+        })
+        .collect();
+    sql += &col_defs.join(",\n");
+    sql += "\n)";
+    ::serde_json::to_string(&sql).map_err(|e| format!("{}", e))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

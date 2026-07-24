@@ -209,6 +209,28 @@ fn dispatch(input: &str, args: &[&str]) -> String {
         return result;
     }
 
+    // Handle DESCRIBE table / SHOW CREATE TABLE before SQL parsing
+    if let Some(rest) = trimmed.strip_prefix("describe ") {
+        let name = rest.trim();
+        if !name.is_empty() {
+            let db = DB.lock().unwrap();
+            return match engine::execute::describe_table(&db, name) {
+                Ok(data) => ok_response(&data),
+                Err(e) => error_response(ErrorCode::Exec, &e),
+            };
+        }
+    }
+    if let Some(rest) = trimmed.strip_prefix("show create table ") {
+        let name = rest.trim();
+        if !name.is_empty() {
+            let db = DB.lock().unwrap();
+            return match engine::execute::show_create_table(&db, name) {
+                Ok(data) => ok_response(&data),
+                Err(e) => error_response(ErrorCode::Exec, &e),
+            };
+        }
+    }
+
     // ── Multi-statement SQL execution ─────────────────────────────────
     let response = exec_sql_statements(&split_sql(trimmed), args);
 
@@ -535,57 +557,56 @@ fn handle_listen(args: &[&str]) -> String {
     let addr_clone = addr.clone();
     *LISTENER.lock().unwrap() = Some(listener.try_clone().unwrap_or_else(|_| panic!("clone")));
 
+    // Multi-client TCP: spawn a thread per connection so slow queries
+    // from one client don't block others. All queries serialize on the DB Mutex.
     std::thread::spawn(move || {
         use std::io::{BufRead, BufReader, Write};
-
         for stream in listener.incoming() {
-            let mut stream = match stream {
+            let stream = match stream {
                 Ok(s) => s,
                 Err(_) => break,
             };
-
-            let mut reader = match stream.try_clone() {
-                Ok(c) => BufReader::new(c),
-                Err(_) => break,
-            };
-            let mut authenticated = !has_auth();
-            let mut line = String::new();
-
-            loop {
-                line.clear();
-                match reader.read_line(&mut line) {
-                    Ok(0) | Err(_) => break,
-                    Ok(_) => {}
-                }
-
-                let trimmed = line.trim();
-                if trimmed.is_empty() {
-                    continue;
-                }
-                if trimmed == "QUIT" || trimmed == "EXIT" {
-                    break;
-                }
-
-                if !authenticated {
-                    if let Some(rest) = trimmed.strip_prefix("LOGIN ") {
-                        let parts: Vec<&str> = rest.splitn(2, ' ').collect();
-                        if parts.len() >= 2 && check_login(parts[0], parts[1]) {
-                            let _ = writeln!(stream, "[0,\"OK\",\"Authenticated\"]");
-                            authenticated = true;
-                        } else {
-                            let _ = writeln!(stream, "[-1,\"ERR_AUTH\",\"Invalid credentials\"]");
-                            break;
-                        }
-                    } else {
-                        let _ = writeln!(stream, "[-1,\"ERR_AUTH\",\"LOGIN <user> <pass> required\"]");
+            std::thread::spawn(move || {
+                let mut stream = stream;
+                let mut reader = match stream.try_clone() {
+                    Ok(c) => BufReader::new(c),
+                    Err(_) => return,
+                };
+                let mut authenticated = !has_auth();
+                let mut line = String::new();
+                loop {
+                    line.clear();
+                    match reader.read_line(&mut line) {
+                        Ok(0) | Err(_) => break,
+                        Ok(_) => {}
+                    }
+                    let trimmed = line.trim();
+                    if trimmed.is_empty() {
+                        continue;
+                    }
+                    if trimmed == "QUIT" || trimmed == "EXIT" {
                         break;
                     }
-                    continue;
+                    if !authenticated {
+                        if let Some(rest) = trimmed.strip_prefix("LOGIN ") {
+                            let parts: Vec<&str> = rest.splitn(2, ' ').collect();
+                            if parts.len() >= 2 && check_login(parts[0], parts[1]) {
+                                let _ = writeln!(stream, "[0,\"OK\",\"Authenticated\"]");
+                                authenticated = true;
+                            } else {
+                                let _ = writeln!(stream, "[-1,\"ERR_AUTH\",\"Invalid credentials\"]");
+                                break;
+                            }
+                        } else {
+                            let _ = writeln!(stream, "[-1,\"ERR_AUTH\",\"LOGIN <user> <pass> required\"]");
+                            break;
+                        }
+                        continue;
+                    }
+                    let result = dispatch(trimmed, &[]);
+                    let _ = writeln!(stream, "{}", result);
                 }
-
-                let result = dispatch(trimmed, &[]);
-                let _ = writeln!(stream, "{}", result);
-            }
+            });
         }
     });
 
