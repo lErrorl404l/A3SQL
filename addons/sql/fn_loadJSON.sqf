@@ -20,5 +20,5 @@ private _json = if (_data isEqualType []) then {
     _raw
 };
 
-private _result = _extension callExtension ["import_json", [_table, _json]];
+private _result = _extension callExtension [format ["import json %1", _table], [_json]];
 _result call CBA_fnc_parseJSON
