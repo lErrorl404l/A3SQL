@@ -29,6 +29,10 @@ static DB: LazyLock<Mutex<engine::Database>> =
 static CALLBACK: LazyLock<Mutex<Option<unsafe extern "C" fn(i32, *mut std::os::raw::c_char)>>> =
     LazyLock::new(|| Mutex::new(None));
 
+// ponytail: external TCP listener — global lock on a single listener
+static LISTENER: LazyLock<Mutex<Option<std::net::TcpListener>>> =
+    LazyLock::new(|| Mutex::new(None));
+
 // ── ABI ─────────────────────────────────────────────────────────────────────
 
 /// Output buffer size from Arma engine. Currently 10240 bytes.
@@ -161,6 +165,9 @@ fn dispatch(input: &str, args: &[&str]) -> String {
     }
     if trimmed == "load" {
         return handle_load(args);
+    }
+    if trimmed == "listen" {
+        return handle_listen(args);
     }
 
     // ── Multi-statement SQL execution ─────────────────────────────────
@@ -342,6 +349,54 @@ fn handle_load(args: &[&str]) -> String {
         }
         Err(e) => error_response(ErrorCode::Io, &format!("Read failed: {}", e)),
     }
+}
+
+// ── External TCP connector ─────────────────────────────────────────────
+
+/// Start a TCP server on 127.0.0.1:<port> that accepts SQL queries.
+/// Each connection: read one line, execute via dispatch(), write result, close.
+/// Allows external tools (scripts, dashboards) to query the in-game database
+/// while the game is running.
+fn handle_listen(args: &[&str]) -> String {
+    let port: u16 = args.first().and_then(|s| s.parse().ok()).unwrap_or(33306);
+
+    // If already listening, just return current status
+    if LISTENER.lock().unwrap().is_some() {
+        return ok_response(&format!("\"Already listening on 127.0.0.1:{}\"", port));
+    }
+
+    let addr = format!("127.0.0.1:{}", port);
+    let listener = match std::net::TcpListener::bind(&addr) {
+        Ok(l) => l,
+        Err(e) => return error_response(ErrorCode::Io, &format!("Bind failed: {}", e)),
+    };
+
+    let addr_clone = addr.clone();
+    *LISTENER.lock().unwrap() = Some(listener.try_clone().unwrap_or_else(|_| panic!("clone")));
+
+    std::thread::spawn(move || {
+        // ponytail: one-query-per-connection, no keep-alive or threading
+        #[allow(clippy::significant_drop_in_scrutinee)]
+        for stream in listener.incoming() {
+            match stream {
+                Ok(mut stream) => {
+                    use std::io::{BufRead, BufReader, Write};
+                    let mut line = String::new();
+                    let mut reader = BufReader::new(&stream);
+                    if reader.read_line(&mut line).is_ok() {
+                        let trimmed = line.trim();
+                        if !trimmed.is_empty() {
+                            let result = dispatch(trimmed, &[]);
+                            let _ = writeln!(stream, "{}", result);
+                        }
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
+
+    ok_response(&format!("\"Listening on {}\"", addr_clone))
 }
 
 fn write_output(output: *mut c_char, output_size: u32, s: &str) {

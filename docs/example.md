@@ -219,3 +219,27 @@ All functions accept an optional extension name as the last parameter
 | `a3db_fnc_dumpSQL()` | Same as exportSQL | `[] call a3db_fnc_dumpSQL` |
 | `a3db_fnc_save(path)` | Save DB to binary file | `["data.bin"] call a3db_fnc_save` |
 | `a3db_fnc_load(path)` | Restore DB from file | `["data.bin"] call a3db_fnc_load` |
+
+## External TCP Connection
+
+A3DB exposes a simple TCP interface for external tools. Call once from SQF:
+
+```sqf
+// Start listener on port 33306 (default)
+["listen", []] call a3db_fnc_execute;     // default port
+["listen", ["33307"]] call a3db_fnc_execute; // custom port
+```
+
+Then from any external tool (Python, Node, bash):
+
+```python
+import socket
+s = socket.socket()
+s.connect(("127.0.0.1", 33306))
+s.sendall(b"SELECT name, score FROM players ORDER BY score DESC LIMIT 5\n")
+print(s.recv(65536).decode())
+s.close()
+```
+
+Each connection handles one SQL query, returns a JSON response, then closes.
+Only one listener can run at a time (bound to the game process).
