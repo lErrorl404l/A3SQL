@@ -12,7 +12,13 @@ use super::database::Database;
 use super::index::IndexType as A3IndexType;
 use super::table::Table;
 use super::value::{Column, ColumnType, DbValue};
-use crate::DB;
+
+// ponytail: thread-local DB snapshot for subquery evaluation (avoids deadlock
+// when exec_subquery is called inside eval_expr while DB lock is held).
+thread_local! {
+    static SUBQ_DB: std::cell::RefCell<Option<Database>> =
+        const { std::cell::RefCell::new(None) };
+}
 
 // ── Public entry point ──────────────────────────────────────────────────
 
@@ -205,9 +211,9 @@ fn exec_insert(ins: &sqlparser::ast::Insert, db: &mut Database) -> Result<String
             .collect::<Vec<Vec<Expr>>>(),
         _ => return Err("Only VALUES-based INSERT supported".into()),
     };
-    // ponytail: check for REPLACE — Insert.or is Some when REPLACE is used
-    #[allow(clippy::useless_conversion)]
-    let is_replace = ins.or.is_some();
+    // Check for REPLACE — either Insert.or (from INSERT OR REPLACE) or
+    // the REPLACE_FLAG set by dispatch() for raw REPLACE INTO syntax.
+    let is_replace = ins.or.is_some() || crate::REPLACE_FLAG.load(std::sync::atomic::Ordering::SeqCst);
 
     let mut inserted = 0usize;
     for row_exprs in &rows {
@@ -269,6 +275,8 @@ fn exec_select(query: &Query, db: &mut Database) -> Result<String, String> {
     let where_expr = select.selection.as_ref();
 
     // 1. Filter rows by WHERE — use BTreeIndex for simple equality when possible
+    // Set thread-local DB snapshot for subquery evaluation
+    SUBQ_DB.with(|snap| *snap.borrow_mut() = Some(db.clone()));
     let filtered_rows: Vec<&[DbValue]> = if let Some(rows) = try_btree_index(where_expr, table) {
         rows
     } else {
@@ -302,16 +310,28 @@ fn exec_select(query: &Query, db: &mut Database) -> Result<String, String> {
         filtered_rows
     };
 
-    // 3.5 DISTINCT — remove duplicate rows
+    // 3.5 DISTINCT — dedup by comparing projected values
     let deduped_rows: Vec<&[DbValue]> = if select.distinct.is_some() {
         let mut seen: Vec<Vec<DbValue>> = Vec::new();
         grouped_rows
             .into_iter()
             .filter(|row| {
-                if seen.iter().any(|s| s.as_slice() == *row) {
+                // For DISTINCT, compare the projected (selected) column values
+                let proj: Vec<DbValue> = select
+                    .projection
+                    .iter()
+                    .filter_map(|item| {
+                        if let SelectItem::UnnamedExpr(e) = item {
+                            eval_expr(e, row, &table.col_index).ok()
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+                if seen.contains(&proj) {
                     false
                 } else {
-                    seen.push(row.to_vec());
+                    seen.push(proj);
                     true
                 }
             })
@@ -338,8 +358,69 @@ fn exec_select(query: &Query, db: &mut Database) -> Result<String, String> {
     // 5. LIMIT / OFFSET
     let limited_rows = apply_limit_offset(sorted_rows, &query.limit_clause)?;
 
-    // 6. Format result
-    Ok(table.format_result(limited_rows))
+    // 6. Format result — respect SELECT projection (only show chosen columns)
+    Ok(format_projected_result(
+        limited_rows,
+        &select.projection,
+        &table.col_index,
+        table,
+    ))
+}
+
+/// Format SELECT results, projecting to only the requested columns.
+fn format_projected_result(
+    rows: Vec<&[DbValue]>,
+    projection: &[SelectItem],
+    col_map: &HashMap<String, usize>,
+    table: &Table,
+) -> String {
+    let is_wildcard = projection
+        .iter()
+        .any(|item| matches!(item, SelectItem::Wildcard { .. }));
+    if is_wildcard {
+        return table.format_result(rows);
+    }
+
+    // Build header from projection
+    let header: Vec<String> = projection
+        .iter()
+        .map(|item| match item {
+            SelectItem::UnnamedExpr(expr) => projection_expr_name(expr),
+            SelectItem::Wildcard { .. } => unreachable!(),
+            _ => format!("{:?}", item),
+        })
+        .collect();
+
+    let header_json = format!(
+        "[{}]",
+        header
+            .iter()
+            .map(|h| format!("\"{}\"", h))
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+
+    let row_jsons: Vec<String> = rows
+        .iter()
+        .map(|row| {
+            let cells: Vec<String> = projection
+                .iter()
+                .map(|item| match item {
+                    SelectItem::UnnamedExpr(expr) => match eval_expr(expr, row, col_map) {
+                        Ok(v) => v.to_json_string(),
+                        Err(_) => "null".to_string(),
+                    },
+                    SelectItem::Wildcard { .. } => unreachable!(),
+                    _ => "null".to_string(),
+                })
+                .collect();
+            format!("[{}]", cells.join(","))
+        })
+        .collect();
+
+    let mut parts: Vec<String> = vec![header_json];
+    parts.extend(row_jsons);
+    format!("[{}]", parts.join(","))
 }
 
 /// Check if the FROM clause has multiple tables or JOINs.
@@ -1399,23 +1480,43 @@ fn try_btree_index<'a>(where_expr: Option<&Expr>, table: &'a Table) -> Option<Ve
 // ── Subquery execution ────────────────────────────────────────────────
 
 /// Execute a subquery (SELECT) and return the first column of each row.
-/// Uses the global DB — must NOT be called while the DB mutex is held.
+/// Uses the thread-local DB snapshot set by exec_select (avoids deadlock).
 fn exec_subquery(query: &Query) -> Result<Vec<DbValue>, String> {
-    // Clone the DB state to avoid deadlock (eval_expr is called with DB locked)
-    let db_snapshot = {
-        let db_guard = DB.lock().unwrap();
-        Database::clone(&db_guard)
-    };
+    let db_snapshot = SUBQ_DB.with(|snap| {
+        snap.borrow()
+            .as_ref()
+            .cloned()
+            .ok_or_else(|| "Subquery not supported in this context".to_string())
+    })?;
     let mut db_copy = db_snapshot;
     let result_str = exec_select(query, &mut db_copy)?;
     // Parse the JSON result to extract first-column values
     // Result format: [0,"OK",[["header1"],[val1],[val2],...]]
     let mut values = Vec::new();
-    if let Some(data_start) = result_str.find("[0,\"OK\",[") {
-        let after = &result_str[data_start + 9..];
-        if let Some(data_end) = after.rfind("]]") {
-            let inner = &after[..data_end + 1]; // includes inner array's closing ]
-                                                // Parse inner as JSON array: [["header"],[val1],[val2]]
+    // Result format: [0,"OK",[["header1"],[val1],[val2],...]]
+    if let Some(data_start) = result_str.find("[0,\"OK\",") {
+        // Find the inner array starting at position 8 (after the response array prefix)
+        let after_prefix = &result_str[data_start + 8..];
+        // after_prefix starts with [[header],[val1],...]]]
+        // Find the matching closing for the data array by tracking bracket depth
+        let mut depth = 0i32;
+        let mut data_end = 0;
+        for (i, ch) in after_prefix.char_indices() {
+            match ch {
+                '[' => depth += 1,
+                ']' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        data_end = i + 1;
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if data_end > 0 {
+            let inner = &after_prefix[..data_end];
+            // Parse inner as JSON array: [["header"],[val1],[val2]]
             if let Ok(parsed) = serde_json::from_str::<Vec<serde_json::Value>>(inner) {
                 for row in parsed.iter().skip(1) {
                     if let Some(arr) = row.as_array() {

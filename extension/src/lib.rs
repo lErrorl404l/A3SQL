@@ -19,6 +19,7 @@ use engine::execute as engine_execute;
 use parser::parse_sql;
 use std::ffi::CStr;
 use std::os::raw::c_char;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, Mutex};
 
 /// Global database instance (single-threaded, mutex-protected).
@@ -27,9 +28,12 @@ pub(crate) static DB: LazyLock<Mutex<engine::Database>> = LazyLock::new(|| Mutex
 /// Optional pointer to the SQF callback function registered by the engine.
 static CALLBACK: LazyLock<Mutex<Option<unsafe extern "C" fn(i32, *mut std::os::raw::c_char)>>> =
     LazyLock::new(|| Mutex::new(None));
-
 // ponytail: external TCP listener — global lock on a single listener
 static LISTENER: LazyLock<Mutex<Option<std::net::TcpListener>>> = LazyLock::new(|| Mutex::new(None));
+
+// Flag set by dispatch() when REPLACE INTO is detected before SQL parsing.
+// Read by exec_insert() to handle PK conflict via delete+re-insert.
+pub(crate) static REPLACE_FLAG: AtomicBool = AtomicBool::new(false);
 
 // ── ABI ─────────────────────────────────────────────────────────────────────
 
@@ -173,6 +177,9 @@ fn dispatch(input: &str, args: &[&str]) -> String {
         }
         return handle_load(&load_args);
     }
+    if trimmed == "stop_listen" || trimmed == "stop" {
+        return handle_stop_listen();
+    }
     if trimmed == "listen" || trimmed.starts_with("listen ") {
         let mut listen_args = args.to_vec();
         if let Some(port) = trimmed.strip_prefix("listen ") {
@@ -183,45 +190,18 @@ fn dispatch(input: &str, args: &[&str]) -> String {
         return handle_listen(&listen_args);
     }
 
+    if trimmed.to_uppercase().starts_with("REPLACE INTO") {
+        REPLACE_FLAG.store(true, Ordering::SeqCst);
+        // Replace "REPLACE INTO" with "INSERT INTO" for sqlparser
+        let insert_sql = format!("INSERT INTO {}", &trimmed[12..]);
+        let statements = split_sql(&insert_sql);
+        let result = exec_sql_statements(&statements, args);
+        REPLACE_FLAG.store(false, Ordering::SeqCst);
+        return result;
+    }
+
     // ── Multi-statement SQL execution ─────────────────────────────────
-    // Split by semicolons, executing each non-empty statement in order.
-    // Results from SELECT-like statements are accumulated.
-    let statements = split_sql(trimmed);
-    if statements.is_empty() {
-        return ok_response("\"\"");
-    }
-
-    let mut db = DB.lock().unwrap();
-    let mut results: Vec<String> = Vec::new();
-
-    for sql in &statements {
-        match parse_sql(sql) {
-            Ok(stmts) => {
-                for stmt in &stmts {
-                    match engine_execute(stmt, &mut db) {
-                        Ok(data) => results.push(data),
-                        Err(e) => {
-                            let err = A3dbError::new(ErrorCode::Exec, &e);
-                            return err.to_response();
-                        }
-                    }
-                }
-            }
-            Err(e) => {
-                let err = A3dbError::new(ErrorCode::Parse, format!("{}", e));
-                return err.to_response();
-            }
-        }
-    }
-
-    // Format accumulated results
-    let response = if results.is_empty() {
-        ok_response("\"OK\"")
-    } else if results.len() == 1 {
-        ok_response(&results[0])
-    } else {
-        ok_response(&format!("[{}]", results.join(",")))
-    };
+    let response = exec_sql_statements(&split_sql(trimmed), args);
 
     // Guard: Arma output buffer is ~10KB. If the response exceeds it, the
     // engine would silently truncate. Return an error instead so the caller
@@ -265,6 +245,45 @@ fn split_sql(sql: &str) -> Vec<String> {
     }
 
     stmts
+}
+
+/// Execute a batch of SQL statements against the global DB.
+/// Returns a formatted response string with accumulated results.
+fn exec_sql_statements(statements: &[String], _args: &[&str]) -> String {
+    if statements.is_empty() {
+        return ok_response("\"\"");
+    }
+
+    let mut db = DB.lock().unwrap();
+    let mut results: Vec<String> = Vec::new();
+
+    for sql in statements {
+        match parse_sql(sql) {
+            Ok(stmts) => {
+                for stmt in &stmts {
+                    match engine_execute(stmt, &mut db) {
+                        Ok(data) => results.push(data),
+                        Err(e) => {
+                            let err = A3dbError::new(ErrorCode::Exec, &e);
+                            return err.to_response();
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                let err = A3dbError::new(ErrorCode::Parse, format!("{}", e));
+                return err.to_response();
+            }
+        }
+    }
+
+    if results.is_empty() {
+        ok_response("\"OK\"")
+    } else if results.len() == 1 {
+        ok_response(&results[0])
+    } else {
+        ok_response(&format!("[{}]", results.join(",")))
+    }
 }
 
 // ── Import/Export handlers ──────────────────────────────────────────────
@@ -370,18 +389,37 @@ fn handle_load(args: &[&str]) -> String {
 /// Each connection: read one line, execute via dispatch(), write result, close.
 /// Allows external tools (scripts, dashboards) to query the in-game database
 /// while the game is running.
+fn handle_stop_listen() -> String {
+    *LISTENER.lock().unwrap() = None;
+    ok_response("\"Listener stopped\"")
+}
+
 fn handle_listen(args: &[&str]) -> String {
     let port: u16 = args.first().and_then(|s| s.parse().ok()).unwrap_or(33306);
 
-    // If already listening, just return current status
-    if LISTENER.lock().unwrap().is_some() {
-        return ok_response(&format!("\"Already listening on 127.0.0.1:{}\"", port));
-    }
+    // Stop any existing listener first
+    *LISTENER.lock().unwrap() = None;
 
     let addr = format!("127.0.0.1:{}", port);
-    let listener = match std::net::TcpListener::bind(&addr) {
+    // ponytail: retry bind with delay to handle TIME_WAIT on stop+re-listen
+    fn try_bind(addr: &str) -> Result<std::net::TcpListener, String> {
+        let mut last_err = String::new();
+        for i in 0..6 {
+            match std::net::TcpListener::bind(addr) {
+                Ok(l) => return Ok(l),
+                Err(e) => {
+                    last_err = format!("Bind failed: {}", e);
+                    if i < 5 {
+                        std::thread::sleep(std::time::Duration::from_secs(2));
+                    }
+                }
+            }
+        }
+        Err(last_err)
+    }
+    let listener = match try_bind(&addr) {
         Ok(l) => l,
-        Err(e) => return error_response(ErrorCode::Io, &format!("Bind failed: {}", e)),
+        Err(e) => return error_response(ErrorCode::Io, &e),
     };
 
     let addr_clone = addr.clone();
