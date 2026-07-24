@@ -99,6 +99,11 @@ impl Database {
     }
 
     /// Drop a table.
+    /// Add a table directly (used by CTE processing).
+    pub fn add_table(&mut self, name: String, table: Table) {
+        self.tables.insert(name, table);
+    }
+
     pub fn drop_table(&mut self, name: &str) -> Result<(), String> {
         if self.tables.remove(name).is_none() {
             return Err(format!("Table '{}' does not exist", name));

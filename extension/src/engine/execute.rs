@@ -27,11 +27,51 @@ pub fn execute(stmt: &Statement, db: &mut Database) -> Result<String, String> {
         Statement::CreateTable(def) => exec_create_table(def, db),
         Statement::Insert(ins) => exec_insert(ins, db),
         Statement::Query(q) => {
-            if matches!(&*q.body, SetExpr::SetOperation { .. }) {
+            // Process WITH / CTE clauses before executing the main query body
+            let mut cte_tables: Vec<String> = Vec::new();
+            if let Some(with) = &q.with {
+                for cte in &with.cte_tables {
+                    let alias = cte.alias.name.value.to_lowercase();
+                    let cte_alias = alias.clone();
+                    let json = exec_select(&cte.query, db)?;
+                    let rows: Vec<Vec<serde_json::Value>> = serde_json::from_str(&json).unwrap_or_default();
+                    if rows.len() >= 2 {
+                        let header = &rows[0];
+                        let cols: Vec<Column> = header
+                            .iter()
+                            .map(|h| Column {
+                                name: h.as_str().unwrap_or("col").to_lowercase(),
+                                dtype: ColumnType::String,
+                                primary_key: false,
+                                not_null: false,
+                                default: None,
+                                auto_increment: false,
+                            })
+                            .collect();
+                        if let Ok(mut cte_table) = Table::new(alias.clone(), cols) {
+                            for row_data in &rows[1..] {
+                                let db_row: Vec<DbValue> = row_data.iter().map(json_val_to_dbvalue).collect();
+                                let _ = cte_table.insert(db_row);
+                            }
+                            db.add_table(cte_alias.clone(), cte_table);
+                            cte_tables.push(cte_alias);
+                        }
+                    }
+                }
+            }
+
+            let result = if matches!(&*q.body, SetExpr::SetOperation { .. }) {
                 exec_union(&q.body, q, db)
             } else {
                 exec_select(q, db)
+            };
+
+            // Clean up CTE temp tables
+            for name in &cte_tables {
+                let _ = db.drop_table(name);
             }
+
+            result
         }
         Statement::Update(upd) => exec_update(upd, db),
         Statement::Delete(del) => exec_delete(del, db),
@@ -1414,6 +1454,21 @@ fn eval_expr(expr: &Expr, row: &[DbValue], col_map: &HashMap<String, usize>) -> 
             cast_db_value(val, data_type)
         }
         _ => Err(format!("Unsupported expression: {:?}", expr)),
+    }
+}
+
+/// Convert a serde_json::Value to DbValue for CTE row processing.
+fn json_val_to_dbvalue(v: &serde_json::Value) -> DbValue {
+    match v {
+        serde_json::Value::Null => DbValue::Null,
+        serde_json::Value::Bool(b) => DbValue::Bool(*b),
+        serde_json::Value::Number(n) => n
+            .as_i64()
+            .map(DbValue::Int)
+            .or_else(|| n.as_f64().map(DbValue::Float))
+            .unwrap_or(DbValue::Null),
+        serde_json::Value::String(s) => DbValue::String(s.clone()),
+        _ => DbValue::String(v.to_string()),
     }
 }
 
