@@ -2,7 +2,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use sqlparser::ast::table_constraints::{ForeignKeyConstraint, TableConstraint};
+use sqlparser::ast::table_constraints::TableConstraint;
 use sqlparser::ast::{
     BinaryOperator, ColumnOption, DataType, Expr, Function, FunctionArg, FunctionArgExpr, FunctionArguments,
     LimitClause, ObjectName, OrderByKind, Query, Select, SelectItem, SetExpr, Statement, TableFactor, TableWithJoins,
@@ -264,29 +264,42 @@ fn exec_create_table(def: &sqlparser::ast::CreateTable, db: &mut Database) -> Re
 
     // Collect FOREIGN KEY constraints from both column and table level
     let mut foreign_keys: Vec<ForeignKeyInfo> = Vec::new();
-    let extract_fk = |fk: &ForeignKeyConstraint| -> ForeignKeyInfo {
-        ForeignKeyInfo {
-            local_column: fk.columns.first().map(|c| c.value.to_lowercase()).unwrap_or_default(),
-            foreign_table: fk.foreign_table.to_string().to_lowercase(),
-            foreign_column: fk
-                .referred_columns
-                .first()
-                .map(|c| c.value.to_lowercase())
-                .unwrap_or_default(),
-            on_delete: fk.on_delete,
-            on_update: fk.on_update,
-        }
-    };
     for col_def in &def.columns {
+        let col_name = col_def.name.value.to_lowercase();
         for opt_def in &col_def.options {
             if let ColumnOption::ForeignKey(fk) = &opt_def.option {
-                foreign_keys.push(extract_fk(fk));
+                let local_col = fk
+                    .columns
+                    .first()
+                    .map(|c| c.value.to_lowercase())
+                    .unwrap_or_else(|| col_name.clone());
+                foreign_keys.push(ForeignKeyInfo {
+                    local_column: local_col,
+                    foreign_table: fk.foreign_table.to_string().to_lowercase(),
+                    foreign_column: fk
+                        .referred_columns
+                        .first()
+                        .map(|c| c.value.to_lowercase())
+                        .unwrap_or_default(),
+                    on_delete: fk.on_delete,
+                    on_update: fk.on_update,
+                });
             }
         }
     }
     for constraint in &def.constraints {
         if let TableConstraint::ForeignKey(fk) = constraint {
-            foreign_keys.push(extract_fk(fk));
+            foreign_keys.push(ForeignKeyInfo {
+                local_column: fk.columns.first().map(|c| c.value.to_lowercase()).unwrap_or_default(),
+                foreign_table: fk.foreign_table.to_string().to_lowercase(),
+                foreign_column: fk
+                    .referred_columns
+                    .first()
+                    .map(|c| c.value.to_lowercase())
+                    .unwrap_or_default(),
+                on_delete: fk.on_delete,
+                on_update: fk.on_update,
+            });
         }
         let text = format!("{}", constraint).to_uppercase();
         if text.contains("PRIMARY KEY (") {
@@ -835,6 +848,7 @@ fn format_projected_result(
         .iter()
         .map(|item| match item {
             SelectItem::UnnamedExpr(expr) => projection_expr_name(expr),
+            SelectItem::ExprWithAlias { alias, .. } => alias.value.to_lowercase(),
             SelectItem::Wildcard { .. } => unreachable!(),
             _ => format!("{:?}", item),
         })
@@ -849,18 +863,53 @@ fn format_projected_result(
             .join(",")
     );
 
+    // Pre-count window functions in projection for correct column offset
+    let wf_prefix_counts: Vec<usize> = projection
+        .iter()
+        .scan(0, |count, item| {
+            let expr = match item {
+                SelectItem::UnnamedExpr(e) => Some(e),
+                SelectItem::ExprWithAlias { expr: e, .. } => Some(e),
+                _ => None,
+            };
+            let is_win = expr.is_some_and(|e| matches!(e, Expr::Function(f) if f.over.is_some()));
+            let idx = *count;
+            if is_win {
+                *count += 1;
+            }
+            Some(idx)
+        })
+        .collect();
+    let orig_cols = col_map.len();
     let row_jsons: Vec<String> = rows
         .iter()
         .map(|row| {
             let cells: Vec<String> = projection
                 .iter()
-                .map(|item| match item {
-                    SelectItem::UnnamedExpr(expr) => match eval_expr(expr, row, col_map) {
-                        Ok(v) => v.to_json_string(),
-                        Err(_) => "null".to_string(),
-                    },
-                    SelectItem::Wildcard { .. } => unreachable!(),
-                    _ => "null".to_string(),
+                .enumerate()
+                .map(|(proj_idx, item)| {
+                    let expr = match item {
+                        SelectItem::UnnamedExpr(e) => Some(e),
+                        SelectItem::ExprWithAlias { expr: e, .. } => Some(e),
+                        SelectItem::Wildcard { .. } => None,
+                        _ => None,
+                    };
+                    if let Some(e) = expr {
+                        let is_window = matches!(e, Expr::Function(f) if f.over.is_some());
+                        if is_window {
+                            let win_idx = wf_prefix_counts[proj_idx];
+                            let win_col = orig_cols + win_idx;
+                            if win_col < row.len() {
+                                return row[win_col].to_json_string();
+                            }
+                        }
+                        match eval_expr(e, row, col_map) {
+                            Ok(v) => v.to_json_string(),
+                            Err(_) => "null".to_string(),
+                        }
+                    } else {
+                        "null".to_string()
+                    }
                 })
                 .collect();
             format!("[{}]", cells.join(","))
