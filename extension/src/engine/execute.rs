@@ -2041,9 +2041,8 @@ fn exec_std_function(
 ) -> Result<DbValue, String> {
     let args = match &func.args {
         FunctionArguments::List(list) => &list.args,
-        _ => return Err(format!("Function '{}' requires argument list", name)),
+        _ => return Ok(now_value()), // e.g. CURRENT_TIMESTAMP without parens
     };
-
     let eval_args = |count: usize| -> Result<Vec<DbValue>, String> {
         if args.len() < count {
             return Err(format!("'{}' requires {} argument(s)", name, count));
