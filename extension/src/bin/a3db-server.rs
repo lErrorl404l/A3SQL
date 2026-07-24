@@ -1,9 +1,14 @@
 // a3db-server — standalone database server for a3db
-// cargo run --bin a3db-server -- --port 33307
-
-use std::io::{BufRead, BufReader, Write};
-use std::net::{TcpListener, TcpStream};
-use std::time::Duration;
+//
+// Thin CLI wrapper around a3db::start_server(). Shares ALL features with
+// the in-game extension: LOGIN auth, PING, DESCRIBE, multi-client TCP, etc.
+//
+// Usage:
+//   a3db-server                  # port 33306, localhost, in-memory
+//   a3db-server --port 33307     # custom port
+//   a3db-server --bind 0.0.0.0   # network-accessible
+//   a3db-server --db data.bin    # persistent (auto-save every 30s)
+//   a3db-server --help           # options
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -30,7 +35,7 @@ fn main() {
                 eprintln!("a3db-server [OPTIONS]");
                 eprintln!("  --port, -p <PORT>   TCP port (default: 33306)");
                 eprintln!("  --bind, -b <IP>     Bind address (default: 127.0.0.1)");
-                eprintln!("  --db, -d <PATH>     Persist database to file");
+                eprintln!("  --db, -d <PATH>     Persist database to file (auto-save)");
                 return;
             }
             _ => {
@@ -41,72 +46,20 @@ fn main() {
         i += 1;
     }
 
-    if let Some(ref path) = db_path {
-        match std::fs::read(path) {
-            Ok(_) => {
-                let r = a3db::dispatch(&format!("load {}", path), &[]);
-                eprintln!("Loaded from {}: {}", path, r);
+    match a3db::start_server(&bind, port, db_path.as_deref()) {
+        Ok(addr) => {
+            eprintln!("a3db-server v{} on {}", env!("CARGO_PKG_VERSION"), addr);
+            if let Some(ref p) = db_path {
+                eprintln!("  persist: {} (auto-save every 30s)", p);
             }
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                eprintln!("Starting fresh (no db at {})", path);
-            }
-            Err(e) => {
-                eprintln!("Error: {}", e);
-                std::process::exit(1);
+            // Block forever — server runs on background threads
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(3600));
             }
         }
-    }
-
-    let addr = format!("{}:{}", bind, port);
-    let listener = match TcpListener::bind(&addr) {
-        Ok(l) => l,
         Err(e) => {
-            eprintln!("Bind failed: {}", e);
+            eprintln!("Failed to start server: {}", e);
             std::process::exit(1);
-        }
-    };
-
-    eprintln!("a3db-server v{} on {}", env!("CARGO_PKG_VERSION"), addr);
-    if let Some(ref p) = db_path {
-        eprintln!("  persist: {}", p);
-    }
-
-    listener.set_nonblocking(true).ok();
-    for stream in listener.incoming() {
-        match stream {
-            Ok(s) => {
-                std::thread::spawn(|| handle(s));
-            }
-            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                std::thread::sleep(Duration::from_millis(200));
-            }
-            Err(_) => break,
-        }
-    }
-}
-
-fn handle(mut stream: TcpStream) {
-    stream.set_read_timeout(Some(Duration::from_secs(300))).ok();
-    let mut r = BufReader::new(stream.try_clone().unwrap());
-    let mut line = String::new();
-    loop {
-        line.clear();
-        match r.read_line(&mut line) {
-            Ok(0) | Err(_) => break,
-            Ok(_) => {}
-        }
-        let t = line.trim();
-        if t.is_empty() {
-            continue;
-        }
-        match t {
-            "PING" => {
-                let _ = writeln!(stream, "[0,\"OK\",\"PONG\"]");
-            }
-            "QUIT" => break,
-            _ => {
-                let _ = writeln!(stream, "{}", a3db::dispatch(t, &[]));
-            }
         }
     }
 }
