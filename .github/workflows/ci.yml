@@ -136,11 +136,7 @@ jobs:
         run: |
           cd a3db && zip -r ../a3db-release.zip .
       - name: Upload release asset
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: softprops/action-gh-release@v2
         with:
-          upload_url: ${{ github.event.release.upload_url }}
-          asset_path: ./a3db-release.zip
-          asset_name: a3db-${{ github.event.release.tag_name }}.zip
-          asset_content_type: application/zip
+          files: ./a3db-release.zip
+          name: a3db-${{ github.event.release.tag_name }}

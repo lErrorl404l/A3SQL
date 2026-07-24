@@ -759,20 +759,6 @@ pub fn import(
     }
 }
 
-/// Format ColumnType for display.
-impl std::fmt::Display for ColumnType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ColumnType::Bool => write!(f, "BOOL"),
-            ColumnType::Int => write!(f, "INT"),
-            ColumnType::Float => write!(f, "FLOAT"),
-            ColumnType::String => write!(f, "STRING"),
-            ColumnType::Strings => write!(f, "STRINGS[]"),
-            ColumnType::Floats => write!(f, "FLOATS[]"),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
+use super::table::trigrams;
 use super::value::DbValue;
 
 /// Available index types.
@@ -64,10 +65,6 @@ impl BTreeIndex {
                 self.entries.remove(&key);
             }
         }
-    }
-
-    pub fn remove_by_old(&mut self, row_idx: usize, old_value: &DbValue) {
-        self.remove(row_idx, old_value);
     }
 
     /// Exact match lookup.
@@ -232,21 +229,6 @@ fn value_to_plain(v: &DbValue) -> String {
             .collect::<Vec<_>>()
             .join(" "),
     }
-}
-
-/// Generate trigrams from text (same algorithm as Table::trigrams).
-fn trigrams(s: &str) -> HashSet<String> {
-    let padded = format!("  {}  ", s.to_lowercase());
-    let bytes = padded.as_bytes();
-    if bytes.len() < 3 {
-        let mut set = HashSet::new();
-        set.insert(padded);
-        return set;
-    }
-    bytes
-        .windows(3)
-        .map(|w| String::from_utf8_lossy(w).to_string())
-        .collect()
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────

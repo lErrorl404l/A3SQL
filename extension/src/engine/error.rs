@@ -80,9 +80,6 @@ impl fmt::Display for ErrorCode {
     }
 }
 
-/// Convenient result alias.
-pub type A3dbResult<T> = Result<T, A3dbError>;
-
 /// Build an OK response JSON string.
 pub fn ok_response(data: &str) -> String {
     format!("[0,\"OK\",{}]", data)
@@ -91,21 +88,6 @@ pub fn ok_response(data: &str) -> String {
 /// Build an error response JSON string.
 pub fn error_response(code: ErrorCode, msg: &str) -> String {
     format!("[-1,\"{}\",\"{}\"]", code, msg)
-}
-
-/// Convert a string error to A3dbError with Exec code.
-pub fn exec_err(msg: impl Into<String>) -> A3dbError {
-    A3dbError::new(ErrorCode::Exec, msg)
-}
-
-/// Convert a string error to A3dbError with Parse code.
-pub fn parse_err(msg: impl Into<String>) -> A3dbError {
-    A3dbError::new(ErrorCode::Parse, msg)
-}
-
-/// Convert a string error to A3dbError with Table code.
-pub fn table_err(msg: impl Into<String>) -> A3dbError {
-    A3dbError::new(ErrorCode::Table, msg)
 }
 
 #[cfg(test)]
