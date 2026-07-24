@@ -155,7 +155,7 @@ jobs:
 
   workshop:
     name: Publish to Steam Workshop
-    if: github.event_name == 'release' && secrets.STEAM_WORKSHOP_PUBLISHEDID != ''
+    if: github.event_name == 'release'
     needs: [build-addon]
     runs-on: ubuntu-latest
     steps:
