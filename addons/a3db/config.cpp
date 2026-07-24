@@ -5,7 +5,7 @@ class CfgPatches {
         name = COMPONENT_NAME;
         author = "ABE Team";
         requiredVersion = 2.02;
-        requiredAddons[] = {"a3db_main"};
+        requiredAddons[] = {"main"};
         units[] = {};
         weapons[] = {};
     };
