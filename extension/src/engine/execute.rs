@@ -3186,6 +3186,21 @@ mod tests {
     }
 
     #[test]
+    fn auto_increment_flag_set() {
+        let mut db = Database::new();
+        let _ = parse_and_exec(
+            "CREATE TABLE ait (id INT PRIMARY KEY AUTO_INCREMENT, val STRING)",
+            &mut db,
+        );
+        let table = db.get_table("ait").unwrap();
+        assert!(
+            table.columns[0].auto_increment,
+            "id should have auto_increment=true, got false"
+        );
+        assert!(table.columns[0].primary_key, "id should be primary key");
+    }
+
+    #[test]
     fn btree_index_equality_selection() {
         // BTreeIndex should be consulted for `col = literal` WHERE
         let mut db = make_indexed_db();
