@@ -1317,6 +1317,35 @@ fn contains_aggregate(expr: &Expr) -> bool {
     }
 }
 
+/// Resolve GROUP BY identifiers against SELECT aliases.
+/// `SELECT qty > 50 AS high_qty ... GROUP BY high_qty` → replaces `high_qty` with `qty > 50`.
+fn resolve_group_by_aliases(select: &Select) -> Vec<Expr> {
+    let exprs = group_by_exprs(select).unwrap_or(&[]);
+    let mut alias_map: HashMap<String, Expr> = HashMap::new();
+    for item in &select.projection {
+        if let SelectItem::ExprWithAlias { expr, alias } = item {
+            alias_map.insert(alias.value.clone(), expr.clone());
+        }
+    }
+    if alias_map.is_empty() {
+        return exprs.to_vec();
+    }
+    exprs
+        .iter()
+        .map(|e| {
+            if let Expr::Identifier(ident) = e {
+                if let Some(resolved) = alias_map.get(ident.value.as_str()) {
+                    resolved.clone()
+                } else {
+                    e.clone()
+                }
+            } else {
+                e.clone()
+            }
+        })
+        .collect()
+}
+
 /// Partition filtered rows into groups by GROUP BY columns.
 /// Returns a Vec of groups, where each group is a Vec of row references.
 fn partition_by_group<'a>(
@@ -1324,7 +1353,7 @@ fn partition_by_group<'a>(
     select: &Select,
     col_map: &HashMap<String, usize>,
 ) -> Result<Vec<Vec<&'a [DbValue]>>, String> {
-    let exprs = group_by_exprs(select)?;
+    let exprs = resolve_group_by_aliases(select);
     let mut groups: Vec<Vec<&[DbValue]>> = Vec::new();
     let mut keys: Vec<Vec<DbValue>> = Vec::new();
 
