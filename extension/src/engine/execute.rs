@@ -176,7 +176,11 @@ pub fn execute(stmt: &Statement, db: &mut Database) -> Result<String, String> {
                     sqlparser::ast::AlterTableOperation::RenameTable {
                         table_name: new_name_info,
                     } => {
-                        let new_name = new_name_info.to_string().to_lowercase();
+                        let new_name = match new_name_info {
+                            sqlparser::ast::RenameTableNameKind::To(name)
+                            | sqlparser::ast::RenameTableNameKind::As(name) => name.to_string(),
+                        }
+                        .to_lowercase();
                         db.rename_table(&table_name, &new_name)?;
                         format!("\"Table renamed to '{}'\"", new_name)
                     }
@@ -1156,6 +1160,9 @@ fn eval_expr_on_flat_row(expr: &Expr, row: &[DbValue], col_map: &HashMap<String,
     match expr {
         Expr::Identifier(ident) => {
             let name = ident.value.to_lowercase();
+            if name == "current_timestamp" || name == "current_date" || name == "current_time" {
+                return Ok(now_value());
+            }
             match col_map.get(&name) {
                 Some(&pos) => Ok(row[pos].clone()),
                 None => Err(format!("Unknown column '{}'", name)),
@@ -1804,6 +1811,9 @@ fn eval_expr(expr: &Expr, row: &[DbValue], col_map: &HashMap<String, usize>) -> 
     match expr {
         Expr::Identifier(ident) => {
             let name = ident.value.to_lowercase();
+            if name == "current_timestamp" || name == "current_date" || name == "current_time" {
+                return Ok(now_value());
+            }
             let idx = col_map.get(&name).ok_or_else(|| format!("Unknown column '{}'", name))?;
             Ok(row[*idx].clone())
         }
@@ -2002,6 +2012,26 @@ fn exec_function(func: &Function, row: &[DbValue], col_map: &HashMap<String, usi
     }
 }
 
+/// Return the current timestamp as a DbValue (ISO 8601 format).
+fn now_value() -> DbValue {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let z = secs / 86400 + 719468;
+    let era = (z as i64 / 146097) as u64;
+    let doe = (z as i64 - era as i64 * 146097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    let (h, min, s) = (secs / 3600 % 24, secs / 60 % 60, secs % 60);
+    DbValue::String(format!("{y:04}-{m:02}-{d:02}T{h:02}:{min:02}:{s:02}"))
+}
+
 /// Evaluate a standard SQL scalar function.
 fn exec_std_function(
     func: &Function,
@@ -2097,25 +2127,7 @@ fn exec_std_function(
                 _ => Err("ABS requires numeric argument".into()),
             }
         }
-        "now" | "current_timestamp" => {
-            let secs = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
-            // Civil date from epoch seconds (Howard Hinnant algorithm)
-            let z = secs / 86400 + 719468;
-            let era = (z as i64 / 146097) as u64;
-            let doe = (z as i64 - era as i64 * 146097) as u64;
-            let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-            let y = yoe + era * 400;
-            let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-            let mp = (5 * doy + 2) / 153;
-            let d = doy - (153 * mp + 2) / 5 + 1;
-            let m = if mp < 10 { mp + 3 } else { mp - 9 };
-            let y = if m <= 2 { y + 1 } else { y };
-            let (h, min, s) = (secs / 3600 % 24, secs / 60 % 60, secs % 60);
-            Ok(DbValue::String(format!("{y:04}-{m:02}-{d:02}T{h:02}:{min:02}:{s:02}")))
-        }
+        "now" | "current_timestamp" => Ok(now_value()),
         "concat" => {
             let mut result = String::new();
             for a in args {

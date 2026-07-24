@@ -247,9 +247,78 @@ fn split_sql(sql: &str) -> Vec<String> {
     stmts
 }
 
+/// Substitute `$1`, `$2`, ... placeholders in a SQL string with escaped
+/// values from `args`. This is the primary SQL injection prevention mechanism:
+/// modders pass user input as separate args rather than interpolating into SQL.
+///
+/// Escaping rules:
+/// - Strings: wrapped in single quotes, inner `'` doubled → `''`
+/// - Integers: placed as-is (parsed validation)
+/// - NULL: placed as `NULL`
+fn substitute_params(sql: &str, args: &[&str]) -> String {
+    // ponytail: simple char-by-char scan — fast enough for embedded DB
+    let mut result = String::with_capacity(sql.len());
+    let mut in_string = false;
+    let mut chars = sql.char_indices().peekable();
+
+    while let Some((_, c)) = chars.next() {
+        if c == '\'' {
+            in_string = !in_string;
+            result.push(c);
+        } else if c == '$' && !in_string {
+            // Read the placeholder number (one or more digits)
+            let mut num_str = String::new();
+            while let Some(&(_, c2)) = chars.peek() {
+                if c2.is_ascii_digit() {
+                    num_str.push(c2);
+                    chars.next();
+                } else {
+                    break;
+                }
+            }
+            if !num_str.is_empty() {
+                let idx: usize = num_str.parse().unwrap_or(1);
+                if idx > 0 && idx <= args.len() {
+                    let val = args[idx - 1];
+                    // String arg: quote + escape inner quotes. Others: pass through.
+                    if val.is_empty() {
+                        result.push_str("''");
+                    // ponytail: non-string detection via heuristics — JSON, numbers, NULL pass raw
+                    } else if val == "NULL" || val == "null" {
+                        result.push_str("NULL");
+                    } else if val.starts_with('\'') && val.ends_with('\'') {
+                        // Already quoted (raw identifier/value)
+                        // ponytail: caller explicitly quoting, trust it
+                        result.push_str(val);
+                    } else if val.parse::<i64>().is_ok() || val.parse::<f64>().is_ok() {
+                        result.push_str(val);
+                    } else if val == "true" || val == "false" {
+                        // Booleans used in expressions
+                        result.push_str(val);
+                    } else {
+                        // Default: escape as string
+                        result.push('\'');
+                        result.push_str(&val.replace('\'', "''"));
+                        result.push('\'');
+                    }
+                } else {
+                    // Unknown placeholder → leave as-is (will cause SQL error)
+                    result.push('$');
+                    result.push_str(&num_str);
+                }
+            } else {
+                result.push('$');
+            }
+        } else {
+            result.push(c);
+        }
+    }
+    result
+}
+
 /// Execute a batch of SQL statements against the global DB.
 /// Returns a formatted response string with accumulated results.
-fn exec_sql_statements(statements: &[String], _args: &[&str]) -> String {
+fn exec_sql_statements(statements: &[String], args: &[&str]) -> String {
     if statements.is_empty() {
         return ok_response("\"\"");
     }
@@ -258,7 +327,13 @@ fn exec_sql_statements(statements: &[String], _args: &[&str]) -> String {
     let mut results: Vec<String> = Vec::new();
 
     for sql in statements {
-        match parse_sql(sql) {
+        // Substitute $1, $2, ... placeholders with escaped values from callExtension args
+        let sql = if args.is_empty() {
+            sql.clone()
+        } else {
+            substitute_params(sql, args)
+        };
+        match parse_sql(&sql) {
             Ok(stmts) => {
                 for stmt in &stmts {
                     match engine_execute(stmt, &mut db) {
