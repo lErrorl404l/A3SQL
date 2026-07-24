@@ -104,14 +104,7 @@ impl fmt::Display for DbValue {
             DbValue::Float(n) => write!(f, "{}", n),
             DbValue::String(s) => write!(f, "'{}'", s),
             DbValue::Strings(v) => write!(f, "[{}]", v.join(",")),
-            DbValue::Floats(v) => write!(
-                f,
-                "[{}]",
-                v.iter()
-                    .map(|n| n.to_string())
-                    .collect::<Vec<_>>()
-                    .join(",")
-            ),
+            DbValue::Floats(v) => write!(f, "[{}]", v.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(",")),
         }
     }
 }
@@ -128,19 +121,13 @@ mod tests {
         assert_eq!(DbValue::Bool(true).to_json_string(), "true");
         assert_eq!(DbValue::Int(42).to_json_string(), "42");
         assert_eq!(DbValue::Float(3.5).to_json_string(), "3.5");
-        assert_eq!(
-            DbValue::String("hello".into()).to_json_string(),
-            r#""hello""#
-        );
+        assert_eq!(DbValue::String("hello".into()).to_json_string(), r#""hello""#);
     }
 
     #[test]
     fn value_coerce() {
         let target = DbValue::Int(0);
         assert_eq!(target.coerce("42"), DbValue::Int(42));
-        assert_eq!(
-            target.coerce("not_a_num"),
-            DbValue::String("not_a_num".into())
-        );
+        assert_eq!(target.coerce("not_a_num"), DbValue::String("not_a_num".into()));
     }
 }
