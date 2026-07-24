@@ -23,6 +23,100 @@ private _result = ["a3db", "SELECT * FROM weapons WHERE caliber = '5.56x45mm'"] 
 - **Multi-statement**: Run `;`-separated SQL batches
 - **Multi-dialect**: Accepts PostgreSQL, MySQL/MariaDB, SQLite, DataFusion-style SQL
 
+## Quick Start
+
+### 1. Add a3db as a dependency
+
+In your mod's `CfgPatches`, add a3db to `requiredAddons[]`:
+
+```cpp
+requiredAddons[] = {"cba_main", "a3db_main"};
+```
+
+### 2. Call from SQF
+
+Create tables, insert data, and query — all through `callExtension`:
+
+```sqf
+// Create
+["CREATE TABLE players (uid STRING PRIMARY KEY, name STRING, score INT)"] call a3db_fnc_execute;
+
+// Insert
+["INSERT INTO players VALUES ('76561198000000001', 'Scarface', 1500)"] call a3db_fnc_execute;
+
+// Query
+_result = ["SELECT name, score FROM players WHERE score > 1000 ORDER BY score DESC"] call a3db_fnc_execute;
+```
+
+The result is always a JSON array:
+```
+[0, "OK", [["name","score"],["Scarface",1500]]]
+```
+
+### 3. Use the CBA wrapper functions
+
+```sqf
+// Fuzzy search
+_result = ["SELECT name FROM weapons WHERE name %% 'm4'"] call a3db_fnc_execute;
+
+// Transactions
+["BEGIN"] call a3db_fnc_execute;
+["INSERT INTO log (action) VALUES ('mission_start')"] call a3db_fnc_execute;
+["COMMIT"] call a3db_fnc_execute;
+
+// Save/load persistence
+["data.bin"] call a3db_fnc_save;
+["data.bin"] call a3db_fnc_load;
+
+// Export
+_table_data = ["players"] call a3db_fnc_exportJSON;
+_sql_backup = [] call a3db_fnc_exportSQL;
+```
+
+### 4. CBA Addon Settings
+
+Configure behavior in **Options → Addon Configuration → A3DB**:
+- **Enable TCP Listener**: Start TCP server for external query access
+- **Listener Port**: TCP port (default: 33306)
+- **Auto-Save**: Save database when mission ends
+- **Auto-Save File**: File path for auto-save
+
+### 5. Full example
+
+```sqf
+if (isServer) then {
+    // Create tables on mission start
+    ["CREATE TABLE IF NOT EXISTS stats (uid STRING, name STRING, score INT)"] call a3db_fnc_execute;
+
+    // Restore from previous session
+    ["stats_data.bin"] call a3db_fnc_load;
+
+    // Auto-save on mission end
+    addMissionEventHandler ["Ended", {
+        ["stats_data.bin"] call a3db_fnc_save;
+    }];
+};
+
+// Record event
+["INSERT INTO stats VALUES ('76561198000000001', 'Scarface', 1500)"] call a3db_fnc_execute;
+
+// Query top scores
+_result = ["SELECT name, score FROM stats ORDER BY score DESC LIMIT 10"] call a3db_fnc_execute;
+```
+
+### 6. External query (TCP)
+
+Enable the TCP listener in CBA settings, then connect from any tool:
+
+```python
+import socket
+s = socket.socket()
+s.connect(("127.0.0.1", 33306))
+s.sendall(b"SELECT * FROM stats ORDER BY score DESC LIMIT 5\n")
+print(s.recv(65536).decode())
+s.close()
+```
+
 ## SQL Dialect
 
 ```sql
