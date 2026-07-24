@@ -986,6 +986,100 @@ mod tests {
         assert!(!r.contains("c"), "like no c: {}", r);
     }
 
+    // ── C ABI tests — simulate EXACTLY what Arma's callExtension does ──
+
+    fn abi_call(input: &str) -> String {
+        let cmd = std::ffi::CString::new(input).unwrap();
+        let mut out = vec![0u8; 10240];
+        unsafe {
+            RVExtension(out.as_mut_ptr() as *mut c_char, out.len() as u32, cmd.as_ptr());
+            std::ffi::CStr::from_ptr(out.as_ptr() as *const c_char)
+                .to_string_lossy()
+                .into_owned()
+        }
+    }
+
+    fn abi_call_args(cmd: &str, args: &[&str]) -> String {
+        let command = std::ffi::CString::new(cmd).unwrap();
+        let c_args: Vec<std::ffi::CString> = args.iter().map(|a| std::ffi::CString::new(*a).unwrap()).collect();
+        let mut ptrs: Vec<*const c_char> = c_args.iter().map(|a| a.as_ptr()).collect();
+        let mut out = vec![0u8; 65536];
+        unsafe {
+            RVExtensionArgs(
+                out.as_mut_ptr() as *mut c_char,
+                out.len() as u32,
+                command.as_ptr(),
+                ptrs.as_mut_ptr(),
+                args.len() as u32,
+            );
+            std::ffi::CStr::from_ptr(out.as_ptr() as *const c_char)
+                .to_string_lossy()
+                .into_owned()
+        }
+    }
+
+    #[test]
+    fn abi_extern_version() {
+        let mut out = vec![0u8; 256];
+        unsafe {
+            RVExtensionVersion(out.as_mut_ptr() as *mut c_char, out.len() as u32);
+            let v = std::ffi::CStr::from_ptr(out.as_ptr() as *const c_char)
+                .to_string_lossy()
+                .into_owned();
+            assert!(v.len() > 5 && v.contains("0.1.0"), "RVExtensionVersion: {}", v);
+        }
+    }
+
+    #[test]
+    fn abi_extern_string() {
+        let r = abi_call("version");
+        assert!(r.starts_with("[0,"), "version via string ABI: {}", r);
+    }
+
+    #[test]
+    fn abi_extern_create_insert_select() {
+        // Full round-trip through the C ABI — exact path Arma 3 uses
+        // Use unique table name to avoid conflicts with parallel tests
+        let r = abi_call("CREATE TABLE abi_ext2 (id STRING PRIMARY KEY, val INT)");
+        assert!(r.contains("\"OK\""), "create: {}", r);
+
+        let r = abi_call("INSERT INTO abi_ext2 VALUES ('a', 10)");
+        assert!(r.contains("\"OK\""), "insert: {}", r);
+
+        let r = abi_call("INSERT INTO abi_ext2 VALUES ('b', 20)");
+        assert!(r.contains("\"OK\""), "insert2: {}", r);
+
+        let r = abi_call("SELECT * FROM abi_ext2");
+        assert!(r.contains("a"), "select: {}", r);
+        assert!(r.contains("b"), "select: {}", r);
+        assert!(r.contains("10"), "select val: {}", r);
+    }
+
+    #[test]
+    fn abi_extern_args() {
+        // Test the array callExtension path (RVExtensionArgs)
+        let r = abi_call_args("version", &[]);
+        assert!(r.starts_with("[0,"), "args version: {}", r);
+    }
+
+    #[test]
+    fn abi_extern_sql_injection_via_params() {
+        // Create own table — tests share global DB, can't depend on other tests
+        abi_call("CREATE TABLE abi_ext3 (id STRING PRIMARY KEY, val INT)");
+        abi_call("INSERT INTO abi_ext3 VALUES ('a', 10)");
+
+        // Simulate safe SQF: callExtension ["SELECT * FROM users WHERE name = $1", [evil_input]]
+        let evil = "foo' OR '1'='1";
+        let r = abi_call_args("SELECT * FROM abi_ext3 WHERE id = $1", &[evil]);
+        // With parameterized query, the $1 is escaped as a string literal, so the query
+        // becomes: SELECT * FROM abi_ext WHERE id = 'foo'' OR ''1''=''1'
+        // The escaped value should match no rows — response OK with headers only
+        // Verify: no injection (no rows returned for the OR injection)
+        assert!(r.contains("\"OK\""), "injection test: {}", r);
+        // Headers-only response for abi_ext has ~50 chars; rows returned would be longer
+        assert!(r.len() < 80, "injection returned data (exploit): {}", r);
+    }
+
     #[test]
     fn dispatch_large_result_truncation_guard() {
         // Insert enough rows to exceed the 10KB output buffer
