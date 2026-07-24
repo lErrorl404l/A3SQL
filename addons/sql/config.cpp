@@ -5,20 +5,31 @@ class CfgPatches {
         name = COMPONENT_NAME;
         author = "ABE Team";
         requiredVersion = 2.02;
-        requiredAddons[] = {"main"};
+        requiredAddons[] = {"a3db_main"};
         units[] = {};
         weapons[] = {};
+    };
+};
+
+class CfgEventHandlers {
+    class ADDON {
+        init = "call a3db_fnc_init";
     };
 };
 
 class CfgFunctions {
     class a3db {
         class a3db {
-            file = QPATHTO_FOLDER(a3db);
+            file = QPATHTO_FOLDER(sql);
             class init {};
             class execute {};
             class loadJSON {};
             class dumpSQL {};
+            class exportJSON {};
+            class exportCSV {};
+            class exportSQL {};
+            class save {};
+            class load {};
         };
     };
 };

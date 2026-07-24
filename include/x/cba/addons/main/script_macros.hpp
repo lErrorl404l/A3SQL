@@ -18,6 +18,7 @@
 #define QGVAR(var) QUOTE(GVAR(var))
 #define FUNC(var) TRIPLES(COMPONENT,fnc,var)
 #define QFUNC(var) QUOTE(FUNC(var))
+#define DFUNC(var) DOUBLES(PREFIX,fnc_##var)
 
 #define CSTRING(var) QUOTE(DOUBLES(COMPONENT,var))
 #define ECSTRING(sys,var) QUOTE(DOUBLES(sys,var))

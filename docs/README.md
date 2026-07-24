@@ -166,6 +166,11 @@ When using CBA (recommended), the addon registers these functions via `CfgFuncti
 | `a3db_fnc_execute` | Execute SQL, returns parsed result |
 | `a3db_fnc_loadJSON` | Import JSON data into a table |
 | `a3db_fnc_dumpSQL` | Export full database as SQL dump |
+| `a3db_fnc_exportJSON` | Export table as JSON |
+| `a3db_fnc_exportCSV` | Export table as CSV |
+| `a3db_fnc_exportSQL` | Export full database as SQL statements |
+| `a3db_fnc_save` | Persist database to binary file |
+| `a3db_fnc_load` | Restore database from binary file |
 
 ## Building
 
@@ -266,15 +271,19 @@ a3db/
 │   │   ├── config.cpp
 │   │   ├── script_mod.hpp
 │   │   └── $PBOPREFIX$
-│   └── a3db/                   # A3DB addon (CfgFunctions + SQF API)
+│   └── sql/                    # SQL engine addon (CfgFunctions + SQF API)
 │       ├── config.cpp
 │       ├── script_component.hpp
-│       ├── fn_init.sqf
-│       ├── fn_execute.sqf
-│       ├── fn_parseResult.sqf
-│       ├── fn_loadJSON.sqf
-│       ├── fn_dumpSQL.sqf
-│       └── $PBOPREFIX$
+│   ├── fn_init.sqf
+│   ├── fn_execute.sqf
+│   ├── fn_loadJSON.sqf
+│   ├── fn_dumpSQL.sqf
+│   ├── fn_exportJSON.sqf
+│   ├── fn_exportCSV.sqf
+│   ├── fn_exportSQL.sqf
+│   ├── fn_save.sqf
+│   ├── fn_load.sqf
+│   └── $PBOPREFIX$
 ├── include/
 │   └── x/cba/addons/           # CBA header stubs for build-time resolution
 │       ├── main/
@@ -307,7 +316,7 @@ Built following the same conventions as ACE3 and CBA_A3:
 | **Prefix** | `prefix = "a3db"`, `mainprefix = "z"` |
 | **PBO path** | `z\a3db\addons\{addon_name}` |
 | **Include path** | `\z\a3db\addons\main\script_mod.hpp` |
-| **CBA dependency** | CBA_A3 required (`cba_main`, `cba_xeh`) |
+| **CBA dependency** | CBA_A3 required (`cba_main`) |
 | **Build system** | HEMTT v1 (`.hemtt/project.toml`) |
 | **Rust workspace** | Workspace at root, crate in `extension/` |
 | **Release profile** | `opt-level = "z"`, `lto = true`, `strip = true` |

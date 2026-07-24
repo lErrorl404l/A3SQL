@@ -322,6 +322,19 @@ impl Table {
         }
     }
 
+    /// Look up row indices via BTreeIndex for an exact match on a column.
+    /// Returns `Some(row_indices)` if a BTreeIndex exists on the column, `None` otherwise.
+    pub fn btree_lookup(&self, column: &str, value: &DbValue) -> Option<Vec<usize>> {
+        for (_, impl_) in &self.indices {
+            if let IndexImpl::BTree(ref idx) = impl_ {
+                if idx.column() == column {
+                    return Some(idx.lookup(value));
+                }
+            }
+        }
+        None
+    }
+
     /// Get the index implementation for a column, by type.
     pub fn find_index(&self, column: &str, index_type: IndexType) -> Option<&IndexImpl> {
         self.indices
@@ -376,8 +389,8 @@ impl Table {
     /// Compute trigram Jaccard similarity between two strings.
     /// Used by the fuzzy_match() function.
     pub fn trigram_similarity(a: &str, b: &str) -> f64 {
-        let a_tri = Self::trigrams(a);
-        let b_tri = Self::trigrams(b);
+        let a_tri = trigrams(a);
+        let b_tri = trigrams(b);
 
         if a_tri.is_empty() && b_tri.is_empty() {
             return 1.0;
@@ -391,20 +404,21 @@ impl Table {
             intersection as f64 / union as f64
         }
     }
+}
 
-    fn trigrams(s: &str) -> HashSet<String> {
-        let padded = format!("  {}  ", s.to_lowercase());
-        let bytes = padded.as_bytes();
-        if bytes.len() < 3 {
-            let mut set = HashSet::new();
-            set.insert(padded.clone());
-            return set;
-        }
-        bytes
-            .windows(3)
-            .map(|w| String::from_utf8_lossy(w).to_string())
-            .collect()
+/// Generate trigrams from text (shared by Table and TrigramIndex).
+pub(crate) fn trigrams(s: &str) -> HashSet<String> {
+    let padded = format!("  {}  ", s.to_lowercase());
+    let bytes = padded.as_bytes();
+    if bytes.len() < 3 {
+        let mut set = HashSet::new();
+        set.insert(padded);
+        return set;
     }
+    bytes
+        .windows(3)
+        .map(|w| String::from_utf8_lossy(w).to_string())
+        .collect()
 }
 
 #[cfg(test)]

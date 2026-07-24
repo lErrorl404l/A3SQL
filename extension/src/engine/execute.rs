@@ -219,21 +219,25 @@ fn exec_select(query: &Query, db: &mut Database) -> Result<String, String> {
     let table = resolve_single_table(&select.from, db)?;
     let where_expr = select.selection.as_ref();
 
-    // 1. Filter rows by WHERE
-    let filtered_rows: Vec<&[DbValue]> = table
-        .rows
-        .iter()
-        .filter(|row| {
-            where_expr
-                .map(|expr| {
-                    is_truthy(
-                        &eval_expr(expr, row, &table.col_index).unwrap_or(DbValue::Bool(false)),
-                    )
-                })
-                .unwrap_or(true)
-        })
-        .map(|r| r.as_slice())
-        .collect();
+    // 1. Filter rows by WHERE — use BTreeIndex for simple equality when possible
+    let filtered_rows: Vec<&[DbValue]> = if let Some(rows) = try_btree_index(where_expr, table) {
+        rows
+    } else {
+        table
+            .rows
+            .iter()
+            .filter(|row| {
+                where_expr
+                    .map(|expr| {
+                        is_truthy(
+                            &eval_expr(expr, row, &table.col_index).unwrap_or(DbValue::Bool(false)),
+                        )
+                    })
+                    .unwrap_or(true)
+            })
+            .map(|r| r.as_slice())
+            .collect()
+    };
 
     // 2. If aggregates are present, handle them (with or without GROUP BY)
     if has_aggregate(&select.projection) {
@@ -287,7 +291,6 @@ fn exec_select_joins(query: &Query, select: &Select, db: &mut Database) -> Resul
     // ── Resolve all tables in FROM + JOINs ──────────────────────────
     struct Tbl {
         name: String,
-        name_meta: String,
         cols: usize,
         start: usize,
         rows: Vec<Vec<DbValue>>,
@@ -302,7 +305,6 @@ fn exec_select_joins(query: &Query, select: &Select, db: &mut Database) -> Resul
         let c = t.columns.len();
         tbls.push(Tbl {
             name: n.clone(),
-            name_meta: n,
             cols: c,
             start: abs,
             rows: r,
@@ -314,7 +316,6 @@ fn exec_select_joins(query: &Query, select: &Select, db: &mut Database) -> Resul
             let jc = jt.columns.len();
             tbls.push(Tbl {
                 name: jn.clone(),
-                name_meta: jn,
                 cols: jc,
                 start: abs,
                 rows: jr,
@@ -618,24 +619,6 @@ fn group_by_exprs(select: &Select) -> Result<&[Expr], String> {
         GroupByExpr::Expressions(exprs, _) => Ok(exprs.as_slice()),
         GroupByExpr::All(_) => Err("GROUP BY ALL not supported".into()),
     }
-}
-
-fn eval_group_key(
-    select: &Select,
-    row: &[DbValue],
-    col_map: &HashMap<String, usize>,
-) -> Result<Vec<DbValue>, String> {
-    use sqlparser::ast::GroupByExpr;
-    let mut key = Vec::new();
-    let exprs = match &select.group_by {
-        GroupByExpr::Expressions(exprs, _) => exprs,
-        GroupByExpr::All(_) => return Err("GROUP BY ALL not supported".into()),
-    };
-    for expr in exprs {
-        let val = eval_expr(expr, row, col_map)?;
-        key.push(val);
-    }
-    Ok(key)
 }
 
 fn keys_equal(a: &[DbValue], b: &[DbValue]) -> bool {
@@ -1387,6 +1370,35 @@ fn resolve_table_from_joins(tj: &TableWithJoins) -> Result<String, String> {
     }
 }
 
+// ── Index-assisted lookup ─────────────────────────────────────────────
+
+/// Try to use a BTreeIndex for a simple `col = literal` WHERE clause.
+/// Returns `Some(rows)` if an index was used, `None` to fall back to full scan.
+fn try_btree_index<'a>(where_expr: Option<&Expr>, table: &'a Table) -> Option<Vec<&'a [DbValue]>> {
+    let expr = where_expr?;
+    let (col_name, value) = match expr {
+        Expr::BinaryOp {
+            left,
+            op: BinaryOperator::Eq,
+            right,
+        } => match (left.as_ref(), right.as_ref()) {
+            (Expr::Identifier(ident), Expr::Value(v))
+            | (Expr::Value(v), Expr::Identifier(ident)) => {
+                (ident.value.to_lowercase(), sql_val_to_db(&v.value))
+            }
+            _ => return None,
+        },
+        _ => return None,
+    };
+    let indices = table.btree_lookup(&col_name, &value)?;
+    Some(
+        indices
+            .into_iter()
+            .map(|i| table.rows[i].as_slice())
+            .collect(),
+    )
+}
+
 // ── CREATE INDEX handling ──────────────────────────────────────────────
 
 fn exec_create_index(
@@ -1937,5 +1949,23 @@ mod tests {
         parse_and_exec("INSERT INTO items VALUES ('fn_test', 'hello', 1)", &mut db).unwrap();
         let r = parse_and_exec("SELECT * FROM items WHERE id %% 'fn_t'", &mut db).unwrap();
         assert!(r.contains("fn_test"), "fuzzy fn: {}", r);
+    }
+
+    #[test]
+    fn btree_index_equality_selection() {
+        // BTreeIndex should be consulted for `col = literal` WHERE
+        let mut db = make_indexed_db();
+        // btree_v index exists on v
+        let r = parse_and_exec("SELECT * FROM idx_test WHERE v = 10", &mut db).unwrap();
+        assert!(r.contains("\"a\""), "btree index lookup: {}", r);
+        assert!(!r.contains("\"b\""), "should not include b: {}", r);
+    }
+
+    #[test]
+    fn btree_index_equality_fallback() {
+        // Non-equality WHERE still works via full scan
+        let mut db = make_indexed_db();
+        let r = parse_and_exec("SELECT * FROM idx_test WHERE k = 'a'", &mut db).unwrap();
+        assert!(r.contains("\"a\""), "fallback lookup: {}", r);
     }
 }
