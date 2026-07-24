@@ -10,3 +10,4 @@ crate-type = ["cdylib", "rlib"]
 sqlparser = "0.62"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+ctrlc = "3.4"
