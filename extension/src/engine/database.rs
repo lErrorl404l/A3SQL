@@ -9,11 +9,14 @@ use super::table::Table;
 struct Snapshot {
     name: Option<String>,
     tables: HashMap<String, Table>,
+    views: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone)]
 pub struct Database {
     tables: HashMap<String, Table>,
+    /// Stored view definitions (view name → SQL text).
+    views: HashMap<String, String>,
     /// Stack of savepoints for transaction rollback.
     savepoints: Vec<Snapshot>,
 }
@@ -22,6 +25,7 @@ impl Database {
     pub fn new() -> Self {
         Database {
             tables: HashMap::new(),
+            views: HashMap::new(),
             savepoints: Vec::new(),
         }
     }
@@ -33,6 +37,7 @@ impl Database {
         self.savepoints.push(Snapshot {
             name: None,
             tables: self.tables.clone(),
+            views: self.views.clone(),
         });
     }
 
@@ -47,6 +52,7 @@ impl Database {
     pub fn rollback(&mut self) -> Result<(), String> {
         if let Some(snap) = self.savepoints.pop() {
             self.tables = snap.tables;
+            self.views = snap.views;
         }
         Ok(())
     }
@@ -56,6 +62,7 @@ impl Database {
         self.savepoints.push(Snapshot {
             name: Some(name.to_string()),
             tables: self.tables.clone(),
+            views: self.views.clone(),
         });
     }
 
@@ -66,6 +73,7 @@ impl Database {
             Some(idx) => {
                 let snap = self.savepoints.remove(idx);
                 self.tables = snap.tables;
+                self.views = snap.views;
                 // Discard all savepoints added after this one
                 self.savepoints.truncate(idx);
                 Ok(())
@@ -149,9 +157,49 @@ impl Database {
         Ok(())
     }
 
-    /// Clear all tables (for testing / reset).
+    /// Clear all tables and views (for testing / reset).
     pub fn clear(&mut self) {
         self.tables.clear();
+        self.views.clear();
+    }
+
+    // ── View support ────────────────────────────────────────────────────
+
+    /// Store a view definition.
+    pub fn create_view(&mut self, name: &str, sql: &str) -> Result<(), String> {
+        if self.has_table(name) {
+            return Err(format!("'{}' is a table name", name));
+        }
+        if self.views.contains_key(name) {
+            return Err(format!("View '{}' already exists", name));
+        }
+        self.views.insert(name.to_string(), sql.to_string());
+        Ok(())
+    }
+
+    /// Remove a view definition.
+    pub fn drop_view(&mut self, name: &str) -> Result<(), String> {
+        if self.views.remove(name).is_none() {
+            return Err(format!("View '{}' does not exist", name));
+        }
+        Ok(())
+    }
+
+    /// Get a view's SQL text.
+    pub fn get_view(&self, name: &str) -> Option<&String> {
+        self.views.get(name)
+    }
+
+    /// Check if a view exists.
+    pub fn has_view(&self, name: &str) -> bool {
+        self.views.contains_key(name)
+    }
+
+    /// List all view names.
+    pub fn view_names(&self) -> Vec<&str> {
+        let mut names: Vec<&str> = self.views.keys().map(|s| s.as_str()).collect();
+        names.sort();
+        names
     }
 }
 
@@ -229,6 +277,51 @@ mod tests {
             .unwrap();
         db.create_table("b", Table::new("b".into(), cols).unwrap()).unwrap();
         assert_eq!(db.table_names(), vec!["a", "b"]);
+    }
+
+    // ── View tests ─────────────────────────────────────────────────
+
+    #[test]
+    fn create_and_drop_view() {
+        let mut db = Database::new();
+        db.create_view("myview", "SELECT * FROM t").unwrap();
+        assert!(db.has_view("myview"));
+        assert_eq!(db.get_view("myview"), Some(&"SELECT * FROM t".to_string()));
+        db.drop_view("myview").unwrap();
+        assert!(!db.has_view("myview"));
+    }
+
+    #[test]
+    fn view_duplicate_name() {
+        let mut db = Database::new();
+        db.create_view("v", "SELECT 1").unwrap();
+        assert!(db.create_view("v", "SELECT 2").is_err());
+    }
+
+    #[test]
+    fn view_table_name_conflict() {
+        let mut db = Database::new();
+        let cols = vec![Column {
+            name: "x".into(),
+            dtype: ColumnType::Int,
+            primary_key: false,
+            not_null: false,
+            default: None,
+            auto_increment: false,
+        }];
+        db.create_table("t", Table::new("t".into(), cols).unwrap()).unwrap();
+        assert!(db.create_view("t", "SELECT 1").is_err());
+    }
+
+    #[test]
+    fn view_rollback() {
+        let mut db = Database::new();
+        db.create_view("v", "SELECT 1").unwrap();
+        db.begin();
+        db.drop_view("v").unwrap();
+        assert!(!db.has_view("v"));
+        db.rollback().unwrap();
+        assert!(db.has_view("v"));
     }
 
     // ── Transaction tests ─────────────────────────────────────────

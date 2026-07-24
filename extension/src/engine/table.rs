@@ -281,11 +281,30 @@ impl Table {
     }
 
     /// Update a single cell, maintaining indices on the changed column.
+    /// Also updates pk_set if the column is the primary key.
     /// Returns the old value.
     pub fn update_cell(&mut self, row_idx: usize, col_idx: usize, mut new_value: DbValue) -> DbValue {
         let col_name = &self.columns[col_idx].name;
         Self::coerce_value(&mut new_value, &self.columns[col_idx].dtype);
+
+        // If this is a PK column, get the old PK key before swapping
+        let old_key = if self.columns[col_idx].primary_key {
+            self.pk_key(&self.rows[row_idx])
+        } else {
+            None
+        };
+
         let old_value = std::mem::replace(&mut self.rows[row_idx][col_idx], new_value);
+
+        // Update pk_set if this is a primary key column
+        if self.columns[col_idx].primary_key {
+            if let Some(ref ok) = old_key {
+                self.pk_set.remove(ok);
+            }
+            if let Some(new_k) = self.pk_key(&self.rows[row_idx]) {
+                self.pk_set.insert(new_k);
+            }
+        }
 
         // Update indices that track this column
         for (meta, impl_) in &mut self.indices {
