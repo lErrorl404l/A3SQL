@@ -27,16 +27,15 @@ if (missionNamespace getVariable ["a3db_listener_enabled", false]) then {
 };
 
 // ── Auto-save on mission end ───────────────────────────────────────────
+private _auto_save_path = missionNamespace getVariable ["a3db_auto_save_path", "a3db_autosave.bin"];
+if (_log_level >= 2) then {
+    diag_log text format ["[A3DB] Auto-save enabled → '%1'", _auto_save_path];
+};
 if (missionNamespace getVariable ["a3db_auto_save", false]) then {
-    private _path = missionNamespace getVariable ["a3db_auto_save_path", "a3db_autosave.bin"];
     addMissionEventHandler ["Ended", {
         params ["_endType"];
-        private _result = _extension callExtension ["save", [_path]];
-        if (_log_level >= 1) then {
-            diag_log text format ["[A3DB] Auto-save to '%1' on mission %2: %3", _path, _endType, _result];
-        };
+        private _path = missionNamespace getVariable ["a3db_auto_save_path", "a3db_autosave.bin"];
+        private _result = "a3db" callExtension ["save", [_path]];
+        diag_log text format ["[A3DB] Auto-save to '%1' on mission %2: %3", _path, _endType, _result];
     }];
-    if (_log_level >= 2) then {
-        diag_log text format ["[A3DB] Auto-save enabled → '%1'", _path];
-    };
 };
