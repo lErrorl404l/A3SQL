@@ -61,10 +61,7 @@ impl Table {
 
     /// Check if a column is the primary key.
     fn is_pk_col(&self, idx: usize) -> bool {
-        self.columns
-            .get(idx)
-            .map(|c| c.primary_key)
-            .unwrap_or(false)
+        self.columns.get(idx).map(|c| c.primary_key).unwrap_or(false)
     }
 
     /// Build a string key for a row's PK columns (takes explicit columns ref).
@@ -90,7 +87,7 @@ impl Table {
     // ── Row operations ───────────────────────────────────────────────
 
     /// Insert a row. Returns error if PK constraint violated or type mismatch.
-    pub fn insert(&mut self, row: Vec<DbValue>) -> Result<(), String> {
+    pub fn insert(&mut self, mut row: Vec<DbValue>) -> Result<(), String> {
         if row.len() != self.columns.len() {
             return Err(format!(
                 "Insert: expected {} columns, got {}",
@@ -99,13 +96,26 @@ impl Table {
             ));
         }
 
-        // Check types
-        for (i, val) in row.iter().enumerate() {
+        // Coerce, apply defaults, check NOT NULL, check types
+        for (i, val) in row.iter_mut().enumerate() {
+            // Apply default if value is NULL and a default exists
+            if matches!(val, DbValue::Null) {
+                if let Some(ref def) = self.columns[i].default {
+                    *val = def.clone();
+                }
+            }
+
+            Self::coerce_value(val, &self.columns[i].dtype);
             if !Self::type_match(&self.columns[i].dtype, val) {
                 return Err(format!(
                     "Column '{}' expected {:?}, got {:?}",
                     self.columns[i].name, self.columns[i].dtype, val
                 ));
+            }
+
+            // NOT NULL check after default + coercion
+            if self.columns[i].not_null && matches!(val, DbValue::Null) {
+                return Err(format!("Column '{}' cannot be NULL", self.columns[i].name));
             }
         }
 
@@ -179,6 +189,17 @@ impl Table {
         }
     }
 
+    /// Delete a row by primary key value. Returns true if a row was removed.
+    pub fn delete_by_pk(&mut self, pk_val: &DbValue) -> bool {
+        if let Some(pk_col) = self.columns.iter().position(|c| c.primary_key) {
+            let before = self.rows.len();
+            self.delete(|row| &row[pk_col] == pk_val);
+            before > self.rows.len()
+        } else {
+            false
+        }
+    }
+
     /// Delete rows matching a predicate. Returns count of deleted rows.
     pub fn delete<F>(&mut self, mut predicate: F) -> usize
     where
@@ -240,8 +261,9 @@ impl Table {
 
     /// Update a single cell, maintaining indices on the changed column.
     /// Returns the old value.
-    pub fn update_cell(&mut self, row_idx: usize, col_idx: usize, new_value: DbValue) -> DbValue {
+    pub fn update_cell(&mut self, row_idx: usize, col_idx: usize, mut new_value: DbValue) -> DbValue {
         let col_name = &self.columns[col_idx].name;
+        Self::coerce_value(&mut new_value, &self.columns[col_idx].dtype);
         let old_value = std::mem::replace(&mut self.rows[row_idx][col_idx], new_value);
 
         // Update indices that track this column
@@ -263,20 +285,46 @@ impl Table {
         old_value
     }
 
+    // ── Schema management ───────────────────────────────────────────
+
+    /// Add a new column to the table. Existing rows get NULL for the new column.
+    pub fn add_column(&mut self, name: String, dtype: ColumnType) -> Result<(), String> {
+        if self.columns.iter().any(|c| c.name == name) {
+            return Err(format!("Column '{}' already exists", name));
+        }
+        self.columns.push(Column {
+            name,
+            dtype,
+            primary_key: false,
+            not_null: false,
+            default: None,
+        });
+        for row in &mut self.rows {
+            row.push(DbValue::Null);
+        }
+        Ok(())
+    }
+
+    /// Drop a column from the table. Removes the column and all its data.
+    pub fn drop_column(&mut self, name: &str) -> Result<(), String> {
+        let idx = self
+            .columns
+            .iter()
+            .position(|c| c.name == name)
+            .ok_or_else(|| format!("Column '{}' not found", name))?;
+        self.columns.remove(idx);
+        for row in &mut self.rows {
+            row.remove(idx);
+        }
+        Ok(())
+    }
+
     // ── Index management ────────────────────────────────────────────
 
     /// Create a secondary index on a column.
-    pub fn create_index(
-        &mut self,
-        name: &str,
-        column: &str,
-        index_type: IndexType,
-    ) -> Result<(), String> {
+    pub fn create_index(&mut self, name: &str, column: &str, index_type: IndexType) -> Result<(), String> {
         if !self.col_index.contains_key(column) {
-            return Err(format!(
-                "Column '{}' does not exist in table '{}'",
-                column, self.name
-            ));
+            return Err(format!("Column '{}' does not exist in table '{}'", column, self.name));
         }
         for (existing, _) in &self.indices {
             if existing.name == name {
@@ -355,11 +403,7 @@ impl Table {
 
     /// Format a result set as a JSON array string: [[header], [row1], [row2], ...]
     pub fn format_result(&self, rows: Vec<&[DbValue]>) -> String {
-        let header: Vec<String> = self
-            .columns
-            .iter()
-            .map(|c| format!("\"{}\"", c.name))
-            .collect();
+        let header: Vec<String> = self.columns.iter().map(|c| format!("\"{}\"", c.name)).collect();
         let mut parts = vec![format!("[{}]", header.join(","))];
 
         for row in rows {
@@ -371,13 +415,40 @@ impl Table {
     }
 
     /// Type-check: can `val` be stored in a column of type `col_type`?
+    /// Try to coerce a value to match the expected column type.
+    /// Try to coerce a value to match the expected column type.
+    /// Returns true if coercion was applied.
+    pub fn coerce_value(val: &mut DbValue, col_type: &ColumnType) -> bool {
+        match col_type {
+            ColumnType::Float => {
+                if let DbValue::Int(n) = val {
+                    *val = DbValue::Float(*n as f64);
+                    true
+                } else {
+                    false
+                }
+            }
+            ColumnType::Int => {
+                if let DbValue::Float(f) = val {
+                    *val = DbValue::Int(*f as i64);
+                    true
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        }
+    }
+
     fn type_match(col_type: &ColumnType, val: &DbValue) -> bool {
         matches!(
             (col_type, val),
             (_, DbValue::Null)
                 | (ColumnType::Bool, DbValue::Bool(_))
                 | (ColumnType::Int, DbValue::Int(_))
+                | (ColumnType::Int, DbValue::Float(_))  // truncation coerced
                 | (ColumnType::Float, DbValue::Float(_))
+                | (ColumnType::Float, DbValue::Int(_))   // widened to Float
                 | (ColumnType::String, DbValue::String(_))
                 | (ColumnType::Strings, DbValue::Strings(_))
                 | (ColumnType::Floats, DbValue::Floats(_))
@@ -432,16 +503,22 @@ mod tests {
                 name: "id".into(),
                 dtype: ColumnType::String,
                 primary_key: true,
+                not_null: false,
+                default: None,
             },
             Column {
                 name: "name".into(),
                 dtype: ColumnType::String,
                 primary_key: false,
+                not_null: false,
+                default: None,
             },
             Column {
                 name: "value".into(),
                 dtype: ColumnType::Int,
                 primary_key: false,
+                not_null: false,
+                default: None,
             },
         ];
         let mut t = Table::new("test".into(), cols).unwrap();
@@ -466,6 +543,8 @@ mod tests {
             name: "x".into(),
             dtype: ColumnType::Int,
             primary_key: false,
+            not_null: false,
+            default: None,
         }];
         assert!(Table::new("t".into(), cols).is_ok());
     }
@@ -482,6 +561,8 @@ mod tests {
             name: "id".into(),
             dtype: ColumnType::String,
             primary_key: true,
+            not_null: false,
+            default: None,
         }];
         let mut t = Table::new("t".into(), cols).unwrap();
         t.insert(vec![DbValue::String("x".into())]).unwrap();

@@ -38,18 +38,13 @@ impl Database {
 
     /// Commit the active transaction — discard the snapshot.
     pub fn commit(&mut self) -> Result<(), String> {
-        self.savepoints
-            .pop()
-            .ok_or("No active transaction".to_string())?;
+        self.savepoints.pop().ok_or("No active transaction".to_string())?;
         Ok(())
     }
 
     /// Rollback the active transaction — restore the snapshot.
     pub fn rollback(&mut self) -> Result<(), String> {
-        let snap = self
-            .savepoints
-            .pop()
-            .ok_or("No active transaction".to_string())?;
+        let snap = self.savepoints.pop().ok_or("No active transaction".to_string())?;
         self.tables = snap.tables;
         Ok(())
     }
@@ -64,10 +59,7 @@ impl Database {
 
     /// Rollback to a named savepoint (discards all savepoints after it).
     pub fn rollback_to_savepoint(&mut self, name: &str) -> Result<(), String> {
-        let pos = self
-            .savepoints
-            .iter()
-            .rposition(|s| s.name.as_deref() == Some(name));
+        let pos = self.savepoints.iter().rposition(|s| s.name.as_deref() == Some(name));
         match pos {
             Some(idx) => {
                 let snap = self.savepoints.remove(idx);
@@ -82,10 +74,7 @@ impl Database {
 
     /// Release (forget) a named savepoint without rolling back.
     pub fn release_savepoint(&mut self, name: &str) -> Result<(), String> {
-        let pos = self
-            .savepoints
-            .iter()
-            .rposition(|s| s.name.as_deref() == Some(name));
+        let pos = self.savepoints.iter().rposition(|s| s.name.as_deref() == Some(name));
         match pos {
             Some(idx) => {
                 self.savepoints.remove(idx);
@@ -161,11 +150,15 @@ mod tests {
                 name: "id".into(),
                 dtype: ColumnType::String,
                 primary_key: true,
+                not_null: false,
+                default: None,
             },
             Column {
                 name: "val".into(),
                 dtype: ColumnType::Int,
                 primary_key: false,
+                not_null: false,
+                default: None,
             },
         ];
         let table = Table::new("items".into(), cols).unwrap();
@@ -194,6 +187,8 @@ mod tests {
             name: "x".into(),
             dtype: ColumnType::Int,
             primary_key: false,
+            not_null: false,
+            default: None,
         }];
         let t2 = Table::new("items".into(), cols).unwrap();
         assert!(db.create_table("items", t2).is_err());
@@ -206,11 +201,12 @@ mod tests {
             name: "x".into(),
             dtype: ColumnType::Int,
             primary_key: false,
+            not_null: false,
+            default: None,
         }];
         db.create_table("a", Table::new("a".into(), cols.clone()).unwrap())
             .unwrap();
-        db.create_table("b", Table::new("b".into(), cols).unwrap())
-            .unwrap();
+        db.create_table("b", Table::new("b".into(), cols).unwrap()).unwrap();
         assert_eq!(db.table_names(), vec!["a", "b"]);
     }
 
@@ -221,8 +217,7 @@ mod tests {
         let mut db = make_db();
         db.begin();
         let t = db.get_table_mut("items").unwrap();
-        t.insert(vec![DbValue::String("x".into()), DbValue::Int(1)])
-            .unwrap();
+        t.insert(vec![DbValue::String("x".into()), DbValue::Int(1)]).unwrap();
         db.commit().unwrap();
         assert_eq!(db.get_table("items").unwrap().rows.len(), 1);
     }
@@ -232,8 +227,7 @@ mod tests {
         let mut db = make_db();
         db.begin();
         let t = db.get_table_mut("items").unwrap();
-        t.insert(vec![DbValue::String("x".into()), DbValue::Int(1)])
-            .unwrap();
+        t.insert(vec![DbValue::String("x".into()), DbValue::Int(1)]).unwrap();
         db.rollback().unwrap();
         assert_eq!(db.get_table("items").unwrap().rows.len(), 0);
     }
