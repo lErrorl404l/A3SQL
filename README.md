@@ -3,45 +3,64 @@
 An embeddable SQL database engine for Arma 3 mods. Like **SQLite for Arma** — a
 Rust `callExtension` that lets modders write SQL directly in SQF.
 
+```sqf
+// Create table, insert, query — no boilerplate
+["CREATE TABLE weapons (id STRING PRIMARY KEY, name STRING)"] call a3db_fnc_execute;
+["INSERT INTO weapons VALUES ('m4a1', 'M4A1')"] call a3db_fnc_execute;
+_result = ["SELECT * FROM weapons WHERE name %% 'm4'"] call a3db_fnc_execute;
+```
+
+## Status
+
+| Component | Status |
+|---|---|
+| SQL engine | 118 tests passing |
+| CBA addon | HEMTT check clean (0 warnings) |
+| Rust linting | Clippy clean (0 warnings) |
+| CI/CD | GitHub Actions — test + cross-compile + release |
+| Cross-platform | Linux x86_64/i686, Windows x86_64/i686 |
+| Security | Parameterized queries (`$1`,`$2`), TCP LOGIN auth, CBA credentials |
+| Auto-start | TCP listener starts at game boot (no mission needed) |
+| Structure | ACE3/CBA_A3 conventions |
+
 ## Quick Start
 
 ```sqf
-// Initialize
-private _version = ["a3db", "version"] callExtension;
-
-// Create table + insert
-private _r = ["a3db", "CREATE TABLE weapons (id STRING PRIMARY KEY, name STRING, caliber STRING, barrelLength FLOAT)"] callExtension;
-private _r = ["a3db", "INSERT INTO weapons VALUES ('rhs_m4a1', 'M4A1', '5.56x45mm', 368.3)"] callExtension;
-
-// Query with fuzzy match
-private _r = ["a3db", "SELECT * FROM weapons WHERE id %% 'rhs_m4'"] callExtension;
+["CREATE TABLE players (uid STRING PRIMARY KEY, name STRING, score INT)"] call a3db_fnc_execute;
+["INSERT INTO players VALUES ('76561198000000001', 'Scarface', 1500)"] call a3db_fnc_execute;
+_result = ["SELECT name, score FROM players WHERE score > 1000 ORDER BY score DESC"] call a3db_fnc_execute;
+// Returns: [0, "OK", [["name","score"],["Scarface",1500]]]
 ```
 
 ## Documentation
 
 Full docs in [docs/README.md](docs/README.md) covering:
 
-- SQL dialect reference (CREATE, INSERT, SELECT, UPDATE, DELETE, JOINs, ORDER BY, aggregates, fuzzy match)
+- SQL dialect reference (all supported syntax)
 - SQF API reference (all commands, response format, error codes)
-- Building (Rust extension + HEMTT addon)
-- Project structure
+- Advanced features (fuzzy search, window functions, CTEs, transactions)
+- Security (parameterized queries, TCP auth, CBA credentials)
+- External TCP connector (Python, CLI)
+- Building extension + addon
+- ACE3 project structure
 
-## Status
+Worked example in [docs/example.md](docs/example.md).
 
-| Component | Status |
-|---|---|
-| SQL engine | 92 tests passing |
-| CBA addon | HEMTT check clean |
-| CI/CD | GitHub Actions pipeline |
-| Cross-platform | Linux x86_64/i686, Windows x86_64/i686 |
-| Structure | ACE3/CBA_A3 conventions |
+## Testing
+
+Test without Arma 3:
+
+```bash
+cargo test -p a3db --lib   # 118 tests (0.01s)
+hemtt check                 # SQF + config validation
+```
 
 ## Dependencies
 
-- [CBA_A3](https://github.com/CBATeam/CBA_A3) — Community Base Addons (required)
-- [Rust](https://rustup.rs/) 1.80+ — for building the extension
-- [HEMTT](https://hemtt.dev/) 1.20+ — for building the addon PBOs
+- [CBA_A3](https://github.com/CBATeam/CBA_A3) — Community Base Addons
+- [Rust](https://rustup.rs/) 1.80+ — build the extension
+- [HEMTT](https://hemtt.dev/) 1.20+ — build addon PBOs
 
 ## License
 
-MIT
+Arma 3 Share Alike

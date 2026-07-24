@@ -4,38 +4,41 @@ An embeddable SQL database engine for Arma 3 mods. Like **SQLite for Arma** — 
 Rust `callExtension` that lets modders write SQL directly in SQF.
 
 ```sqf
-private _result = ["a3db", "CREATE TABLE weapons (id STRING PRIMARY KEY, name STRING, caliber STRING, barrelLength FLOAT)"] callExtension;
-private _result = ["a3db", "INSERT INTO weapons VALUES ('rhs_m4a1', 'M4A1', '5.56x45mm', 368.3)"] callExtension;
-private _result = ["a3db", "SELECT * FROM weapons WHERE caliber = '5.56x45mm'"] callExtension;
+["CREATE TABLE weapons (id STRING PRIMARY KEY, name STRING)"] call a3db_fnc_execute;
+["INSERT INTO weapons VALUES ('m4a1', 'M4A1')"] call a3db_fnc_execute;
+_result = ["SELECT * FROM weapons WHERE name %% 'm4'"] call a3db_fnc_execute;
 ```
 
 ## Features
 
-- **Full SQL**: `CREATE TABLE`, `INSERT`, `SELECT`, `UPDATE`, `DELETE`, `DROP`
-- **Fuzzy matching**: `%%` operator with trigram similarity for weapon/model name matching
-- **JOINs**: `INNER JOIN`, `LEFT JOIN`, `CROSS JOIN` with `ON` clause
-- **Indices**: `BTREE` for lookups, `TRIGRAM` for fuzzy search
-- **Ordering & pagination**: `ORDER BY`, `LIMIT`, `OFFSET`
-- **Aggregates**: `COUNT`, `SUM`, `AVG`, `MIN`, `MAX` with `GROUP BY`
-- **Transactions**: `BEGIN` / `COMMIT` / `ROLLBACK` with savepoints
-- **Multi-format export/import**: JSON, CSV, SQL dump, Binary
-- **Persistence**: `save` / `load` to/from files via binary format
-- **Multi-statement**: Run `;`-separated SQL batches
-- **Multi-dialect**: Accepts PostgreSQL, MySQL/MariaDB, SQLite, DataFusion-style SQL
+| Category | Features |
+|---|---|
+| **SQL** | CREATE/DROP TABLE/INDEX, INSERT, SELECT, UPDATE, DELETE, REPLACE INTO, TRUNCATE, RENAME |
+| **Advanced SQL** | JOINs (CROSS/INNER/LEFT), GROUP BY/HAVING, ORDER BY/LIMIT/OFFSET, UNION/UNION ALL, CTE (WITH), subqueries |
+| **Expressions** | `%%` fuzzy match, LIKE, BETWEEN, IN, IS NULL, CASE WHEN, EXISTS, CAST |
+| **Functions** | UPPER/LOWER, LENGTH, SUBSTR, TRIM, CONCAT, COALESCE/IFNULL, ROUND, ABS, NOW()/CURRENT_TIMESTAMP |
+| **Window** | ROW_NUMBER, RANK, DENSE_RANK with OVER/PARTITION BY/ORDER BY |
+| **Constraints** | PRIMARY KEY, NOT NULL, DEFAULT, CHECK, FOREIGN KEY, AUTO_INCREMENT |
+| **Types** | INT (BIGINT/SMALLINT/TINYINT), FLOAT (DECIMAL/NUMERIC/DOUBLE), STRING (VARCHAR/CHAR/TEXT), BOOL, DATE/TIMESTAMP, STRINGS[]/FLOATS[] |
+| **Indices** | BTREE (exact/range), TRIGRAM (fuzzy GIN-style candidate filter) |
+| **Transactions** | BEGIN/COMMIT/ROLLBACK, SAVEPOINT/RELEASE |
+| **Persistence** | SAVE/LOAD (binary), export/import JSON/CSV/SQL, export_to_file |
+| **Security** | Parameterized queries (`$1`,`$2`), TCP LOGIN auth, CBA credential settings |
+| **Network** | TCP listener (auto-start at game boot), external queries via Python/CLI |
+| **Multi-statement** | Run `;`-separated SQL batches |
+| **Multi-dialect** | Accepts PostgreSQL, MySQL/MariaDB, SQLite, DataFusion-style SQL |
 
 ## Quick Start
 
 ### 1. Add a3db as a dependency
 
-In your mod's `CfgPatches`, add a3db to `requiredAddons[]`:
+In your mod's CfgPatches:
 
 ```cpp
-requiredAddons[] = {"cba_main", "a3db_main"};
+requiredAddons[] = {"cba_main", "a3db_main", "a3db_sql"};
 ```
 
 ### 2. Call from SQF
-
-Create tables, insert data, and query — all through `callExtension`:
 
 ```sqf
 // Create
@@ -46,14 +49,10 @@ Create tables, insert data, and query — all through `callExtension`:
 
 // Query
 _result = ["SELECT name, score FROM players WHERE score > 1000 ORDER BY score DESC"] call a3db_fnc_execute;
+// Returns: [0, "OK", [["name","score"],["Scarface",1500]]]
 ```
 
-The result is always a JSON array:
-```
-[0, "OK", [["name","score"],["Scarface",1500]]]
-```
-
-### 3. Use the CBA wrapper functions
+### 3. CBA Wrapper Functions
 
 ```sqf
 // Fuzzy search
@@ -71,13 +70,26 @@ _result = ["SELECT name FROM weapons WHERE name %% 'm4'"] call a3db_fnc_execute;
 // Export
 _table_data = ["players"] call a3db_fnc_exportJSON;
 _sql_backup = [] call a3db_fnc_exportSQL;
+
+// External TCP query (from Python)
+// ["listen"] call a3db_fnc_execute;  // auto-starts at game boot
 ```
 
 ### 4. CBA Addon Settings
 
-Configure behavior in **Options → Addon Configuration → A3DB**:
-- **Enable TCP Listener**: Start TCP server for external query access
-- **Listener Port**: TCP port (default: 33306)
+Options → Addon Configuration → A3DB:
+
+| Setting | Type | Default | Purpose |
+|---|---|---|---|
+| Enable TCP Listener | CHECKBOX | true | Auto-start on game boot |
+| Listener Port | EDIT | 33306 | TCP port |
+| Listener Bind Address | EDIT | 127.0.0.1 | Bind IP |
+| Listener Username | EDIT | (empty) | TCP login (empty = anonymous) |
+| Listener Password | EDIT | (empty) | TCP login |
+| Auto-Save | CHECKBOX | false | Save on mission end |
+| Auto-Load | CHECKBOX | false | Load on mission start |
+| Auto-Save Path | EDIT | a3db_autosave.bin | File path |
+| Log Level | LIST | INFO | RPT verbosity |
 - **Auto-Save**: Save database when mission ends
 - **Auto-Save File**: File path for auto-save
 
@@ -164,6 +176,38 @@ RELEASE SAVEPOINT sp1;
 -- Indices
 CREATE INDEX idx_caliber ON weapons (caliber) USING BTREE;
 CREATE INDEX idx_name_fuzzy ON weapons (name) USING TRIGRAM;
+
+-- REPLACE / UPSERT
+REPLACE INTO weapons VALUES ('m4a1', 'M4A1', '5.56x45mm', 368.3);
+
+-- ALTER TABLE
+ALTER TABLE weapons ADD COLUMN mass FLOAT;
+ALTER TABLE weapons DROP COLUMN barrelLength;
+ALTER TABLE weapons RENAME COLUMN name TO displayName;
+ALTER TABLE weapons RENAME TO armory;
+
+-- TRUNCATE
+TRUNCATE TABLE weapons;
+
+-- Window functions
+SELECT id, name, ROW_NUMBER() OVER (ORDER BY name) AS rn FROM weapons;
+SELECT id, name, RANK() OVER (PARTITION BY caliber ORDER BY name) FROM weapons;
+
+-- Subqueries
+SELECT * FROM weapons WHERE id IN (SELECT weaponId FROM attachments);
+SELECT * FROM weapons WHERE EXISTS (SELECT 1 FROM attachments WHERE weaponId = weapons.id);
+
+-- CTE
+WITH top AS (SELECT * FROM weapons ORDER BY name LIMIT 5) SELECT * FROM top;
+
+-- CAST
+SELECT CAST(barrelLength AS INT) FROM weapons;
+SELECT name || ' (' || caliber || ')' AS combined FROM weapons;
+
+-- Functions
+SELECT NOW(), CURRENT_TIMESTAMP;
+SELECT COALESCE(barrelLength, 0.0) FROM weapons;
+SELECT UPPER(name), LOWER(name), LENGTH(name), SUBSTR(name, 1, 3) FROM weapons;
 ```
 
 ## SQF API
@@ -228,26 +272,12 @@ private _version = "a3db" callExtension "version";
 private _dump = "a3db" callExtension "dump_sql";
 // → [0,"OK","CREATE TABLE weapons (...);..."]
 
-// Export table as JSON
-private _result = ["a3db", "export_json weapons"] callExtension;
+// Query with parameterized args (SQL injection safe)
+private _result = ["a3db", "SELECT * FROM weapons WHERE id = $1", ["m4a1"]] callExtension;
 
-// Export table as CSV
-private _result = ["a3db", "export_csv weapons"] callExtension;
-
-// Import from JSON (data in args)
-private _result = ["a3db", "import_json weapons", [jsonData]] callExtension;
-
-// Import from CSV
-private _result = ["a3db", "import_csv weapons", [csvData]] callExtension;
-
-// Full SQL dump
-private _result = ["a3db", "dump_sql"] callExtension;
-
-// Persist to file
-private _result = ["a3db", "save", ["mission_db.bin"]] callExtension;
-
-// Restore from file
-private _result = ["a3db", "load", ["mission_db.bin"]] callExtension;
+// TCP listener (auto-starts on game boot). Manual control:
+private _result = ["a3db", "listen", ["33306"]] callExtension;
+private _result = ["a3db", "stop"] callExtension;
 ```
 
 ### CBA Functions
@@ -265,6 +295,40 @@ When using CBA (recommended), the addon registers these functions via `CfgFuncti
 | `a3db_fnc_exportSQL` | Export full database as SQL statements |
 | `a3db_fnc_save` | Persist database to binary file |
 | `a3db_fnc_load` | Restore database from binary file |
+| `a3db_fnc_init` | Initialize extension |
+| `a3db_fnc_settings` | Register CBA settings (auto-called via PreInit) |
+| `a3db_fnc_postInit` | Post-mission init (auto-save/load hooks) |
+
+## Security
+
+### Parameterized Queries
+
+Prevent SQL injection by passing user input as separate args with `$1`, `$2` placeholders:
+
+```sqf
+// UNSAFE — string interpolation (SQL injection possible)
+private _sql = format ["SELECT * FROM users WHERE name = '%1'", _userInput];
+["a3db", _sql] callExtension;
+
+// SAFE — parameterized query (injection prevented)
+["a3db", "SELECT * FROM users WHERE name = $1", [_userInput]] callExtension;
+```
+
+### TCP Authentication
+
+Set a username and password in CBA Settings (Options → Addon Configuration → A3DB).
+When credentials are non-empty, clients must `LOGIN` before querying:
+
+```python
+import socket
+s = socket.socket()
+s.connect(("127.0.0.1", 33306))
+s.sendall(b"LOGIN admin mypassword\n")
+print(s.recv(65536).decode())  # [0,"OK","Authenticated"]
+s.sendall(b"SELECT * FROM weapons\n")
+print(s.recv(65536).decode())
+s.close()
+```
 
 ## Building
 
@@ -295,16 +359,13 @@ cargo build --release --target i686-pc-windows-gnu
 hemtt build
 ```
 
-Output goes to `.hemttout/release/a3db/`.
+Output goes to `.hemttout/build/`.
 
 ### Run tests
 
 ```bash
-# From workspace root
-cargo test --lib
-
-# Or from extension directory
-cargo test --manifest-path extension/Cargo.toml
+# All 118 tests (0.01s)
+cargo test --lib -p a3db
 ```
 
 ### Linting & validation
@@ -368,16 +429,18 @@ a3db/
 │   └── sql/                    # SQL engine addon (CfgFunctions + SQF API)
 │       ├── config.cpp
 │       ├── script_component.hpp
-│   ├── fn_init.sqf
-│   ├── fn_execute.sqf
-│   ├── fn_loadJSON.sqf
-│   ├── fn_dumpSQL.sqf
-│   ├── fn_exportJSON.sqf
-│   ├── fn_exportCSV.sqf
-│   ├── fn_exportSQL.sqf
-│   ├── fn_save.sqf
-│   ├── fn_load.sqf
-│   └── $PBOPREFIX$
+│       ├── fn_init.sqf
+│       ├── fn_settings.sqf
+│       ├── fn_postInit.sqf
+│       ├── fn_execute.sqf
+│       ├── fn_loadJSON.sqf
+│       ├── fn_dumpSQL.sqf
+│       ├── fn_exportJSON.sqf
+│       ├── fn_exportCSV.sqf
+│       ├── fn_exportSQL.sqf
+│       ├── fn_save.sqf
+│       ├── fn_load.sqf
+│       └── $PBOPREFIX$
 ├── include/
 │   └── x/cba/addons/           # CBA header stubs for build-time resolution
 │       ├── main/
