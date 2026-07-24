@@ -6,7 +6,7 @@ use sqlparser::ast::table_constraints::{ForeignKeyConstraint, TableConstraint};
 use sqlparser::ast::{
     BinaryOperator, ColumnOption, DataType, Expr, Function, FunctionArg, FunctionArgExpr, FunctionArguments,
     LimitClause, ObjectName, OrderByKind, Query, Select, SelectItem, SetExpr, Statement, TableFactor, TableWithJoins,
-    UnaryOperator, Values,
+    UnaryOperator, Values, WindowType,
 };
 
 use super::table::ForeignKeyInfo;
@@ -273,8 +273,8 @@ fn exec_create_table(def: &sqlparser::ast::CreateTable, db: &mut Database) -> Re
                 .first()
                 .map(|c| c.value.to_lowercase())
                 .unwrap_or_default(),
-            on_delete: fk.on_delete.clone(),
-            on_update: fk.on_update.clone(),
+            on_delete: fk.on_delete,
+            on_update: fk.on_update,
         }
     };
     for col_def in &def.columns {
@@ -449,7 +449,7 @@ fn exec_insert(ins: &sqlparser::ast::Insert, db: &mut Database) -> Result<String
             let check_val = eval_expr(check_expr, &full_row, &table.col_index)
                 .map_err(|e| format!("CHECK constraint error: {}", e))?;
             if !is_truthy(&check_val) {
-                return Err(format!("CHECK constraint failed for row"));
+                return Err("CHECK constraint failed for row".to_string());
             }
         }
 
@@ -488,6 +488,186 @@ fn exec_insert(ins: &sqlparser::ast::Insert, db: &mut Database) -> Result<String
     }
 
     Ok(format!("\"Inserted {} row(s)\"", inserted))
+}
+
+/// Check if a SELECT projection contains any window function (OVER clause).
+fn has_window_function(projection: &[SelectItem]) -> bool {
+    for item in projection {
+        let func = match item {
+            SelectItem::UnnamedExpr(Expr::Function(f))
+            | SelectItem::ExprWithAlias {
+                expr: Expr::Function(f),
+                ..
+            } => f,
+            _ => continue,
+        };
+        if func.over.is_some() {
+            return true;
+        }
+    }
+    false
+}
+
+/// Compute window function values for each row and return them as appended columns.
+fn compute_window_functions(
+    projection: &[SelectItem],
+    rows: &mut [Vec<DbValue>],
+    col_map: &HashMap<String, usize>,
+) -> Result<(), String> {
+    let total = rows.len();
+    if total == 0 {
+        return Ok(());
+    }
+
+    for item in projection {
+        let (func, _alias) = match item {
+            SelectItem::UnnamedExpr(Expr::Function(f)) => (f, None),
+            SelectItem::ExprWithAlias {
+                expr: Expr::Function(f),
+                alias,
+            } => (f, Some(alias.value.to_lowercase())),
+            _ => continue,
+        };
+        let Some(WindowType::WindowSpec(spec)) = &func.over else {
+            continue;
+        };
+
+        let mut computed = vec![DbValue::Null; total];
+        let func_name = func.name.to_string().to_lowercase();
+
+        // Build partition index groups
+        let mut partitions: Vec<Vec<usize>> = if spec.partition_by.is_empty() {
+            vec![(0..total).collect()]
+        } else {
+            let mut groups: Vec<(Vec<DbValue>, Vec<usize>)> = Vec::new();
+            for (i, row) in rows.iter().enumerate() {
+                let key: Vec<DbValue> = spec
+                    .partition_by
+                    .iter()
+                    .filter_map(|pe| eval_expr(pe, row, col_map).ok())
+                    .collect();
+                if let Some(pos) = groups.iter().position(|(k, _)| *k == key) {
+                    groups[pos].1.push(i);
+                } else {
+                    groups.push((key, vec![i]));
+                }
+            }
+            groups.into_iter().map(|(_, indices)| indices).collect()
+        };
+
+        for part_indices in &mut partitions {
+            // Sort indices within partition by ORDER BY
+            if !spec.order_by.is_empty() {
+                part_indices.sort_by(|&a, &b| {
+                    for ob in &spec.order_by {
+                        let va = eval_expr(&ob.expr, &rows[a], col_map).unwrap_or(DbValue::Null);
+                        let vb = eval_expr(&ob.expr, &rows[b], col_map).unwrap_or(DbValue::Null);
+                        let cmp = db_value_cmp(&va, &vb);
+                        let order = match ob.options.asc {
+                            Some(false) => cmp.reverse(),
+                            _ => cmp,
+                        };
+                        if order != std::cmp::Ordering::Equal {
+                            return order;
+                        }
+                    }
+                    std::cmp::Ordering::Equal
+                });
+            }
+
+            // Apply the window function
+            match func_name.as_str() {
+                "row_number" => {
+                    for (pos, &idx) in part_indices.iter().enumerate() {
+                        computed[idx] = DbValue::Int(pos as i64 + 1);
+                    }
+                }
+                "rank" => {
+                    let mut rank = 1i64;
+                    for pos in 0..part_indices.len() {
+                        if pos > 0 {
+                            let cur = &rows[part_indices[pos]];
+                            let prev = &rows[part_indices[pos - 1]];
+                            let mut equal = true;
+                            for ob in &spec.order_by {
+                                let vc = eval_expr(&ob.expr, cur, col_map).unwrap_or(DbValue::Null);
+                                let vp = eval_expr(&ob.expr, prev, col_map).unwrap_or(DbValue::Null);
+                                if vc != vp {
+                                    equal = false;
+                                    break;
+                                }
+                            }
+                            if !equal {
+                                rank = pos as i64 + 1;
+                            }
+                        }
+                        computed[part_indices[pos]] = DbValue::Int(rank);
+                    }
+                }
+                "dense_rank" => {
+                    let mut dense_rank = 1i64;
+                    for pos in 0..part_indices.len() {
+                        if pos > 0 {
+                            let cur = &rows[part_indices[pos]];
+                            let prev = &rows[part_indices[pos - 1]];
+                            let mut equal = true;
+                            for ob in &spec.order_by {
+                                let vc = eval_expr(&ob.expr, cur, col_map).unwrap_or(DbValue::Null);
+                                let vp = eval_expr(&ob.expr, prev, col_map).unwrap_or(DbValue::Null);
+                                if vc != vp {
+                                    equal = false;
+                                    break;
+                                }
+                            }
+                            if equal {
+                                computed[part_indices[pos]] = DbValue::Int(dense_rank);
+                            } else {
+                                computed[part_indices[pos]] = DbValue::Int(dense_rank);
+                                // still same as dense rank — use pos+1
+                            }
+                            if !equal {
+                                dense_rank += 1;
+                            }
+                        } else {
+                            computed[part_indices[pos]] = DbValue::Int(dense_rank);
+                        }
+                    }
+                    // Recompute: assign dense ranks properly
+                    let mut rank = 1i64;
+                    for pos in 0..part_indices.len() {
+                        if pos > 0 {
+                            let cur = &rows[part_indices[pos]];
+                            let prev = &rows[part_indices[pos - 1]];
+                            let mut equal = true;
+                            for ob in &spec.order_by {
+                                let vc = eval_expr(&ob.expr, cur, col_map).unwrap_or(DbValue::Null);
+                                let vp = eval_expr(&ob.expr, prev, col_map).unwrap_or(DbValue::Null);
+                                if vc != vp {
+                                    equal = false;
+                                    break;
+                                }
+                            }
+                            if !equal {
+                                rank += 1;
+                            }
+                        }
+                        computed[part_indices[pos]] = DbValue::Int(rank);
+                    }
+                }
+                _ => {
+                    // Try as aggregate window function (COUNT, SUM, etc.)
+                    // ponytail: aggregate window functions not yet supported
+                    return Err(format!("Window function '{}' not supported", func_name));
+                }
+            }
+        }
+
+        // Append computed column to each row
+        for (i, val) in computed.into_iter().enumerate() {
+            rows[i].push(val);
+        }
+    }
+    Ok(())
 }
 
 // ── SELECT ──────────────────────────────────────────────────────────────
@@ -602,6 +782,13 @@ fn exec_select(query: &Query, db: &mut Database) -> Result<String, String> {
         grouped_rows
     };
 
+    // 3.75 Window functions — compute OVER expressions before ORDER BY
+    let mut owned_rows: Vec<Vec<DbValue>> = deduped_rows.iter().map(|r| r.to_vec()).collect();
+    if has_window_function(&select.projection) {
+        compute_window_functions(&select.projection, &mut owned_rows, &table.col_index)?;
+    }
+    let post_wf_rows: Vec<&[DbValue]> = owned_rows.iter().map(|r| r.as_slice()).collect();
+
     // 4. ORDER BY
     let sorted_rows = if let Some(order_by) = &query.order_by {
         let exprs = match &order_by.kind {
@@ -609,12 +796,12 @@ fn exec_select(query: &Query, db: &mut Database) -> Result<String, String> {
             _ => return Err("ORDER BY ALL not supported".into()),
         };
         if !exprs.is_empty() {
-            sort_rows(deduped_rows, exprs, &table.col_index)?
+            sort_rows(post_wf_rows, exprs, &table.col_index)?
         } else {
-            deduped_rows
+            post_wf_rows
         }
     } else {
-        deduped_rows
+        post_wf_rows
     };
 
     // 5. LIMIT / OFFSET
@@ -1448,9 +1635,10 @@ fn exec_delete(del: &sqlparser::ast::Delete, db: &mut Database) -> Result<String
         let names: Vec<&str> = db.table_names();
         let mut refs = Vec::new();
         for tn in names {
-            let t = db.get_table(tn);
-            if tn != table_name && t.is_ok() {
-                let t = t.unwrap();
+            if let Ok(t) = db.get_table(tn) {
+                if tn == table_name {
+                    continue;
+                }
                 for fk in &t.foreign_keys {
                     if fk.foreign_table == table_name {
                         if let Some(&ci) = t.col_index.get(&fk.foreign_column) {
