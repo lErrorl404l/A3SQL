@@ -34,6 +34,7 @@ static LISTENER: LazyLock<Mutex<Option<std::net::TcpListener>>> = LazyLock::new(
 
 /// Stored credentials for TCP authentication. Empty = anonymous access.
 static CREDENTIALS: LazyLock<Mutex<(String, String)>> = LazyLock::new(|| Mutex::new((String::new(), String::new())));
+static REMOTE: LazyLock<Mutex<Option<std::net::TcpStream>>> = LazyLock::new(|| Mutex::new(None));
 // Flag set by dispatch() when REPLACE INTO is detected before SQL parsing.
 // Read by exec_insert() to handle PK conflict via delete+re-insert.
 pub(crate) static REPLACE_FLAG: AtomicBool = AtomicBool::new(false);
@@ -141,7 +142,7 @@ pub unsafe extern "C" fn RVExtensionRegisterCallback(callbackProc: Option<unsafe
 ///   - Custom commands (version, export, import, save, load, dump_sql)
 ///   - Multi-statement SQL (statements separated by `;`)
 ///   - Each parsed statement executed against the engine
-fn dispatch(input: &str, args: &[&str]) -> String {
+pub fn dispatch(input: &str, args: &[&str]) -> String {
     let trimmed = input.trim();
 
     // ── Custom commands (handled before SQL parsing) ──────────────────
@@ -199,6 +200,26 @@ fn dispatch(input: &str, args: &[&str]) -> String {
         return handle_listen(&listen_args);
     }
 
+    // Remote server connection for network replication
+    if trimmed == "connect" || trimmed.starts_with("connect ") {
+        let parts: Vec<&str> = trimmed.splitn(3, |c: char| c.is_whitespace()).collect();
+        let host = parts.get(1).unwrap_or(&"127.0.0.1");
+        let port: u16 = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(33306);
+        let addr = format!("{}:{}", host, port);
+        return match std::net::TcpStream::connect(&addr) {
+            Ok(stream) => {
+                *REMOTE.lock().unwrap() = Some(stream);
+                ok_response(&format!("\"Connected to {}\"", addr))
+            }
+            Err(e) => error_response(ErrorCode::Io, &format!("Connect failed: {}", e)),
+        };
+    }
+
+    if trimmed == "disconnect" {
+        *REMOTE.lock().unwrap() = None;
+        return ok_response("\"Disconnected\"");
+    }
+
     if trimmed.to_uppercase().starts_with("REPLACE INTO") {
         REPLACE_FLAG.store(true, Ordering::SeqCst);
         // Replace "REPLACE INTO" with "INSERT INTO" for sqlparser
@@ -228,6 +249,26 @@ fn dispatch(input: &str, args: &[&str]) -> String {
                 Ok(data) => ok_response(&data),
                 Err(e) => error_response(ErrorCode::Exec, &e),
             };
+        }
+    }
+
+    // ── Remote forwarding — if connected to a remote server, forward ──
+    {
+        let remote = REMOTE.lock().unwrap();
+        if let Some(stream) = remote.as_ref() {
+            // Send SQL to remote server via TCP
+            use std::io::{BufRead, BufReader, Write};
+            let mut out_stream = stream.try_clone().unwrap_or_else(|_| unreachable!());
+            let writable = writeln!(out_stream, "{}", trimmed);
+            let readable = {
+                let mut reader = BufReader::new(&out_stream);
+                let mut resp = String::new();
+                reader.read_line(&mut resp).ok();
+                resp
+            };
+            return writable
+                .map(|_| readable.trim().to_string())
+                .unwrap_or_else(|_| error_response(ErrorCode::Io, "Remote connection lost"));
         }
     }
 
