@@ -23,12 +23,19 @@ class Extended_PreInit_EventHandlers {
     };
 };
 
+class Extended_PostInit_EventHandlers {
+    class ADDON {
+        init = "call a3db_fnc_postInit";
+    };
+};
+
 class CfgFunctions {
     class a3db {
         class a3db {
             file = QPATHTO_FOLDER(sql);
             class init {};
             class settings {};
+            class postInit {};
             class execute {};
             class loadJSON {};
             class dumpSQL {};
