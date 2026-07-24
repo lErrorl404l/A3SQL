@@ -17,11 +17,18 @@ class CfgEventHandlers {
     };
 };
 
+class Extended_PreInit_EventHandlers {
+    class ADDON {
+        init = "call a3db_fnc_settings";
+    };
+};
+
 class CfgFunctions {
     class a3db {
         class a3db {
             file = QPATHTO_FOLDER(sql);
             class init {};
+            class settings {};
             class execute {};
             class loadJSON {};
             class dumpSQL {};

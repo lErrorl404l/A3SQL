@@ -160,14 +160,32 @@ fn dispatch(input: &str, args: &[&str]) -> String {
         };
         return result;
     }
-    if trimmed == "save" {
-        return handle_save(args);
+    if trimmed == "save" || trimmed.starts_with("save ") {
+        let mut save_args = args.to_vec();
+        if let Some(path) = trimmed.strip_prefix("save ") {
+            if !path.is_empty() && save_args.is_empty() {
+                save_args.push(path);
+            }
+        }
+        return handle_save(&save_args);
     }
-    if trimmed == "load" {
-        return handle_load(args);
+    if trimmed == "load" || trimmed.starts_with("load ") {
+        let mut load_args = args.to_vec();
+        if let Some(path) = trimmed.strip_prefix("load ") {
+            if !path.is_empty() && load_args.is_empty() {
+                load_args.push(path);
+            }
+        }
+        return handle_load(&load_args);
     }
-    if trimmed == "listen" {
-        return handle_listen(args);
+    if trimmed == "listen" || trimmed.starts_with("listen ") {
+        let mut listen_args = args.to_vec();
+        if let Some(port) = trimmed.strip_prefix("listen ") {
+            if !port.is_empty() && listen_args.is_empty() {
+                listen_args.push(port);
+            }
+        }
+        return handle_listen(&listen_args);
     }
 
     // ── Multi-statement SQL execution ─────────────────────────────────
