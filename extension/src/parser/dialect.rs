@@ -13,8 +13,9 @@
 // level (lib.rs) before SQL parsing, keeping the dialect clean.
 
 use sqlparser::ast::Statement;
-use sqlparser::dialect::Dialect;
+use sqlparser::dialect::{Dialect, GenericDialect};
 use sqlparser::parser::{Parser, ParserError};
+use std::any::TypeId;
 
 /// A3DB's custom SQL dialect — extends GenericDialect implicitly.
 ///
@@ -25,6 +26,11 @@ use sqlparser::parser::{Parser, ParserError};
 pub struct A3DbDialect;
 
 impl Dialect for A3DbDialect {
+    /// Report as GenericDialect so sqlparser enables MySQL features like AUTO_INCREMENT.
+    fn dialect(&self) -> TypeId {
+        TypeId::of::<GenericDialect>()
+    }
+
     fn is_identifier_start(&self, ch: char) -> bool {
         ch.is_alphabetic() || ch == '_'
     }
