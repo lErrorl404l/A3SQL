@@ -61,7 +61,7 @@ jobs:
         run: |
           arch=${{ contains(matrix.target, 'x86_64') && 'x64' || 'x86' }}
           mkdir -p extension/target/release
-          mv extension/target/${{ matrix.target }}/release/liba3db.so extension/target/release/a3db_${arch}.so
+          mv target/${{ matrix.target }}/release/liba3db.so extension/target/release/a3db_${arch}.so
           ls -la extension/target/release/
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -91,7 +91,7 @@ jobs:
         run: |
           arch=${{ contains(matrix.target, 'x86_64') && 'x64' || 'x86' }}
           mkdir -p extension/target/release
-          mv extension/target/${{ matrix.target }}/release/a3db.dll extension/target/release/a3db_${arch}.dll
+          mv target/${{ matrix.target }}/release/a3db.dll extension/target/release/a3db_${arch}.dll
           ls -la extension/target/release/
       - name: Upload artifact
         uses: actions/upload-artifact@v4
