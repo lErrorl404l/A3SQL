@@ -356,19 +356,39 @@ pub fn execute(stmt: &Statement, db: &mut Database) -> Result<String, String> {
             let name = schema_name.to_string();
             Ok(format!("\"Attached database '{}'\"", name))
         }
-        Statement::CreateVirtualTable {
+        Statement::Vacuum(v) => stmts::ddl::exec_vacuum(v, db),
+        Statement::Copy { source, to, target, .. } => stmts::ddl::exec_copy(source, *to, target, db),
+        Statement::CreateSequence {
             name,
             if_not_exists,
-            module_name,
-            module_args,
-        } => exec_create_virtual_table(name, *if_not_exists, module_name, module_args, db),
+            sequence_options,
+            data_type,
+            ..
+        } => stmts::ddl::exec_create_sequence(
+            name,
+            *if_not_exists,
+            sequence_options.as_slice(),
+            data_type.as_ref(),
+            db,
+        ),
+        Statement::Comment {
+            object_type,
+            object_name,
+            comment,
+            ..
+        } => {
+            let type_str = format!("{:?}", object_type);
+            stmts::ddl::exec_comment_on(&type_str, object_name, comment.as_deref(), db)
+        }
+        Statement::Call(f) => stmts::ddl::exec_call(f, db),
+        Statement::Analyze(a) => stmts::ddl::exec_analyze(a, db),
         other => Err(format!("Statement not supported: {:?}", other)),
     }
 }
 
 // ── ObjectName helper ───────────────────────────────────────────────────
 
-fn object_name_str(name: &ObjectName) -> String {
+pub(crate) fn object_name_str(name: &ObjectName) -> String {
     name.to_string().to_lowercase()
 }
 
@@ -2924,7 +2944,11 @@ fn eval_literal_expr(expr: &Expr) -> Result<DbValue, String> {
 
 // ── Function execution ──────────────────────────────────────────────────
 
-fn exec_function(func: &Function, row: &[DbValue], col_map: &HashMap<String, usize>) -> Result<DbValue, String> {
+pub(crate) fn exec_function(
+    func: &Function,
+    row: &[DbValue],
+    col_map: &HashMap<String, usize>,
+) -> Result<DbValue, String> {
     let name = func.name.to_string().to_lowercase();
     match name.as_str() {
         "fuzzy_match" => exec_fuzzy_match(func, row, col_map),
@@ -4205,55 +4229,6 @@ fn exec_merge(merge: &Merge, db: &mut Database) -> Result<String, String> {
 }
 
 // ── CREATE VIRTUAL TABLE ─────────────────────────────────────────────────
-
-fn exec_create_virtual_table(
-    name: &ObjectName,
-    if_not_exists: bool,
-    module_name: &Ident,
-    module_args: &[Ident],
-    db: &mut Database,
-) -> Result<String, String> {
-    let table_name = object_name_str(name);
-    let module = module_name.to_string().to_lowercase();
-
-    if if_not_exists && db.has_table(&table_name) {
-        return Ok(format!("\"Table '{}' already exists\"", table_name));
-    }
-
-    match module.as_str() {
-        "fts5" => {
-            // ponytail: bridge SQLite FTS5 syntax to a3sql's built-in trigram FTS.
-            // Create a regular table with STRING columns, trigram index on first column.
-            let mut columns: Vec<Column> = Vec::new();
-            let first_col = module_args.first().map(|a| a.value.to_lowercase()).unwrap_or_default();
-            for (i, arg) in module_args.iter().enumerate() {
-                let col_name = arg.value.to_lowercase();
-                columns.push(Column {
-                    name: col_name,
-                    dtype: ColumnType::String,
-                    primary_key: i == 0,
-                    not_null: false,
-                    default: None,
-                    auto_increment: false,
-                });
-            }
-            if columns.is_empty() {
-                return Err("CREATE VIRTUAL TABLE (fts5) requires at least one column".into());
-            }
-            let mut table = Table::new(table_name.clone(), columns)?;
-            // Add trigram index on first column for FTS queries
-            if !first_col.is_empty() {
-                let idx_name = format!("{}_{}_fts", table_name, first_col);
-                table
-                    .create_index(&idx_name, &first_col, A3IndexType::Trigram)
-                    .map_err(|e| format!("FTS index creation: {}", e))?;
-            }
-            db.create_table(&table_name, table)?;
-            Ok(format!("\"Virtual table '{}' created (fts5 -> trigram)\"", table_name))
-        }
-        other => Err(format!("Virtual table module '{}' not supported", other)),
-    }
-}
 
 // ── EXPLAIN ─────────────────────────────────────────────────────────────
 
