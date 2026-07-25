@@ -7,6 +7,8 @@ A3DB has two build steps: the **Rust extension** (native DLL/SO) and the **Arma 
 - [Rust](https://rustup.rs/) 1.80+ (stable)
 - [HEMTT](https://hemtt.dev/) 1.20+ — Arma addon build tool
 - [CBA_A3](https://github.com/CBATeam/CBA_A3) — for addon compilation (HEMTT dev dependencies)
+- [UV](https://docs.astral.sh/uv/) (recommended) — Python tooling runner
+- Wine or Proton (optional) — for code signing on Linux (see Code Signing below)
 
 ## Quick Build
 
@@ -52,14 +54,55 @@ cargo fmt --check             # formatting
 hemtt check                   # SQF + config validation
 ```
 
+## Developer Tooling
+
+### Python tools (UV)
+
+All development Python scripts are in `tools/`. Run with UV:
+
+```bash
+# Environment report
+uv run python3 tools/setup.py --report
+
+# SQF validation
+uv run python3 tools/sqf_validator.py addons/
+
+# Config style check
+uv run python3 tools/config_style_checker.py
+
+# Generate signing keys (requires Arma 3 Tools)
+uv run python3 tools/setup.py --keys
+```
+
+### Code Signing (BIKey)
+
+A3DB supports code signing via `DSSignFile.exe` (from Arma 3 Tools) running under Wine/Proton on Linux:
+
+```bash
+# Generate signing keys
+uv run python3 tools/setup.py --keys
+# Creates keys/a3db.bikey + keys/a3db.biprivatekey
+
+# HEMTT signs automatically during `hemtt release`
+# Config in .hemtt/project.toml → [hemtt.signing]
+```
+
+The signing key is configured in `.hemtt/project.toml`. On CI, use GitHub Secrets or an encrypted key file.
+
+### Steam Library Discovery
+
+`tools/proton.py` automatically finds Arma 3 via Steam VDF (`libraryfolders.vdf`), including Wine prefix and workshop paths. Used by `tools/setup.py` for file patching symlink setup.
+
 ## CI/CD
 
 GitHub Actions (`.github/workflows/ci.yml`) runs on push/PR to `main`:
 
-1. **test** — cargo test + clippy + rustfmt on ubuntu-latest
-2. **build-linux** — cross-compile for x86_64 and i686 Linux
-3. **build-windows** — cross-compile for x86_64 and i686 Windows (MinGW)
-4. **build-addon** — downloads all artifacts, runs `hemtt build`, outputs PBOs
+1. **validate** — SQF syntax validation + config style check + HEMTT check + BOM check
+2. **test** — cargo test + clippy + rustfmt on ubuntu-latest
+3. **build-linux** — cross-compile for x86_64 and i686 Linux
+4. **build-windows** — cross-compile for x86_64 and i686 Windows (MinGW)
+5. **build-addon** — downloads all artifacts, runs `hemtt build`, outputs PBOs
+6. **workshop** — publish to Steam Workshop (on release)
 
 On a release publish, it creates `a3db-release.zip` with the full addon.
 
