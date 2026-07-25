@@ -2,15 +2,15 @@
 
 use std::collections::{HashMap, HashSet};
 
-use sqlparser::ast::table_constraints::TableConstraint;
-use sqlparser::ast::{
-    BinaryOperator, ColumnOption, DataType, Expr, Function, FunctionArg, FunctionArgExpr, FunctionArguments,
-    LimitClause, ObjectName, ObjectType, OrderByKind, Query, ReferentialAction, Select, SelectItem, SetExpr, Statement,
-    TableFactor, TableWithJoins, UnaryOperator, Values, WindowFrame, WindowFrameBound, WindowFrameUnits, WindowType,
-};
-
 use super::table::ForeignKeyInfo;
 use super::table::IndexImpl;
+use sqlparser::ast::table_constraints::TableConstraint;
+use sqlparser::ast::{
+    BinaryOperator, ColumnOption, DataType, Expr, Function, FunctionArg, FunctionArgExpr, FunctionArguments, Ident,
+    LimitClause, Merge, MergeAction, MergeClauseKind, MergeInsertKind, ObjectName, ObjectType, OrderByKind, Query,
+    ReferentialAction, Select, SelectItem, SetExpr, SqliteOnConflict, Statement, TableFactor, TableWithJoins,
+    UnaryOperator, Values, WindowFrame, WindowFrameBound, WindowFrameUnits, WindowType,
+};
 
 use super::database::Database;
 use super::index::IndexType as A3IndexType;
@@ -22,6 +22,14 @@ use super::value::{Column, ColumnType, DbValue};
 thread_local! {
     static SUBQ_DB: std::cell::RefCell<Option<Database>> =
         const { std::cell::RefCell::new(None) };
+}
+
+// ponytail: global tracking for last_insert_rowid / changes (no db ref in eval path)
+thread_local! {
+    static LAST_INSERT_ROWID: std::cell::RefCell<Option<String>> =
+        const { std::cell::RefCell::new(None) };
+    static LAST_CHANGES: std::cell::RefCell<usize> =
+        const { std::cell::RefCell::new(0) };
 }
 
 // ── Public entry point ──────────────────────────────────────────────────
@@ -312,6 +320,17 @@ pub fn execute(stmt: &Statement, db: &mut Database) -> Result<String, String> {
             }
             explain_statement(inner, db)
         }
+        Statement::Merge(merge) => exec_merge(merge, db),
+        Statement::AttachDatabase { schema_name, .. } => {
+            let name = schema_name.to_string();
+            Ok(format!("\"Attached database '{}'\"", name))
+        }
+        Statement::CreateVirtualTable {
+            name,
+            if_not_exists,
+            module_name,
+            module_args,
+        } => exec_create_virtual_table(name, *if_not_exists, module_name, module_args, db),
         other => Err(format!("Statement not supported: {:?}", other)),
     }
 }
@@ -540,12 +559,11 @@ fn exec_insert(ins: &sqlparser::ast::Insert, db: &mut Database) -> Result<String
 
     // Parse source into expression rows — do this BEFORE borrowing table mutably
     // since SetExpr::Select needs a mutable db reference via exec_select.
-    let (rows, is_replace): (Vec<Vec<Expr>>, bool) = match &ins.source {
+    let on_conflict = ins.or;
+    let is_replace = matches!(on_conflict, Some(SqliteOnConflict::Replace)) || ins.replace_into;
+    let rows: Vec<Vec<Expr>> = match &ins.source {
         Some(q) => match &*q.as_ref().body {
-            SetExpr::Values(Values { rows, .. }) => (
-                rows.iter().map(|parens| parens.content.clone()).collect(),
-                ins.or.is_some() || crate::REPLACE_FLAG.load(std::sync::atomic::Ordering::SeqCst),
-            ),
+            SetExpr::Values(Values { rows, .. }) => rows.iter().map(|parens| parens.content.clone()).collect(),
             SetExpr::Select(s) => {
                 let sq = Query {
                     with: None,
@@ -579,14 +597,11 @@ fn exec_insert(ins: &sqlparser::ast::Insert, db: &mut Database) -> Result<String
                         .into(),
                     )
                 };
-                (
-                    parsed
-                        .iter()
-                        .skip(1)
-                        .map(|row| row.iter().map(to_val).collect())
-                        .collect(),
-                    ins.or.is_some(),
-                )
+                parsed
+                    .iter()
+                    .skip(1)
+                    .map(|row| row.iter().map(to_val).collect())
+                    .collect()
             }
             _ => return Err("INSERT source must be VALUES or SELECT".into()),
         },
@@ -749,6 +764,19 @@ fn exec_insert(ins: &sqlparser::ast::Insert, db: &mut Database) -> Result<String
             Err(e) => return Err(e),
         }
     }
+
+    // Track last_insert_rowid and changes
+    let last_pk = db.get_table(&table_name).ok().and_then(|t| {
+        let pk_idx = t.columns.iter().position(|c| c.primary_key)?;
+        inserted_rows
+            .last()
+            .and_then(|row| row.get(pk_idx))
+            .map(|v| v.to_string())
+    });
+    db.last_insert_rowid = last_pk;
+    db.last_changes = inserted;
+    LAST_INSERT_ROWID.with(|r| *r.borrow_mut() = db.last_insert_rowid.clone());
+    LAST_CHANGES.with(|c| *c.borrow_mut() = inserted);
 
     if let Some(returning) = &returning {
         let table = db.get_table(&table_name)?;
@@ -1706,8 +1734,11 @@ fn eval_expr_on_flat_row(expr: &Expr, row: &[DbValue], col_map: &HashMap<String,
     match expr {
         Expr::Identifier(ident) => {
             let name = ident.value.to_lowercase();
-            if name == "current_timestamp" || name == "current_date" || name == "current_time" {
+            if name == "current_timestamp" || name == "current_time" {
                 return Ok(now_value());
+            }
+            if name == "current_date" {
+                return Ok(curdate_value());
             }
             match col_map.get(&name) {
                 Some(&pos) => Ok(row[pos].clone()),
@@ -1844,7 +1875,7 @@ fn contains_aggregate(expr: &Expr) -> bool {
     match expr {
         Expr::Function(f) => {
             let name = f.name.to_string().to_lowercase();
-            matches!(name.as_str(), "count" | "sum" | "avg" | "min" | "max")
+            matches!(name.as_str(), "count" | "sum" | "avg" | "min" | "max" | "group_concat")
         }
         Expr::Nested(inner) => contains_aggregate(inner),
         _ => false,
@@ -1988,6 +2019,31 @@ fn eval_projection_expr(
         Expr::Function(f) => {
             let name = f.name.to_string().to_lowercase();
             match name.as_str() {
+                "group_concat" => {
+                    let arg = extract_func_arg(f)?;
+                    let separator = {
+                        // Check for second argument (separator)
+                        let sep = match &f.args {
+                            sqlparser::ast::FunctionArguments::List(list) if list.args.len() >= 2 => list
+                                .args
+                                .get(1)
+                                .and_then(|a| get_func_arg_unnamed(a).ok())
+                                .and_then(|e| eval_literal_expr(e).ok())
+                                .map(|v| value_to_string(&v)),
+                            _ => None,
+                        };
+                        sep.unwrap_or_else(|| ",".to_string())
+                    };
+                    let mut vals: Vec<String> = Vec::new();
+                    for r in rows {
+                        if let Ok(val) = eval_expr(arg, r, col_map) {
+                            if !matches!(val, DbValue::Null) {
+                                vals.push(value_to_string(&val));
+                            }
+                        }
+                    }
+                    Ok(("GROUP_CONCAT".to_string(), DbValue::String(vals.join(&separator))))
+                }
                 "count" => {
                     let is_distinct = matches!(
                         f.args,
@@ -2422,6 +2478,9 @@ fn exec_update(upd: &sqlparser::ast::Update, db: &mut Database) -> Result<String
     for (row_i, col_ci, val) in &validated_updates {
         t.update_cell(*row_i, *col_ci, val.clone());
     }
+    drop(t);
+    db.last_changes = validated_updates.len();
+    LAST_CHANGES.with(|c| *c.borrow_mut() = validated_updates.len());
 
     if let Some(returning) = &returning {
         let table = db.get_table(&table_name)?;
@@ -2590,6 +2649,9 @@ fn exec_delete(del: &sqlparser::ast::Delete, db: &mut Database) -> Result<String
         Some(expr) => table.delete(|row| eval_expr(&expr, row, &col_idx).map(|v| is_truthy(&v)).unwrap_or(false)),
         None => table.delete(|_| true),
     };
+    drop(table);
+    db.last_changes = count;
+    LAST_CHANGES.with(|c| *c.borrow_mut() = count);
 
     if let Some(returning) = &returning {
         let table = db.get_table(&table_name)?;
@@ -2607,8 +2669,11 @@ fn eval_expr(expr: &Expr, row: &[DbValue], col_map: &HashMap<String, usize>) -> 
     match expr {
         Expr::Identifier(ident) => {
             let name = ident.value.to_lowercase();
-            if name == "current_timestamp" || name == "current_date" || name == "current_time" {
+            if name == "current_timestamp" || name == "current_time" {
                 return Ok(now_value());
+            }
+            if name == "current_date" {
+                return Ok(curdate_value());
             }
             let idx = col_map.get(&name).ok_or_else(|| format!("Unknown column '{}'", name))?;
             Ok(row[*idx].clone())
@@ -2869,6 +2934,69 @@ fn extract_func_args(func: &Function) -> Vec<DbValue> {
     args
 }
 
+/// Return current date as YYYY-MM-DD string.
+fn curdate_value() -> DbValue {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
+    let z = secs / 86400 + 719468;
+    let era = z as i64 / 146097;
+    let doe = z as i64 - era * 146097;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    DbValue::String(format!("{y:04}-{m:02}-{d:02}"))
+}
+
+/// Parse an ISO 8601 date/datetime string into (year, month, day, hour, min, sec).
+fn parse_iso_date(s: &str) -> Option<(i64, i64, i64, i64, i64, i64)> {
+    let s = s.trim();
+    let (date_part, time_part) = if let Some(pos) = s.find('T').or_else(|| s.find(' ')) {
+        (&s[..pos], Some(&s[pos + 1..]))
+    } else {
+        (s, None)
+    };
+    let parts: Vec<&str> = date_part.split('-').collect();
+    if parts.len() != 3 {
+        return None;
+    }
+    let year = parts[0].parse::<i64>().ok()?;
+    let month = parts[1].parse::<i64>().ok()?;
+    let day = parts[2].parse::<i64>().ok()?;
+    let (hour, min, sec) = match time_part {
+        Some(tp) => {
+            let t: Vec<&str> = tp.split(':').collect();
+            let h = t.first().and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
+            let m = t.get(1).and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
+            let s = t
+                .get(2)
+                .and_then(|s| {
+                    let clean = s.split('.').next().unwrap_or(s);
+                    clean.parse::<i64>().ok()
+                })
+                .unwrap_or(0);
+            (h, m, s)
+        }
+        None => (0, 0, 0),
+    };
+    Some((year, month, day, hour, min, sec))
+}
+
+/// Compute days since epoch (1970-01-01) from date parts.
+fn date_to_days(y: i64, m: i64, d: i64) -> i64 {
+    let (adj_m, adj_y) = if m <= 2 { (m + 9, y - 1) } else { (m - 3, y) };
+    let era = if adj_y >= 0 { adj_y / 400 } else { (adj_y - 399) / 400 };
+    let yoe = adj_y - era * 400;
+    let doy = (153 * adj_m + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146097 + doe - 719468
+}
+
 /// Return the current timestamp as a DbValue (ISO 8601 format).
 fn now_value() -> DbValue {
     let secs = std::time::SystemTime::now()
@@ -2984,6 +3112,7 @@ fn exec_std_function(
             }
         }
         "now" | "current_timestamp" => Ok(now_value()),
+        "curdate" | "current_date" => Ok(curdate_value()),
         "concat" => {
             let mut result = String::new();
             for a in args {
@@ -2991,6 +3120,67 @@ fn exec_std_function(
                 result.push_str(&value_to_string(&v));
             }
             Ok(DbValue::String(result))
+        }
+        "last_insert_rowid" => {
+            let rowid = LAST_INSERT_ROWID.with(|r| r.borrow().clone());
+            Ok(DbValue::String(rowid.unwrap_or_else(|| "0".to_string())))
+        }
+        "changes" => {
+            let n = LAST_CHANGES.with(|c| *c.borrow());
+            Ok(DbValue::Int(n as i64))
+        }
+        "unix_timestamp" => {
+            if args.is_empty() {
+                let secs = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                Ok(DbValue::Int(secs as i64))
+            } else {
+                let vals = eval_args(1)?;
+                let s = value_to_string(&vals[0]);
+                if let Some((y, m, d, h, mi, sec)) = parse_iso_date(&s) {
+                    let days = date_to_days(y, m, d);
+                    Ok(DbValue::Int(days * 86400 + h * 3600 + mi * 60 + sec))
+                } else {
+                    Err(format!("Cannot parse date: '{}'", s))
+                }
+            }
+        }
+        "date_format" => {
+            let vals = eval_args(2)?;
+            let s = value_to_string(&vals[0]);
+            let fmt = value_to_string(&vals[1]);
+            let (y, m, d, h, mi, sec) = parse_iso_date(&s).ok_or_else(|| format!("Cannot parse date: '{}'", s))?;
+            let mut result = String::new();
+            let mut chars = fmt.chars();
+            while let Some(c) = chars.next() {
+                if c == '%' {
+                    match chars.next() {
+                        Some('Y') => result.push_str(&format!("{:04}", y)),
+                        Some('m') => result.push_str(&format!("{:02}", m)),
+                        Some('d') => result.push_str(&format!("{:02}", d)),
+                        Some('H') => result.push_str(&format!("{:02}", h)),
+                        Some('M') => result.push_str(&format!("{:02}", mi)),
+                        Some('S') => result.push_str(&format!("{:02}", sec)),
+                        Some(o) => result.push(o),
+                        None => result.push('%'),
+                    }
+                } else {
+                    result.push(c);
+                }
+            }
+            Ok(DbValue::String(result))
+        }
+        "datediff" => {
+            let vals = eval_args(2)?;
+            let s1 = value_to_string(&vals[0]);
+            let s2 = value_to_string(&vals[1]);
+            let (y1, m1, d1, _, _, _) = parse_iso_date(&s1).ok_or_else(|| format!("Cannot parse date: '{}'", s1))?;
+            let (y2, m2, d2, _, _, _) = parse_iso_date(&s2).ok_or_else(|| format!("Cannot parse date: '{}'", s2))?;
+            let days1 = date_to_days(y1, m1, d1);
+            let days2 = date_to_days(y2, m2, d2);
+            Ok(DbValue::Int(days1 - days2))
         }
         _ => Err(format!("Unknown function '{}'", name)),
     }
@@ -3061,6 +3251,18 @@ fn apply_binary_op(left: &DbValue, op: &BinaryOperator, right: &DbValue) -> Resu
             value_to_string(left),
             value_to_string(right)
         ))),
+        BinaryOperator::Regexp => {
+            let s = value_to_string(left);
+            let pat = value_to_string(right);
+            let val: Vec<char> = s.chars().collect();
+            let p: Vec<char> = pat.chars().collect();
+            Ok(DbValue::Bool(wildcard_match(&val, &p, 0, 0)))
+        }
+        BinaryOperator::Match => {
+            let s = value_to_string(left);
+            let pat = value_to_string(right);
+            Ok(DbValue::Bool(s.to_lowercase().contains(&pat.to_lowercase())))
+        }
         _ => Err(format!("Unsupported operator: {:?}", op)),
     }
 }
@@ -3784,6 +3986,251 @@ fn fire_triggers(_table_name: &str, event: &str, db: &mut Database) {
     }
 }
 
+// ── MERGE ───────────────────────────────────────────────────────────────
+
+fn exec_merge(merge: &Merge, db: &mut Database) -> Result<String, String> {
+    // Resolve source table or subquery
+    let (source_name, source_table) = resolve_table_factor(&merge.source, db)?;
+    let source_rows = source_table.rows.clone();
+    let source_col_count = source_table.columns.len();
+
+    // Target must be a simple table reference
+    let target_name = match &merge.table {
+        TableFactor::Table { name, .. } => object_name_str(name),
+        _ => return Err("MERGE: target must be a simple table".into()),
+    };
+    let target_info = db.get_table(&target_name)?.clone();
+    let target_col_count = target_info.columns.len();
+    let target_col_index = target_info.col_index.clone();
+
+    // Build combined column map: source cols first, then target cols
+    let mut col_map: HashMap<String, usize> = HashMap::new();
+    for (ci, col) in source_table.columns.iter().enumerate() {
+        col_map.insert(format!("{}.{}", source_name, col.name), ci);
+        col_map.insert(col.name.clone(), ci);
+    }
+    for (ci, col) in target_info.columns.iter().enumerate() {
+        let abs = source_col_count + ci;
+        col_map.insert(format!("{}.{}", target_name, col.name), abs);
+        col_map.insert(col.name.clone(), abs);
+    }
+
+    // Find WHEN MATCHED and WHEN NOT MATCHED clauses (no predicate → always applies)
+    let matched_clause = merge.clauses.iter().find(|c| c.clause_kind == MergeClauseKind::Matched);
+    let not_matched_clause = merge
+        .clauses
+        .iter()
+        .find(|c| c.clause_kind == MergeClauseKind::NotMatched);
+
+    let mut matched_count = 0usize;
+    let mut inserted_count = 0usize;
+
+    let on_expr = &merge.on;
+
+    for src_row in &source_rows {
+        // Find matching target rows by evaluating ON(source, target)
+        let t = db.get_table(&target_name)?;
+        let mut matched_indices: Vec<usize> = Vec::new();
+        for (ti, tgt_row) in t.rows.iter().enumerate() {
+            let mut combined: Vec<DbValue> = src_row.clone();
+            combined.extend(tgt_row.iter().cloned());
+            if is_truthy(&eval_expr(on_expr, &combined, &col_map)?) {
+                matched_indices.push(ti);
+            }
+        }
+        drop(t);
+
+        if !matched_indices.is_empty() {
+            if let Some(clause) = matched_clause {
+                // Check the clause-level predicate if present
+                if let Some(pred) = &clause.predicate {
+                    // Evaluate predicate on the first matched row (combined context)
+                    let t = db.get_table(&target_name)?;
+                    let ti = matched_indices[0];
+                    let combined: Vec<DbValue> = {
+                        let mut c = src_row.clone();
+                        c.extend(t.rows[ti].iter().cloned());
+                        c
+                    };
+                    drop(t);
+                    if !is_truthy(&eval_expr(pred, &combined, &col_map)?) {
+                        continue;
+                    }
+                }
+                match &clause.action {
+                    MergeAction::Update(upd) => {
+                        let t = db.get_table_mut(&target_name)?;
+                        for &ti in &matched_indices {
+                            if ti < t.rows.len() {
+                                let combined: Vec<DbValue> = {
+                                    let mut c = src_row.clone();
+                                    c.extend(t.rows[ti].clone());
+                                    c
+                                };
+                                for assign in &upd.assignments {
+                                    let col_name = assign.target.to_string().to_lowercase();
+                                    if let Some(&ci) = target_col_index.get(&col_name) {
+                                        t.rows[ti][ci] = eval_expr(&assign.value, &combined, &col_map)?;
+                                    }
+                                }
+                                t.rebuild_index();
+                            }
+                        }
+                        matched_count += matched_indices.len();
+                    }
+                    MergeAction::Delete { .. } => {
+                        let t = db.get_table_mut(&target_name)?;
+                        // Remove from highest index first to preserve ordering
+                        let mut sorted: Vec<usize> = matched_indices.clone();
+                        sorted.sort_unstable_by(|a, b| b.cmp(a));
+                        for ti in sorted {
+                            if ti < t.rows.len() {
+                                t.rows.remove(ti);
+                            }
+                        }
+                        t.rebuild_index();
+                        matched_count += matched_indices.len();
+                    }
+                    MergeAction::Insert(_) => {
+                        // WHEN MATCHED THEN INSERT is unusual — count as matched
+                        matched_count += matched_indices.len();
+                    }
+                }
+            }
+        } else if let Some(clause) = not_matched_clause {
+            // Check the clause-level predicate if present
+            if let Some(pred) = &clause.predicate {
+                if !is_truthy(&eval_expr(pred, src_row, &source_table.col_index)?) {
+                    continue;
+                }
+            }
+            if let MergeAction::Insert(ins) = &clause.action {
+                // Evaluate insert values using source context + dummy target row
+                let dummy_target: Vec<DbValue> = (0..target_col_count).map(|_| DbValue::Null).collect();
+
+                match &ins.kind {
+                    MergeInsertKind::Values(values) => {
+                        for row_exprs in &values.rows {
+                            let mut full_row: Vec<DbValue> = (0..target_col_count).map(|_| DbValue::Null).collect();
+                            if ins.columns.is_empty() {
+                                // Values correspond 1:1 with target columns
+                                for (j, expr) in row_exprs.content.iter().enumerate() {
+                                    if j < target_col_count {
+                                        let combined: Vec<DbValue> = {
+                                            let mut c = src_row.clone();
+                                            c.extend(dummy_target.clone());
+                                            c
+                                        };
+                                        full_row[j] = eval_expr(expr, &combined, &col_map).unwrap_or(DbValue::Null);
+                                    }
+                                }
+                            } else {
+                                // Map explicit column names
+                                let mut col_indices: Vec<usize> = Vec::new();
+                                for cn in &ins.columns {
+                                    let name = object_name_str(cn);
+                                    if let Some(&idx) = target_col_index.get(&name) {
+                                        col_indices.push(idx);
+                                    } else {
+                                        return Err(format!("MERGE: unknown target column '{}'", name));
+                                    }
+                                }
+                                for (j, expr) in row_exprs.content.iter().enumerate() {
+                                    if j < col_indices.len() {
+                                        let combined: Vec<DbValue> = {
+                                            let mut c = src_row.clone();
+                                            c.extend(dummy_target.clone());
+                                            c
+                                        };
+                                        full_row[col_indices[j]] =
+                                            eval_expr(expr, &combined, &col_map).unwrap_or(DbValue::Null);
+                                    }
+                                }
+                            }
+                            let t = db.get_table_mut(&target_name)?;
+                            t.insert(full_row).map_err(|e| format!("MERGE insert: {}", e))?;
+                            inserted_count += 1;
+                        }
+                    }
+                    MergeInsertKind::Row => {
+                        // ponytail: INSERT ROW — use source row directly if column counts match
+                        if src_row.len() != target_col_count {
+                            return Err(format!(
+                                "MERGE INSERT ROW: source has {} columns but target has {}",
+                                src_row.len(),
+                                target_col_count
+                            ));
+                        }
+                        let t = db.get_table_mut(&target_name)?;
+                        t.insert(src_row.clone())
+                            .map_err(|e| format!("MERGE insert row: {}", e))?;
+                        inserted_count += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    fire_triggers(&target_name, "INSERT", db);
+    fire_triggers(&target_name, "UPDATE", db);
+    fire_triggers(&target_name, "DELETE", db);
+    Ok(format!(
+        "\"Merge completed: {} matched, {} inserted\"",
+        matched_count, inserted_count
+    ))
+}
+
+// ── CREATE VIRTUAL TABLE ─────────────────────────────────────────────────
+
+fn exec_create_virtual_table(
+    name: &ObjectName,
+    if_not_exists: bool,
+    module_name: &Ident,
+    module_args: &[Ident],
+    db: &mut Database,
+) -> Result<String, String> {
+    let table_name = object_name_str(name);
+    let module = module_name.to_string().to_lowercase();
+
+    if if_not_exists && db.has_table(&table_name) {
+        return Ok(format!("\"Table '{}' already exists\"", table_name));
+    }
+
+    match module.as_str() {
+        "fts5" => {
+            // ponytail: bridge SQLite FTS5 syntax to a3sql's built-in trigram FTS.
+            // Create a regular table with STRING columns, trigram index on first column.
+            let mut columns: Vec<Column> = Vec::new();
+            let first_col = module_args.first().map(|a| a.value.to_lowercase()).unwrap_or_default();
+            for (i, arg) in module_args.iter().enumerate() {
+                let col_name = arg.value.to_lowercase();
+                columns.push(Column {
+                    name: col_name,
+                    dtype: ColumnType::String,
+                    primary_key: i == 0,
+                    not_null: false,
+                    default: None,
+                    auto_increment: false,
+                });
+            }
+            if columns.is_empty() {
+                return Err("CREATE VIRTUAL TABLE (fts5) requires at least one column".into());
+            }
+            let mut table = Table::new(table_name.clone(), columns)?;
+            // Add trigram index on first column for FTS queries
+            if !first_col.is_empty() {
+                let idx_name = format!("{}_{}_fts", table_name, first_col);
+                table
+                    .create_index(&idx_name, &first_col, A3IndexType::Trigram)
+                    .map_err(|e| format!("FTS index creation: {}", e))?;
+            }
+            db.create_table(&table_name, table)?;
+            Ok(format!("\"Virtual table '{}' created (fts5 -> trigram)\"", table_name))
+        }
+        other => Err(format!("Virtual table module '{}' not supported", other)),
+    }
+}
+
 // ── EXPLAIN ─────────────────────────────────────────────────────────────
 
 /// Generate an EXPLAIN plan description as a JSON array of plan nodes.
@@ -4002,6 +4449,23 @@ fn explain_statement(stmt: &Statement, db: &Database) -> Result<String, String> 
             serde_json::to_string(&[plan]).map_err(|e| e.to_string())
         }
 
+        Statement::Merge(merge) => {
+            let tname = format!("{}", merge.table);
+            let plan = json!({"type": "Merge", "target": tname, "clauses": merge.clauses.len()});
+            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
+        }
+
+        Statement::AttachDatabase { schema_name, .. } => {
+            let plan = json!({"type": "AttachDatabase", "schema": schema_name.to_string()});
+            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
+        }
+
+        Statement::CreateVirtualTable { name, module_name, .. } => {
+            let plan =
+                json!({"type": "CreateVirtualTable", "table": name.to_string(), "module": module_name.to_string()});
+            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
+        }
+
         // Fallback for unsupported statement types — show the SQL text
         other => {
             let plan = json!({"type": format!("{}", other)});
@@ -4036,6 +4500,33 @@ fn like_match(val: &[char], pat: &[char], vi: usize, pi: usize) -> bool {
         '_' => vi < val.len() && like_match(val, pat, vi + 1, pi + 1),
         c => vi < val.len() && val[vi] == c && like_match(val, pat, vi + 1, pi + 1),
     }
+}
+
+/// Simple wildcard matching: `*` matches any sequence, `?` matches single char.
+fn wildcard_match(val: &[char], pat: &[char], vi: usize, pi: usize) -> bool {
+    if pi == pat.len() {
+        return vi == val.len();
+    }
+    match pat[pi] {
+        '*' => {
+            let mut vi2 = vi;
+            while vi2 <= val.len() {
+                if wildcard_match(val, pat, vi2, pi + 1) {
+                    return true;
+                }
+                vi2 += 1;
+            }
+            false
+        }
+        '?' => vi < val.len() && wildcard_match(val, pat, vi + 1, pi + 1),
+        c => vi < val.len() && val[vi] == c && wildcard_match(val, pat, vi + 1, pi + 1),
+    }
+}
+
+fn simple_wildcard(value: &str, pattern: &str) -> bool {
+    let val: Vec<char> = value.chars().collect();
+    let pat: Vec<char> = pattern.chars().collect();
+    wildcard_match(&val, &pat, 0, 0)
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────
