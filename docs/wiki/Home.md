@@ -19,6 +19,7 @@ _result = ["SELECT name, score FROM players WHERE score > 1000 ORDER BY score DE
 - **[TCP Connector](TCP-Connector)** — External query access
 - **[Standalone Server](Standalone-Server)** — Run without Arma, remote mode
 - **[Plugins](Plugins)** — Extend A3DB with Rust, C, or SQF plugins
+- **[Development Setup](Development-Setup)** — Full dev environment guide
 - **[Building](Building)** — Compiling the extension and addon
 
 ## Status
@@ -28,6 +29,8 @@ _result = ["SELECT name, score FROM players WHERE score > 1000 ORDER BY score DE
 | SQL engine | 162 tests passing |
 | CBA addon | HEMTT check clean |
 | Linting | Clippy clean |
-| CI/CD | GitHub Actions |
+| CI/CD | GitHub Actions — cargo test, SQF validation, BOM check |
 | Cross-platform | Linux x86_64/i686, Windows x86_64/i686 |
+| Signing | DSSignFile via Wine/Proton on Linux |
+| Plugins | Rust trait, C ABI dynamic, SQF registration |
 | Security | Parameterized queries, TCP LOGIN |
