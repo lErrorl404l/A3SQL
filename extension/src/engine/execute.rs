@@ -2585,8 +2585,49 @@ fn exec_function(func: &Function, row: &[DbValue], col_map: &HashMap<String, usi
     match name.as_str() {
         "fuzzy_match" => exec_fuzzy_match(func, row, col_map),
         "fts_score" => exec_fts_score(func, row, col_map),
-        _ => exec_std_function(func, name, row, col_map),
+        _ => {
+            // Check plugin registry for fn_ prefixed functions
+            if name.starts_with("fn_") {
+                let fn_name = &name[3..];
+                if let Some((pfunc, _plugin)) = crate::engine::plugin::lookup_function(fn_name) {
+                    let args = extract_func_args(func);
+                    if args.len() < pfunc.min_args {
+                        return Err(format!(
+                            "{}: expected {} args, got {}",
+                            fn_name,
+                            pfunc.min_args,
+                            args.len()
+                        ));
+                    }
+                    return (pfunc.func)(&args);
+                }
+                return Err(format!("Unknown plugin function '{}'", fn_name));
+            }
+            exec_std_function(func, name, row, col_map)
+        }
     }
+}
+
+/// Extract function arguments as Vec<DbValue> for plugin dispatch.
+fn extract_func_args(func: &Function) -> Vec<DbValue> {
+    let mut args = Vec::new();
+    if let sqlparser::ast::FunctionArguments::List(list) = &func.args {
+        for arg in &list.args {
+            if let sqlparser::ast::FunctionArg::Unnamed(ua) = arg {
+                if let sqlparser::ast::FunctionArgExpr::Expr(expr) = ua {
+                    // ponytail: can't evaluate without context, so pass raw SQL name
+                    args.push(DbValue::String(format!("{:?}", expr)));
+                } else if let sqlparser::ast::FunctionArgExpr::Wildcard = ua {
+                    args.push(DbValue::String("*".into()));
+                }
+            } else if let sqlparser::ast::FunctionArg::Named { arg: ua, .. } = arg {
+                if let sqlparser::ast::FunctionArgExpr::Expr(expr) = ua {
+                    args.push(DbValue::String(format!("{:?}", expr)));
+                }
+            }
+        }
+    }
+    args
 }
 
 /// Return the current timestamp as a DbValue (ISO 8601 format).
