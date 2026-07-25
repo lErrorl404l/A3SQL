@@ -4,14 +4,14 @@ use std::fmt;
 
 /// Structured error with a machine-readable code and human-readable message.
 #[derive(Debug, Clone)]
-pub struct A3dbError {
+pub struct A3sqlError {
     pub code: ErrorCode,
     pub message: String,
 }
 
-impl A3dbError {
+impl A3sqlError {
     pub fn new(code: ErrorCode, msg: impl Into<String>) -> Self {
-        A3dbError {
+        A3sqlError {
             code,
             message: msg.into(),
         }
@@ -23,16 +23,16 @@ impl A3dbError {
     }
 }
 
-impl fmt::Display for A3dbError {
+impl fmt::Display for A3sqlError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}: {}", self.code, self.message)
     }
 }
 
-impl From<(&str, String)> for A3dbError {
+impl From<(&str, String)> for A3sqlError {
     fn from((code, msg): (&str, String)) -> Self {
         let ec = ErrorCode::from_str(code).unwrap_or(ErrorCode::Internal);
-        A3dbError::new(ec, msg)
+        A3sqlError::new(ec, msg)
     }
 }
 

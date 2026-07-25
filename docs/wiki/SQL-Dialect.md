@@ -462,8 +462,8 @@ a3sql/
 │   ├── .cargo/config.toml      # Cross-compilation linkers
 │   └── src/
 │       ├── lib.rs              # C ABI (RVExtension, RVExtensionArgs, RVExtensionVersion)
-│       ├── parser/             # SQL parser (sqlparser-rs + custom A3DbDialect)
-│       │   ├── dialect.rs      # A3DbDialect (GenericDialect-based, multi-dialect)
+│       ├── parser/             # SQL parser (sqlparser-rs + custom A3sqlDialect)
+│       │   ├── dialect.rs      # A3sqlDialect (GenericDialect-based, multi-dialect)
 │       │   ├── preprocessor.rs # %% → fuzzy_match(), string-literal-aware
 │       │   └── mod.rs          # parse_sql() entry point
 │       └── engine/             # In-memory database engine

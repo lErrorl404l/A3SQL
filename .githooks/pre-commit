@@ -1,5 +1,5 @@
 #!/bin/bash
-# a3db pre-commit hook — fast checks only
+# a3sql pre-commit hook — fast checks only
 set -euo pipefail
 
 ROOT="$(git rev-parse --show-toplevel)"

@@ -7,10 +7,10 @@ use sqlparser::ast::Statement;
 use sqlparser::parser::ParserError;
 
 /// Parse SQL string into a vec of sqlparser Statements.
-/// Runs preprocessor first (%% → fuzzy_match, etc.), then parses with A3DbDialect.
+/// Runs preprocessor first (%% → fuzzy_match, etc.), then parses with A3sqlDialect.
 pub fn parse_sql(sql: &str) -> Result<Vec<Statement>, ParserError> {
     let cleaned = preprocessor::preprocess(sql);
-    let dialect = dialect::A3DbDialect;
+    let dialect = dialect::A3sqlDialect;
     sqlparser::parser::Parser::parse_sql(&dialect, &cleaned)
 }
 

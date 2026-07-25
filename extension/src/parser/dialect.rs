@@ -1,4 +1,4 @@
-// A3DbDialect — custom SQL dialect for a3sql
+// A3sqlDialect — custom SQL dialect for a3sql
 //
 // Extends GenericDialect (most permissive) with:
 //   - %% fuzzy match operator   → handled via preprocessor → fuzzy_match()
@@ -23,9 +23,9 @@ use std::any::TypeId;
 /// delegating everything to GenericDialect's default behavior.
 /// Custom syntax (IMPORT, EXPORT) is handled at the dispatch layer.
 #[derive(Debug, Default)]
-pub struct A3DbDialect;
+pub struct A3sqlDialect;
 
-impl Dialect for A3DbDialect {
+impl Dialect for A3sqlDialect {
     /// Report as GenericDialect so sqlparser enables MySQL features like AUTO_INCREMENT.
     fn dialect(&self) -> TypeId {
         TypeId::of::<GenericDialect>()
