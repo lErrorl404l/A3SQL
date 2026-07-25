@@ -1,10 +1,12 @@
 use super::super::database::Database;
-use super::super::table::Table;
+use super::super::index::IndexType as A3IndexType;
+use super::super::table::{ForeignKeyInfo, Table};
 use super::super::value::{Column, ColumnType, DbValue};
+use sqlparser::ast::table_constraints::TableConstraint;
 use sqlparser::ast::{
-    Analyze, CopySource, CopyTarget, DataType, Function, Ident, Merge, MergeAction, MergeClauseKind, MergeInsertExpr,
-    MergeUpdateExpr, ObjectName, ObjectNamePart, SequenceOptions, ShowCreateObject, ShowStatementOptions,
-    VacuumStatement,
+    Analyze, ColumnOption, CopySource, CopyTarget, CreateIndex, CreateTrigger, DataType, Expr, Function, Ident, Merge,
+    MergeAction, MergeClauseKind, MergeUpdateExpr, ObjectName, ObjectNamePart, SequenceOptions, ShowCreateObject,
+    ShowStatementOptions, TriggerEvent, TriggerPeriod, VacuumStatement,
 };
 
 fn object_name_str(name: &ObjectName) -> String {
@@ -95,7 +97,7 @@ pub(crate) fn exec_merge(merge: &Merge, db: &mut Database) -> Result<String, Str
     let src = db.get_table(&source)?;
     let src_rows = src.rows.clone();
     let src_cols: Vec<String> = src.columns.iter().map(|c| c.name.clone()).collect();
-    drop(src);
+    let _ = src;
     let mut matched = 0u64;
     let mut inserted = 0u64;
     let tgt = db.get_table_mut(&target)?;
@@ -169,7 +171,7 @@ pub(crate) fn exec_merge(merge: &Merge, db: &mut Database) -> Result<String, Str
 pub(crate) fn exec_vacuum(v: &VacuumStatement, db: &mut Database) -> Result<String, String> {
     let tables: Vec<String> = db.table_names().iter().map(|s| s.to_string()).collect();
     for tn in tables {
-        if let Ok(mut t) = db.get_table_mut(&tn) {
+        if let Ok(t) = db.get_table_mut(&tn) {
             t.rebuild_index();
         }
     }
@@ -233,7 +235,7 @@ pub(crate) fn exec_comment_on(
     Ok("\"COMMENT (stored)\"".into())
 }
 
-pub(crate) fn exec_call(func: &Function, db: &mut Database) -> Result<String, String> {
+pub(crate) fn exec_call(func: &Function, _db: &mut Database) -> Result<String, String> {
     let empty = Vec::new();
     let empty_map = std::collections::HashMap::new();
     match super::super::execute::exec_function(func, &empty, &empty_map) {
@@ -289,7 +291,7 @@ pub(crate) fn exec_create_virtual_table(
         return Err("ftsX requires columns".into());
     }
     let mut table = Table::new(tn.clone(), cols).map_err(|e| format!("CREATE VIRTUAL TABLE: {}", e))?;
-    for (i, cn) in module_args.iter().enumerate() {
+    for (_i, cn) in module_args.iter().enumerate() {
         let _ = table.create_index(
             &format!("fts_trgm_{}", cn.value.to_lowercase()),
             &cn.value.to_lowercase(),
@@ -298,4 +300,381 @@ pub(crate) fn exec_create_virtual_table(
     }
     db.add_table(tn.clone(), table);
     Ok(format!("\"Virtual table '{}' created (FTS trigram)\"", tn))
+}
+
+// ── Helper functions ────────────────────────────────────────────────────
+
+fn parse_data_type(dt: &DataType) -> Result<ColumnType, String> {
+    match dt {
+        DataType::Int(_)
+        | DataType::Integer(_)
+        | DataType::BigInt(_)
+        | DataType::SmallInt(_)
+        | DataType::TinyInt(_) => Ok(ColumnType::Int),
+        DataType::Float(_)
+        | DataType::Double(_)
+        | DataType::Real
+        | DataType::Decimal(_)
+        | DataType::Dec(_)
+        | DataType::Numeric(_) => Ok(ColumnType::Float),
+        DataType::String(_) | DataType::Text | DataType::Varchar(_) | DataType::Char(_) | DataType::Uuid => {
+            Ok(ColumnType::String)
+        }
+        DataType::Boolean | DataType::Bool => Ok(ColumnType::Bool),
+        DataType::Array(elem) => {
+            use sqlparser::ast::ArrayElemTypeDef;
+            let inner = match elem {
+                ArrayElemTypeDef::SquareBracket(dt, _) => dt.as_ref(),
+                ArrayElemTypeDef::AngleBracket(dt) => dt.as_ref(),
+                ArrayElemTypeDef::Parenthesis(dt) => dt.as_ref(),
+                ArrayElemTypeDef::None => return Ok(ColumnType::Strings),
+            };
+            match inner {
+                DataType::String(_) | DataType::Varchar(_) | DataType::Text | DataType::Char(_) => {
+                    Ok(ColumnType::Strings)
+                }
+                DataType::Float(_) | DataType::Double(_) | DataType::Real => Ok(ColumnType::Floats),
+                _ if inner.to_string().to_lowercase() == "string" => Ok(ColumnType::Strings),
+                _ => Err(format!("Unsupported array element type: {}", inner)),
+            }
+        }
+        DataType::Custom(name, _) => {
+            let s = name.to_string().to_uppercase();
+            match s.as_str() {
+                "STRINGS" => Ok(ColumnType::Strings),
+                "FLOATS" => Ok(ColumnType::Floats),
+                "STRING" => Ok(ColumnType::String),
+                "INT" | "INTEGER" | "BIGINT" | "TINYINT" | "SMALLINT" => Ok(ColumnType::Int),
+                "FLOAT" | "DOUBLE" => Ok(ColumnType::Float),
+                "BOOL" | "BOOLEAN" => Ok(ColumnType::Bool),
+                _ => Err(format!("Unknown custom type '{}'", s)),
+            }
+        }
+        _ => Err(format!("Unsupported data type: {:?}", dt)),
+    }
+}
+
+fn sql_val_to_db(v: &sqlparser::ast::Value) -> DbValue {
+    match v {
+        sqlparser::ast::Value::Null => DbValue::Null,
+        sqlparser::ast::Value::Boolean(b) => DbValue::Bool(*b),
+        sqlparser::ast::Value::Number(s, _) => {
+            if s.contains('.') {
+                s.parse::<f64>()
+                    .map(DbValue::Float)
+                    .unwrap_or(DbValue::String(s.clone()))
+            } else {
+                s.parse::<i64>().map(DbValue::Int).unwrap_or(DbValue::String(s.clone()))
+            }
+        }
+        sqlparser::ast::Value::SingleQuotedString(s) | sqlparser::ast::Value::DoubleQuotedString(s) => {
+            DbValue::String(s.clone())
+        }
+        _ => DbValue::String(format!("{:?}", v)),
+    }
+}
+
+fn json_val_to_dbvalue(v: &serde_json::Value) -> DbValue {
+    match v {
+        serde_json::Value::Null => DbValue::Null,
+        serde_json::Value::Bool(b) => DbValue::Bool(*b),
+        serde_json::Value::Number(n) => n
+            .as_i64()
+            .map(DbValue::Int)
+            .or_else(|| n.as_f64().map(DbValue::Float))
+            .unwrap_or(DbValue::Null),
+        serde_json::Value::String(s) => DbValue::String(s.clone()),
+        _ => DbValue::String(v.to_string()),
+    }
+}
+
+// ── CREATE TABLE ────────────────────────────────────────────────────────
+
+pub(crate) fn exec_create_table(def: &sqlparser::ast::CreateTable, db: &mut Database) -> Result<String, String> {
+    let table_name = object_name_str(&def.name);
+
+    if def.if_not_exists && db.has_table(&table_name) {
+        return Ok(format!("\"Table '{}' already exists\"", table_name));
+    }
+
+    let mut columns: Vec<Column> = Vec::new();
+    let mut has_pk = false;
+    let mut check_exprs: Vec<Expr> = Vec::new();
+
+    for col_def in &def.columns {
+        let col_name = col_def.name.value.to_lowercase();
+        let dtype = parse_data_type(&col_def.data_type)?;
+
+        let mut is_pk = false;
+        let mut is_not_null = false;
+        let mut default_val: Option<DbValue> = None;
+        let mut auto_inc = false;
+        for opt_def in &col_def.options {
+            match &opt_def.option {
+                ColumnOption::PrimaryKey(_) | ColumnOption::Unique { .. } => is_pk = true,
+                ColumnOption::NotNull => is_not_null = true,
+                ColumnOption::DialectSpecific(tokens) => {
+                    let has_auto = tokens.iter().any(|t| {
+                        let s = t.to_string().to_lowercase().replace('"', "");
+                        s == "auto_increment" || s == "autoincrement"
+                    });
+                    if has_auto {
+                        is_pk = true;
+                        auto_inc = true;
+                    }
+                }
+                ColumnOption::Default(expression) => {
+                    // Evaluate default expression (literal only)
+                    match expression {
+                        Expr::Value(v) => default_val = Some(sql_val_to_db(&v.value)),
+                        _ => return Err("DEFAULT only supports literal values".into()),
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if is_pk {
+            if has_pk {
+                return Err("Only one primary key column supported".into());
+            }
+            has_pk = true;
+        }
+
+        columns.push(Column {
+            name: col_name,
+            dtype,
+            primary_key: is_pk,
+            not_null: is_not_null,
+            default: default_val,
+            auto_increment: auto_inc,
+        });
+    }
+
+    // Table-level PRIMARY KEY constraints — Display-based detection
+    // Collect CHECK constraints from column-level options
+    for col_def in &def.columns {
+        for opt_def in &col_def.options {
+            if let ColumnOption::Check(check) = &opt_def.option {
+                check_exprs.push(*check.expr.clone());
+            }
+        }
+    }
+
+    // Collect FOREIGN KEY constraints from both column and table level
+    let mut foreign_keys: Vec<ForeignKeyInfo> = Vec::new();
+    for col_def in &def.columns {
+        let col_name = col_def.name.value.to_lowercase();
+        for opt_def in &col_def.options {
+            if let ColumnOption::ForeignKey(fk) = &opt_def.option {
+                let local_col = fk
+                    .columns
+                    .first()
+                    .map(|c| c.value.to_lowercase())
+                    .unwrap_or_else(|| col_name.clone());
+                foreign_keys.push(ForeignKeyInfo {
+                    local_column: local_col,
+                    foreign_table: fk.foreign_table.to_string().to_lowercase(),
+                    foreign_column: fk
+                        .referred_columns
+                        .first()
+                        .map(|c| c.value.to_lowercase())
+                        .unwrap_or_default(),
+                    on_delete: fk.on_delete,
+                    on_update: fk.on_update,
+                });
+            }
+        }
+    }
+    for constraint in &def.constraints {
+        match constraint {
+            TableConstraint::ForeignKey(fk) => {
+                foreign_keys.push(ForeignKeyInfo {
+                    local_column: fk.columns.first().map(|c| c.value.to_lowercase()).unwrap_or_default(),
+                    foreign_table: fk.foreign_table.to_string().to_lowercase(),
+                    foreign_column: fk
+                        .referred_columns
+                        .first()
+                        .map(|c| c.value.to_lowercase())
+                        .unwrap_or_default(),
+                    on_delete: fk.on_delete,
+                    on_update: fk.on_update,
+                });
+            }
+            TableConstraint::Check(ck) => {
+                check_exprs.push(*ck.expr.clone());
+            }
+            _ => {}
+        }
+        let text = format!("{}", constraint).to_uppercase();
+        if text.contains("PRIMARY KEY (") {
+            // Extract column name from display text: "PRIMARY KEY (col)"
+            if let Some(start) = text.find('(') {
+                if let Some(end) = text.find(')') {
+                    let cname = text[start + 1..end].trim().to_lowercase();
+                    if let Some(col) = columns.iter_mut().find(|col| col.name == cname) {
+                        if has_pk {
+                            return Err("Only one primary key supported".into());
+                        }
+                        col.primary_key = true;
+                        has_pk = true;
+                    }
+                }
+            }
+        }
+    }
+
+    let mut table = Table::new(table_name.clone(), columns)?;
+    table.check_constraints = check_exprs;
+    table.foreign_keys = foreign_keys;
+    db.create_table(&table_name, table)?;
+    Ok(format!("\"Table '{}' created\"", table_name))
+}
+
+// ── CREATE VIEW ─────────────────────────────────────────────────────────
+
+pub(crate) fn exec_create_view(cv: &sqlparser::ast::CreateView, db: &mut Database) -> Result<String, String> {
+    // ponytail: non-materialized views only (re-executed each reference)
+    if cv.materialized {
+        return Err("Materialized views are not supported".into());
+    }
+    let name = object_name_str(&cv.name);
+    if db.has_table(&name) {
+        return Err(format!("Table '{}' already exists — cannot create view", name));
+    }
+    if cv.if_not_exists && db.has_view(&name) {
+        return Ok(format!("\"View '{}' already exists\"", name));
+    }
+    // Reconstruct the defining query as SQL text for storage
+    let view_sql = cv.query.to_string();
+    db.create_view(&name, &view_sql)?;
+    Ok(format!("\"View '{}' created\"", name))
+}
+
+// ── CREATE TABLE AS SELECT (CTAS) ──────────────────────────────────────
+
+pub(crate) fn exec_create_table_as(def: &sqlparser::ast::CreateTable, db: &mut Database) -> Result<String, String> {
+    let table_name = object_name_str(&def.name);
+
+    if def.if_not_exists && db.has_table(&table_name) {
+        return Ok(format!("\"Table '{}' already exists\"", table_name));
+    }
+
+    let query = def.query.as_ref().unwrap();
+    let json = super::super::stmts::select::exec_select(query, db)?;
+
+    let rows: Vec<Vec<serde_json::Value>> =
+        serde_json::from_str(&json).map_err(|e| format!("CTAS JSON parse: {}", e))?;
+
+    if rows.len() < 2 {
+        return Err("CTAS: SELECT returned no columns".into());
+    }
+
+    let header = &rows[0];
+    let mut columns: Vec<Column> = Vec::new();
+    for h in header {
+        let name = h.as_str().unwrap_or("col").to_lowercase();
+        columns.push(Column {
+            name,
+            dtype: ColumnType::String,
+            primary_key: false,
+            not_null: false,
+            default: None,
+            auto_increment: false,
+        });
+    }
+
+    let mut table = Table::new(table_name.clone(), columns)?;
+    for row_data in &rows[1..] {
+        let db_row: Vec<DbValue> = row_data.iter().map(json_val_to_dbvalue).collect();
+        table.insert(db_row).map_err(|e| format!("CTAS insert: {}", e))?;
+    }
+
+    db.create_table(&table_name, table)?;
+    Ok(format!(
+        "\"Table '{}' created with {} row(s)\"",
+        table_name,
+        rows.len() - 1
+    ))
+}
+
+// ── CREATE INDEX ───────────────────────────────────────────────────────────
+
+/// Create an index on a table column. Supports BTREE and TRIGRAM index types.
+pub(crate) fn exec_create_index(idx: &CreateIndex, db: &mut Database) -> Result<String, String> {
+    let index_name = match &idx.name {
+        Some(name) => super::super::execute::object_name_str(name),
+        None => return Err("CREATE INDEX requires a name".into()),
+    };
+    let table_name = super::super::execute::object_name_str(&idx.table_name);
+
+    // IF NOT EXISTS — silently return if index already exists
+    if idx.if_not_exists {
+        let table = db.get_table(&table_name)?;
+        if table.has_index(&index_name) {
+            return Ok(format!("\"Index '{}' already exists\"", index_name));
+        }
+    }
+
+    // Determine index type from USING clause (default BTREE)
+    use sqlparser::ast::IndexType as SqlIdx;
+    let index_type = match &idx.using {
+        None | Some(SqlIdx::BTree) => A3IndexType::BTree,
+        Some(SqlIdx::GIN) => A3IndexType::Trigram,
+        Some(SqlIdx::Custom(id)) if id.value.to_uppercase() == "TRIGRAM" => A3IndexType::Trigram,
+        Some(other) => return Err(format!("Unsupported index type: {}", other)),
+    };
+
+    // Get the column name from the first index column
+    let column = match idx.columns.first() {
+        Some(col) => col.to_string().to_lowercase(),
+        None => return Err("CREATE INDEX requires at least one column".into()),
+    };
+
+    let table = db.get_table_mut(&table_name)?;
+    table.create_index(&index_name, &column, index_type)?;
+
+    Ok(format!(
+        "\"Index '{}' on '{}' ({}) created\"",
+        index_name, table_name, column
+    ))
+}
+
+// ── CREATE TRIGGER ──────────────────────────────────────────────────────────
+
+/// Create a trigger that fires on INSERT/UPDATE/DELETE.
+pub(crate) fn exec_create_trigger(ct: &CreateTrigger, db: &mut Database) -> Result<String, String> {
+    let table_name = ct.table_name.to_string().to_lowercase();
+    let trigger_name = ct.name.to_string().to_lowercase();
+
+    let event_str = match ct.events.first() {
+        Some(TriggerEvent::Insert) => "INSERT",
+        Some(TriggerEvent::Update(_)) => "UPDATE",
+        Some(TriggerEvent::Delete) => "DELETE",
+        _ => return Err("Unsupported trigger event".into()),
+    };
+    let timing_str = match ct.period.as_ref() {
+        Some(p) => match p {
+            TriggerPeriod::Before => "BEFORE",
+            TriggerPeriod::After => "AFTER",
+            _ => return Err("Only BEFORE/AFTER triggers supported".into()),
+        },
+        None => return Err("Trigger timing (BEFORE/AFTER) required".into()),
+    };
+
+    // Extract body SQL from the statements block
+    let body = ct.statements.as_ref().map(|s| format!("{}", s)).unwrap_or_default();
+    if body.is_empty() {
+        return Err("Trigger requires a body (SQL statement)".into());
+    }
+
+    let table = db.get_table_mut(&table_name)?;
+    table.triggers.push(crate::engine::trigger::TriggerInfo {
+        name: trigger_name.clone(),
+        timing: timing_str.to_string(),
+        event: event_str.to_string(),
+        body: body.clone(),
+    });
+
+    Ok(format!("\"Trigger '{}' created on '{}'\"", trigger_name, table_name))
 }

@@ -1,15 +1,13 @@
 // a3sql statement executor — interprets sqlparser AST against Database
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
-use super::table::ForeignKeyInfo;
 use super::table::IndexImpl;
-use sqlparser::ast::table_constraints::TableConstraint;
 use sqlparser::ast::{
-    BinaryOperator, ColumnOption, DataType, Distinct, Expr, Function, FunctionArg, FunctionArgExpr, FunctionArguments,
-    Ident, LimitClause, Merge, MergeAction, MergeClauseKind, MergeInsertKind, ObjectName, ObjectType, OrderByKind,
-    Query, ReferentialAction, Select, SelectItem, SetExpr, SqliteOnConflict, Statement, TableFactor, TableWithJoins,
-    UnaryOperator, Values, WindowFrame, WindowFrameBound, WindowFrameUnits, WindowType,
+    BinaryOperator, DataType, Distinct, Expr, Function, FunctionArg, FunctionArgExpr, FunctionArguments, LimitClause,
+    Merge, MergeAction, MergeClauseKind, MergeInsertKind, ObjectName, ObjectType, OrderByKind, Query, Select,
+    SelectItem, SetExpr, Statement, TableFactor, TableWithJoins, UnaryOperator, WindowFrame, WindowFrameBound,
+    WindowFrameUnits, WindowType,
 };
 
 use super::database::Database;
@@ -27,9 +25,9 @@ thread_local! {
 
 // ponytail: global tracking for last_insert_rowid / changes (no db ref in eval path)
 thread_local! {
-    static LAST_INSERT_ROWID: std::cell::RefCell<Option<String>> =
+    pub(crate) static LAST_INSERT_ROWID: std::cell::RefCell<Option<String>> =
         const { std::cell::RefCell::new(None) };
-    static LAST_CHANGES: std::cell::RefCell<usize> =
+    pub(crate) static LAST_CHANGES: std::cell::RefCell<usize> =
         const { std::cell::RefCell::new(0) };
 }
 
@@ -37,15 +35,9 @@ thread_local! {
 
 pub fn execute(stmt: &Statement, db: &mut Database) -> Result<String, String> {
     match stmt {
-        Statement::CreateView(cv) => exec_create_view(cv, db),
-        Statement::CreateTable(def) => {
-            if def.query.is_some() {
-                exec_create_table_as(def, db)
-            } else {
-                exec_create_table(def, db)
-            }
-        }
-        Statement::Insert(ins) => exec_insert(ins, db),
+        Statement::CreateView(cv) => stmts::ddl::exec_create_view(cv, db),
+        Statement::CreateTable(def) => stmts::ddl::exec_create_table(def, db),
+        Statement::Insert(ins) => stmts::insert::exec_insert(ins, db),
         Statement::Query(q) => {
             // Process WITH / CTE clauses before executing the main query body
             let mut cte_tables: Vec<String> = Vec::new();
@@ -233,10 +225,10 @@ pub fn execute(stmt: &Statement, db: &mut Database) -> Result<String, String> {
 
             result
         }
-        Statement::Update(upd) => exec_update(upd, db),
-        Statement::Delete(del) => exec_delete(del, db),
-        Statement::CreateTrigger(ct) => exec_create_trigger(ct, db),
-        Statement::CreateIndex(idx) => exec_create_index(idx, db),
+        Statement::Update(upd) => stmts::update::exec_update(upd, db),
+        Statement::Delete(del) => stmts::delete::exec_delete(del, db),
+        Statement::CreateTrigger(ct) => stmts::ddl::exec_create_trigger(ct, db),
+        Statement::CreateIndex(idx) => stmts::ddl::exec_create_index(idx, db),
         Statement::Drop {
             names,
             object_type,
@@ -408,12 +400,7 @@ pub fn execute(stmt: &Statement, db: &mut Database) -> Result<String, String> {
             if *analyze {
                 return Err("EXPLAIN ANALYZE is not supported".into());
             }
-            explain_statement(inner, db)
-        }
-        Statement::Merge(merge) => exec_merge(merge, db),
-        Statement::AttachDatabase { schema_name, .. } => {
-            let name = schema_name.to_string();
-            Ok(format!("\"Attached database '{}'\"", name))
+            stmts::explain::explain_statement(inner, db)
         }
         Statement::Vacuum(v) => stmts::ddl::exec_vacuum(v, db),
         Statement::Copy { source, to, target, .. } => stmts::ddl::exec_copy(source, *to, target, db),
@@ -453,473 +440,12 @@ pub(crate) fn object_name_str(name: &ObjectName) -> String {
 
 // ── CREATE TABLE ────────────────────────────────────────────────────────
 
-fn exec_create_table(def: &sqlparser::ast::CreateTable, db: &mut Database) -> Result<String, String> {
-    let table_name = object_name_str(&def.name);
-
-    if def.if_not_exists && db.has_table(&table_name) {
-        return Ok(format!("\"Table '{}' already exists\"", table_name));
-    }
-
-    let mut columns: Vec<Column> = Vec::new();
-    let mut has_pk = false;
-    let mut check_exprs: Vec<Expr> = Vec::new();
-
-    for col_def in &def.columns {
-        let col_name = col_def.name.value.to_lowercase();
-        let dtype = parse_data_type(&col_def.data_type)?;
-
-        let mut is_pk = false;
-        let mut is_not_null = false;
-        let mut default_val: Option<DbValue> = None;
-        let mut auto_inc = false;
-        for opt_def in &col_def.options {
-            match &opt_def.option {
-                ColumnOption::PrimaryKey(_) | ColumnOption::Unique { .. } => is_pk = true,
-                ColumnOption::NotNull => is_not_null = true,
-                ColumnOption::DialectSpecific(tokens) => {
-                    let has_auto = tokens.iter().any(|t| {
-                        let s = t.to_string().to_lowercase().replace('"', "");
-                        s == "auto_increment" || s == "autoincrement"
-                    });
-                    if has_auto {
-                        is_pk = true;
-                        auto_inc = true;
-                    }
-                }
-                ColumnOption::Default(expression) => {
-                    // Evaluate default expression (literal only)
-                    match expression {
-                        Expr::Value(v) => default_val = Some(sql_val_to_db(&v.value)),
-                        _ => return Err("DEFAULT only supports literal values".into()),
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        if is_pk {
-            if has_pk {
-                return Err("Only one primary key column supported".into());
-            }
-            has_pk = true;
-        }
-
-        columns.push(Column {
-            name: col_name,
-            dtype,
-            primary_key: is_pk,
-            not_null: is_not_null,
-            default: default_val,
-            auto_increment: auto_inc,
-        });
-    }
-
-    // Table-level PRIMARY KEY constraints — Display-based detection
-    // Collect CHECK constraints from column-level options
-    for col_def in &def.columns {
-        for opt_def in &col_def.options {
-            if let ColumnOption::Check(check) = &opt_def.option {
-                check_exprs.push(*check.expr.clone());
-            }
-        }
-    }
-
-    // Collect FOREIGN KEY constraints from both column and table level
-    let mut foreign_keys: Vec<ForeignKeyInfo> = Vec::new();
-    for col_def in &def.columns {
-        let col_name = col_def.name.value.to_lowercase();
-        for opt_def in &col_def.options {
-            if let ColumnOption::ForeignKey(fk) = &opt_def.option {
-                let local_col = fk
-                    .columns
-                    .first()
-                    .map(|c| c.value.to_lowercase())
-                    .unwrap_or_else(|| col_name.clone());
-                foreign_keys.push(ForeignKeyInfo {
-                    local_column: local_col,
-                    foreign_table: fk.foreign_table.to_string().to_lowercase(),
-                    foreign_column: fk
-                        .referred_columns
-                        .first()
-                        .map(|c| c.value.to_lowercase())
-                        .unwrap_or_default(),
-                    on_delete: fk.on_delete,
-                    on_update: fk.on_update,
-                });
-            }
-        }
-    }
-    for constraint in &def.constraints {
-        match constraint {
-            TableConstraint::ForeignKey(fk) => {
-                foreign_keys.push(ForeignKeyInfo {
-                    local_column: fk.columns.first().map(|c| c.value.to_lowercase()).unwrap_or_default(),
-                    foreign_table: fk.foreign_table.to_string().to_lowercase(),
-                    foreign_column: fk
-                        .referred_columns
-                        .first()
-                        .map(|c| c.value.to_lowercase())
-                        .unwrap_or_default(),
-                    on_delete: fk.on_delete,
-                    on_update: fk.on_update,
-                });
-            }
-            TableConstraint::Check(ck) => {
-                check_exprs.push(*ck.expr.clone());
-            }
-            _ => {}
-        }
-        let text = format!("{}", constraint).to_uppercase();
-        if text.contains("PRIMARY KEY (") {
-            // Extract column name from display text: "PRIMARY KEY (col)"
-            if let Some(start) = text.find('(') {
-                if let Some(end) = text.find(')') {
-                    let cname = text[start + 1..end].trim().to_lowercase();
-                    if let Some(col) = columns.iter_mut().find(|col| col.name == cname) {
-                        if has_pk {
-                            return Err("Only one primary key supported".into());
-                        }
-                        col.primary_key = true;
-                        has_pk = true;
-                    }
-                }
-            }
-        }
-    }
-
-    let mut table = Table::new(table_name.clone(), columns)?;
-    table.check_constraints = check_exprs;
-    table.foreign_keys = foreign_keys;
-    db.create_table(&table_name, table)?;
-    Ok(format!("\"Table '{}' created\"", table_name))
-}
-
 // ── CREATE VIEW ─────────────────────────────────────────────────────────
-
-fn exec_create_view(cv: &sqlparser::ast::CreateView, db: &mut Database) -> Result<String, String> {
-    // ponytail: non-materialized views only (re-executed each reference)
-    if cv.materialized {
-        return Err("Materialized views are not supported".into());
-    }
-    let name = object_name_str(&cv.name);
-    if db.has_table(&name) {
-        return Err(format!("Table '{}' already exists — cannot create view", name));
-    }
-    if cv.if_not_exists && db.has_view(&name) {
-        return Ok(format!("\"View '{}' already exists\"", name));
-    }
-    // Reconstruct the defining query as SQL text for storage
-    let view_sql = cv.query.to_string();
-    db.create_view(&name, &view_sql)?;
-    Ok(format!("\"View '{}' created\"", name))
-}
 
 // ── CREATE TABLE AS SELECT (CTAS) ──────────────────────────────────────
 
-fn exec_create_table_as(def: &sqlparser::ast::CreateTable, db: &mut Database) -> Result<String, String> {
-    let table_name = object_name_str(&def.name);
-
-    if def.if_not_exists && db.has_table(&table_name) {
-        return Ok(format!("\"Table '{}' already exists\"", table_name));
-    }
-
-    let query = def.query.as_ref().unwrap();
-    let json = exec_select(query, db)?;
-
-    let rows: Vec<Vec<serde_json::Value>> =
-        serde_json::from_str(&json).map_err(|e| format!("CTAS JSON parse: {}", e))?;
-
-    if rows.len() < 2 {
-        return Err("CTAS: SELECT returned no columns".into());
-    }
-
-    let header = &rows[0];
-    let mut columns: Vec<Column> = Vec::new();
-    for h in header {
-        let name = h.as_str().unwrap_or("col").to_lowercase();
-        columns.push(Column {
-            name,
-            dtype: ColumnType::String,
-            primary_key: false,
-            not_null: false,
-            default: None,
-            auto_increment: false,
-        });
-    }
-
-    let mut table = Table::new(table_name.clone(), columns)?;
-    for row_data in &rows[1..] {
-        let db_row: Vec<DbValue> = row_data.iter().map(json_val_to_dbvalue).collect();
-        table.insert(db_row).map_err(|e| format!("CTAS insert: {}", e))?;
-    }
-
-    db.create_table(&table_name, table)?;
-    Ok(format!(
-        "\"Table '{}' created with {} row(s)\"",
-        table_name,
-        rows.len() - 1
-    ))
-}
-
 // ── INSERT ──────────────────────────────────────────────────────────────
 
-fn exec_insert(ins: &sqlparser::ast::Insert, db: &mut Database) -> Result<String, String> {
-    let table_name = ins.table.to_string().to_lowercase();
-    let returning = ins.returning.clone();
-
-    // Parse source into expression rows — do this BEFORE borrowing table mutably
-    // since SetExpr::Select needs a mutable db reference via exec_select.
-    let on_conflict = ins.or;
-    let is_replace = matches!(on_conflict, Some(SqliteOnConflict::Replace)) || ins.replace_into;
-    let rows: Vec<Vec<Expr>> = match &ins.source {
-        Some(q) => match &*q.as_ref().body {
-            SetExpr::Values(Values { rows, .. }) => rows.iter().map(|parens| parens.content.clone()).collect(),
-            SetExpr::Select(s) => {
-                let sq = Query {
-                    with: None,
-                    body: Box::new(SetExpr::Select(s.clone())),
-                    order_by: None,
-                    limit_clause: None,
-                    fetch: None,
-                    locks: vec![],
-                    for_clause: None,
-                    settings: None,
-                    format_clause: None,
-                    pipe_operators: vec![],
-                };
-                let json = exec_select(&sq, db)?;
-                let parsed: Vec<Vec<serde_json::Value>> =
-                    serde_json::from_str(&json).map_err(|e| format!("SELECT parse: {}", e))?;
-                let to_val = |v: &serde_json::Value| -> Expr {
-                    use sqlparser::ast::Value as V;
-                    Expr::Value(
-                        match v {
-                            serde_json::Value::String(s) => V::SingleQuotedString(s.clone()),
-                            serde_json::Value::Number(n) => V::Number(
-                                n.as_i64()
-                                    .map_or_else(|| format!("{}", n.as_f64().unwrap_or(0.0)), |i| format!("{}", i)),
-                                false,
-                            ),
-                            serde_json::Value::Bool(b) => V::Boolean(*b),
-                            serde_json::Value::Null => V::Null,
-                            other => V::SingleQuotedString(format!("{}", other)),
-                        }
-                        .into(),
-                    )
-                };
-                parsed
-                    .iter()
-                    .skip(1)
-                    .map(|row| row.iter().map(to_val).collect())
-                    .collect()
-            }
-            _ => return Err("INSERT source must be VALUES or SELECT".into()),
-        },
-        None => return Err("INSERT must have a source".into()),
-    };
-
-    // Pre-collect FOREIGN KEY lookup data (foreign table pk_sets) before mutable table borrow
-    let fk_lookups: Vec<(String, HashSet<String>)> = {
-        let self_table = db.get_table(&table_name)?;
-        self_table
-            .foreign_keys
-            .iter()
-            .filter_map(|fk| {
-                db.get_table(&fk.foreign_table)
-                    .ok()
-                    .map(|t| (fk.local_column.clone(), t.pk_set.clone()))
-            })
-            .collect()
-    };
-
-    // Now we have the rows; borrow table for column mapping and insertion
-    let table = db.get_table_mut(&table_name)?;
-
-    // Pre-collect auto_increment indices before the row loop (avoids borrow conflicts)
-    let auto_inc_cols: Vec<usize> = table
-        .columns
-        .iter()
-        .enumerate()
-        .filter(|(_, c)| c.auto_increment)
-        .map(|(i, _)| i)
-        .collect();
-
-    let explicit_cols: Option<Vec<usize>> = if !ins.columns.is_empty() {
-        Some(
-            ins.columns
-                .iter()
-                .map(|col_name| {
-                    let name = object_name_str(col_name);
-                    table
-                        .col_idx(&name)
-                        .ok_or_else(|| format!("Unknown column '{}' in table '{}'", name, table_name))
-                })
-                .collect::<Result<Vec<usize>, String>>()?,
-        )
-    } else {
-        None
-    };
-
-    let mut inserted = 0usize;
-    let mut inserted_rows: Vec<Vec<DbValue>> = Vec::new();
-    for row_exprs in &rows {
-        let col_indices: &[usize] = match &explicit_cols {
-            Some(indices) => indices.as_slice(),
-            None => &(0..table.col_count()).collect::<Vec<_>>(),
-        };
-
-        if row_exprs.len() != col_indices.len() {
-            return Err(format!(
-                "Expected {} values, got {}",
-                col_indices.len(),
-                row_exprs.len()
-            ));
-        }
-
-        let mut full_row: Vec<DbValue> = (0..table.col_count()).map(|_| DbValue::Null).collect();
-        for (j, expr) in row_exprs.iter().enumerate() {
-            let col_idx = col_indices[j];
-            full_row[col_idx] = eval_literal_expr(expr)?;
-        }
-
-        // Apply AUTO_INCREMENT: fill NULL auto-inc columns with next sequence value
-        for ci in &auto_inc_cols {
-            if matches!(full_row[*ci], DbValue::Null) {
-                full_row[*ci] = DbValue::Int(table.next_auto_inc);
-                table.next_auto_inc += 1;
-            }
-        }
-
-        // Evaluate CHECK constraints
-        for check_expr in &table.check_constraints {
-            let check_val = eval_expr(check_expr, &full_row, &table.col_index)
-                .map_err(|e| format!("CHECK constraint error: {}", e))?;
-            if !is_truthy(&check_val) {
-                return Err("CHECK constraint failed for row".to_string());
-            }
-        }
-
-        // Validate FOREIGN KEY constraints using pre-collected pk_sets
-        for (local_col, ref_pks) in &fk_lookups {
-            if let Some(&col_idx) = table.col_index.get(local_col) {
-                let val = &full_row[col_idx];
-                if !matches!(val, DbValue::Null) {
-                    let pk_str = val.to_string().to_lowercase();
-                    if !ref_pks.contains(&pk_str) {
-                        return Err(format!(
-                            "FOREIGN KEY constraint: '{}' value '{}' not found in referenced table",
-                            local_col, pk_str
-                        ));
-                    }
-                }
-            }
-        }
-
-        let result = table.insert(full_row.clone());
-        match result {
-            Ok(()) => {
-                inserted += 1;
-                inserted_rows.push(full_row);
-            }
-            // INSERT OR IGNORE: skip conflicting row silently
-            // INSERT OR IGNORE / INSERT IGNORE: skip conflicting row silently
-            Err(e)
-                if (matches!(on_conflict, Some(SqliteOnConflict::Ignore)) || ins.ignore)
-                    && e.contains("Duplicate primary key") =>
-            {
-                // ponytail: silently skip — row already exists
-            }
-            // INSERT OR ROLLBACK: rollback transaction on conflict
-            Err(e)
-                if matches!(on_conflict, Some(SqliteOnConflict::Rollback)) && e.contains("Duplicate primary key") =>
-            {
-                db.rollback();
-                return Err(e);
-            }
-            // INSERT OR REPLACE / INSERT OR REPLACE: delete and re-insert
-            Err(e) if is_replace && e.contains("Duplicate primary key") => {
-                // REPLACE: find the old row by PK and replace it
-                if let Some(pk_col) = table.columns.iter().position(|c| c.primary_key) {
-                    let pk_val = &full_row[pk_col];
-                    table.delete_by_pk(pk_val);
-                    inserted_rows.push(full_row.clone());
-                    table.insert(full_row)?;
-                    inserted += 1;
-                } else {
-                    return Err(e);
-                }
-            }
-            Err(e) if e.contains("Duplicate primary key") && ins.on.is_some() => {
-                // UPSERT: ON CONFLICT DO UPDATE or ON CONFLICT DO NOTHING
-                use sqlparser::ast::OnInsert;
-                match &ins.on {
-                    Some(OnInsert::OnConflict(oc)) => {
-                        match &oc.action {
-                            sqlparser::ast::OnConflictAction::DoNothing => {
-                                // Skip conflicting row silently
-                            }
-                            sqlparser::ast::OnConflictAction::DoUpdate(du) => {
-                                // Apply SET assignments to the existing row
-                                if let Some(pk_col) = table.columns.iter().position(|c| c.primary_key) {
-                                    let pk_val = &full_row[pk_col];
-                                    if let Some(row_idx) = table.rows.iter().position(|r| &r[pk_col] == pk_val) {
-                                        for assign in &du.assignments {
-                                            if let sqlparser::ast::AssignmentTarget::ColumnName(name) = &assign.target {
-                                                let col_name = name.to_string().to_lowercase();
-                                                if let Some(&ci) = table.col_index.get(&col_name) {
-                                                    // Build col_map with EXCLUDED pseudo-columns
-                                                    let mut upsert_map = table.col_index.clone();
-                                                    for (col, &idx) in &table.col_index {
-                                                        upsert_map.insert(format!("excluded.{}", col), idx);
-                                                    }
-                                                    // Use full_row (the proposed new values) for EXCLUDED references
-                                                    let upsert_row = &full_row;
-                                                    let new_val = eval_expr(&assign.value, upsert_row, &upsert_map)
-                                                        .map_err(|_| {
-                                                            format!("UPSERT: invalid expr for '{}'", col_name)
-                                                        })?;
-                                                    table.rows[row_idx][ci] = new_val;
-                                                }
-                                            }
-                                        }
-                                        table.rebuild_index();
-                                        inserted += 1;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    _ => return Err(e),
-                }
-            }
-            Err(e) => return Err(e),
-        }
-    }
-
-    // Track last_insert_rowid and changes
-    let last_pk = db.get_table(&table_name).ok().and_then(|t| {
-        let pk_idx = t.columns.iter().position(|c| c.primary_key)?;
-        inserted_rows
-            .last()
-            .and_then(|row| row.get(pk_idx))
-            .map(|v| v.to_string())
-    });
-    db.last_insert_rowid = last_pk;
-    db.last_changes = inserted;
-    LAST_INSERT_ROWID.with(|r| *r.borrow_mut() = db.last_insert_rowid.clone());
-    LAST_CHANGES.with(|c| *c.borrow_mut() = inserted);
-
-    if let Some(returning) = &returning {
-        let table = db.get_table(&table_name)?;
-        let ref_rows: Vec<&[DbValue]> = inserted_rows.iter().map(|r| r.as_slice()).collect();
-        return Ok(format_projected_result(ref_rows, returning, &table.col_index, table));
-    }
-
-    fire_triggers(&table_name, "INSERT", db);
-    Ok(format!("\"Inserted {} row(s)\"", inserted))
-}
-
-/// Check if a SELECT projection contains any window function (OVER clause).
 fn has_window_function(projection: &[SelectItem]) -> bool {
     for item in projection {
         let func = match item {
@@ -1468,7 +994,7 @@ fn exec_select(query: &Query, db: &mut Database) -> Result<String, String> {
 }
 
 /// Format SELECT results, projecting to only the requested columns.
-fn format_projected_result(
+pub(crate) fn format_projected_result(
     rows: Vec<&[DbValue]>,
     projection: &[SelectItem],
     col_map: &HashMap<String, usize>,
@@ -1990,7 +1516,7 @@ fn eval_expr_on_flat_row(expr: &Expr, row: &[DbValue], col_map: &HashMap<String,
 }
 
 /// Check if SELECT has a GROUP BY clause.
-fn has_group_by(select: &Select) -> bool {
+pub(crate) fn has_group_by(select: &Select) -> bool {
     use sqlparser::ast::GroupByExpr;
     match &select.group_by {
         GroupByExpr::Expressions(exprs, _) => !exprs.is_empty(),
@@ -1999,7 +1525,7 @@ fn has_group_by(select: &Select) -> bool {
 }
 
 /// Check if SELECT projection contains aggregate functions.
-fn has_aggregate(projection: &[SelectItem]) -> bool {
+pub(crate) fn has_aggregate(projection: &[SelectItem]) -> bool {
     for item in projection {
         let expr = match item {
             SelectItem::UnnamedExpr(e) => e,
@@ -2055,7 +1581,7 @@ fn resolve_group_by_aliases(select: &Select) -> Vec<Expr> {
 
 /// Partition filtered rows into groups by GROUP BY columns.
 /// Returns a Vec of groups, where each group is a Vec of row references.
-fn partition_by_group<'a>(
+pub(crate) fn partition_by_group<'a>(
     rows: &[&'a [DbValue]],
     select: &Select,
     col_map: &HashMap<String, usize>,
@@ -2094,7 +1620,7 @@ fn keys_equal(a: &[DbValue], b: &[DbValue]) -> bool {
 }
 
 /// Compute aggregate functions over partitions (groups) of rows.
-fn compute_aggregates(
+pub(crate) fn compute_aggregates(
     partitions: &[Vec<&[DbValue]>],
     projection: &[SelectItem],
     col_map: &HashMap<String, usize>,
@@ -2142,7 +1668,7 @@ fn compute_aggregates(
     Ok(format!("[[{}],{}]", header_json, rows_json.join(",")))
 }
 
-fn projection_expr_name(expr: &Expr) -> String {
+pub(crate) fn projection_expr_name(expr: &Expr) -> String {
     match expr {
         Expr::Function(f) => f.name.to_string().to_uppercase(),
         Expr::Identifier(ident) => ident.value.to_lowercase(),
@@ -2352,7 +1878,7 @@ fn aggregate_max(func: &Function, rows: &[&[DbValue]], col_map: &HashMap<String,
 }
 
 /// Compare DbValues: numeric comparison when both are numbers, string comparison otherwise.
-fn db_value_cmp(a: &DbValue, b: &DbValue) -> std::cmp::Ordering {
+pub(crate) fn db_value_cmp(a: &DbValue, b: &DbValue) -> std::cmp::Ordering {
     match (to_float(a), to_float(b)) {
         (Some(x), Some(y)) => x.partial_cmp(&y).unwrap_or(std::cmp::Ordering::Equal),
         _ => value_to_string(a).cmp(&value_to_string(b)),
@@ -2360,7 +1886,7 @@ fn db_value_cmp(a: &DbValue, b: &DbValue) -> std::cmp::Ordering {
 }
 
 /// Extract the first argument expression from a function.
-fn extract_func_arg(func: &Function) -> Result<&Expr, String> {
+pub(crate) fn extract_func_arg(func: &Function) -> Result<&Expr, String> {
     let args = match &func.args {
         FunctionArguments::List(list) => &list.args,
         _ => return Err("Function requires argument list".into()),
@@ -2372,7 +1898,7 @@ fn extract_func_arg(func: &Function) -> Result<&Expr, String> {
 }
 
 /// ORDER BY sorting
-fn sort_rows<'a>(
+pub(crate) fn sort_rows<'a>(
     mut rows: Vec<&'a [DbValue]>,
     order_by: &[sqlparser::ast::OrderByExpr],
     col_map: &HashMap<String, usize>,
@@ -2399,7 +1925,7 @@ fn sort_rows<'a>(
 }
 
 /// Apply LIMIT and OFFSET.
-fn apply_limit_offset<'a>(
+pub(crate) fn apply_limit_offset<'a>(
     rows: Vec<&'a [DbValue]>,
     limit_clause: &Option<LimitClause>,
 ) -> Result<Vec<&'a [DbValue]>, String> {
@@ -2426,7 +1952,7 @@ fn apply_limit_offset<'a>(
     Ok(rows[start..end].to_vec())
 }
 
-fn parse_expr_as_usize(expr: Option<&Expr>) -> Option<usize> {
+pub(crate) fn parse_expr_as_usize(expr: Option<&Expr>) -> Option<usize> {
     let expr = expr?;
     if let Expr::Value(v) = expr {
         if let sqlparser::ast::Value::Number(s, _) = &v.value {
@@ -2438,382 +1964,7 @@ fn parse_expr_as_usize(expr: Option<&Expr>) -> Option<usize> {
 
 // ── UPDATE ──────────────────────────────────────────────────────────────
 
-fn exec_update(upd: &sqlparser::ast::Update, db: &mut Database) -> Result<String, String> {
-    let table_name = resolve_table_from_joins(&upd.table)?;
-    let returning = upd.returning.clone();
-    let table = db.get_table_mut(&table_name)?;
-
-    let where_expr = upd.selection.as_ref();
-
-    // Collect row indices to update
-    let indices: Vec<usize> = {
-        let mut idxs = Vec::new();
-        for (i, row) in table.rows.iter().enumerate() {
-            let matches = match where_expr {
-                Some(expr) => is_truthy(&eval_expr(expr, row, &table.col_index)?),
-                None => true,
-            };
-            if matches {
-                idxs.push(i);
-            }
-        }
-        idxs
-    };
-
-    // Pre-resolve column indices to avoid borrow conflict
-    let assign_indices: Vec<(usize, &Expr)> = upd
-        .assignments
-        .iter()
-        .map(|assign| {
-            let col_name = assign.target.to_string().to_lowercase();
-            let idx = table
-                .col_idx(&col_name)
-                .ok_or_else(|| format!("Unknown column '{}'", col_name))?;
-            Ok((idx, &assign.value))
-        })
-        .collect::<Result<Vec<_>, String>>()?;
-
-    // Collect all assignments and validate CHECK constraints upfront
-    let mut updates: Vec<(usize, usize, DbValue)> = Vec::new();
-
-    for i in &indices {
-        for (col_ci, val_expr) in &assign_indices {
-            let new_val = eval_literal_expr(val_expr)?;
-            updates.push((*i, *col_ci, new_val));
-        }
-    }
-
-    // Validate CHECK constraints for each updated row (drop table borrow first)
-    let validated_updates = {
-        let t = db.get_table(&table_name)?;
-        updates
-            .iter()
-            .filter_map(|(row_i, col_ci, val)| {
-                let mut row = t.rows[*row_i].clone();
-                row[*col_ci] = val.clone();
-                for expr in &t.check_constraints {
-                    let v = eval_expr(expr, &row, &t.col_index).ok()?;
-                    if !is_truthy(&v) {
-                        return Some(Err("CHECK constraint failed"));
-                    }
-                }
-                Some(Ok((*row_i, *col_ci, val.clone())))
-            })
-            .collect::<Result<Vec<(usize, usize, DbValue)>, &str>>()
-    }?;
-
-    // Validate FOREIGN KEY constraints for each update
-    // Pre-collect PK update cascade data (must outlive the immutable borrow block)
-    let mut pk_cascade_queue: Vec<(String, usize, String, DbValue)> = Vec::new();
-    {
-        let t = db.get_table(&table_name)?;
-        // Pre-collect FK lookup data: local_column → (foreign_table, pk_set)
-        let fk_lookups: Vec<(String, HashSet<String>)> = t
-            .foreign_keys
-            .iter()
-            .filter_map(|fk| {
-                db.get_table(&fk.foreign_table)
-                    .ok()
-                    .map(|ref_t| (fk.local_column.clone(), ref_t.pk_set.clone()))
-            })
-            .collect();
-        // Pre-collect referencing tables for PK updates (RESTRICT)
-        let pk_col_idx = t.columns.iter().position(|c| c.primary_key);
-        let fk_refs: Vec<(String, usize)> = if pk_col_idx.is_some() {
-            let names: Vec<String> = db.table_names().iter().map(|s| s.to_string()).collect();
-            let mut refs = Vec::new();
-            for tn in &names {
-                if tn == &table_name {
-                    continue;
-                }
-                if let Ok(child) = db.get_table(tn) {
-                    for fk in &child.foreign_keys {
-                        if fk.foreign_table == table_name {
-                            if let Some(&ci) = child.col_index.get(&fk.local_column) {
-                                refs.push((tn.to_string(), ci));
-                            }
-                        }
-                    }
-                }
-            }
-            refs
-        } else {
-            Vec::new()
-        };
-
-        for (row_i, col_ci, val) in &validated_updates {
-            // (a) FK local column update: new value must exist in referenced table
-            for (local_col, ref_pks) in &fk_lookups {
-                if let Some(&local_ci) = t.col_index.get(local_col) {
-                    if *col_ci == local_ci && !matches!(val, DbValue::Null) {
-                        let val_str = val.to_string().to_lowercase();
-                        if !ref_pks.contains(&val_str) {
-                            return Err(format!(
-                                "FOREIGN KEY constraint: '{}' value '{}' not found in referenced table",
-                                local_col, val_str
-                            ));
-                        }
-                    }
-                }
-            }
-            // (b) PK column update: collect CASCADE info during immutable phase
-            if let Some(pk_ci) = pk_col_idx {
-                if *col_ci == pk_ci {
-                    let old_val = t.rows[*row_i][pk_ci].to_string().to_lowercase();
-                    let new_val_cascade = val.clone();
-                    // (use outer pk_cascade_queue)
-                    for (ref_table, ref_col_idx) in &fk_refs {
-                        let child = db.get_table(ref_table)?;
-                        let on_update = child
-                            .foreign_keys
-                            .iter()
-                            .find(|fk| {
-                                fk.foreign_table == table_name
-                                    && child.col_index.get(&fk.local_column) == Some(ref_col_idx)
-                            })
-                            .and_then(|fk| fk.on_update);
-                        let has_ref = child
-                            .rows
-                            .iter()
-                            .any(|r| r[*ref_col_idx].to_string().to_lowercase() == old_val);
-                        if has_ref {
-                            match on_update {
-                                Some(ReferentialAction::Cascade) => {
-                                    pk_cascade_queue.push((
-                                        ref_table.clone(),
-                                        *ref_col_idx,
-                                        old_val.clone(),
-                                        new_val_cascade.clone(),
-                                    ));
-                                }
-                                _ => {
-                                    return Err(format!(
-                                        "FOREIGN KEY constraint violation: '{}' has reference to '{}' in '{}'",
-                                        ref_table, old_val, table_name
-                                    ));
-                                }
-                            }
-                        }
-                    }
-                    // Apply CASCADE after immutable block (see note after block close)
-                }
-            }
-        }
-    }
-
-    // Apply PK CASCADE updates to child rows (after immutable borrow is dropped)
-    for (ref_table, ref_col_idx, old_val, new_val) in &pk_cascade_queue {
-        if let Ok(child) = db.get_table_mut(ref_table) {
-            for row in &mut child.rows {
-                let child_val = row[*ref_col_idx].to_string().to_lowercase();
-                if child_val == *old_val {
-                    row[*ref_col_idx] = new_val.clone();
-                }
-            }
-        }
-    }
-
-    // Capture old rows for RETURNING (before applying updates)
-    let old_rows: Vec<Vec<DbValue>> = if returning.is_some() {
-        let t = db.get_table(&table_name)?;
-        let mut seen = HashSet::new();
-        validated_updates
-            .iter()
-            .filter(|(row_i, _, _)| seen.insert(*row_i))
-            .map(|(row_i, _, _)| t.rows[*row_i].clone())
-            .collect()
-    } else {
-        Vec::new()
-    };
-
-    let t = db.get_table_mut(&table_name)?;
-    for (row_i, col_ci, val) in &validated_updates {
-        t.update_cell(*row_i, *col_ci, val.clone());
-    }
-    drop(t);
-    db.last_changes = validated_updates.len();
-    LAST_CHANGES.with(|c| *c.borrow_mut() = validated_updates.len());
-
-    if let Some(returning) = &returning {
-        let table = db.get_table(&table_name)?;
-        let ref_rows: Vec<&[DbValue]> = old_rows.iter().map(|r| r.as_slice()).collect();
-        return Ok(format_projected_result(ref_rows, returning, &table.col_index, table));
-    }
-
-    fire_triggers(&table_name, "UPDATE", db);
-    Ok(format!("\"Updated {} row(s)\"", validated_updates.len()))
-}
-
 // ── DELETE ──────────────────────────────────────────────────────────────
-
-fn exec_delete(del: &sqlparser::ast::Delete, db: &mut Database) -> Result<String, String> {
-    // Table name is in `from` (FromTable), not `tables` (MySQL multi-table)
-    use sqlparser::ast::FromTable;
-    let table_name = match &del.from {
-        FromTable::WithFromKeyword(tables) | FromTable::WithoutKeyword(tables) => match tables.first() {
-            Some(tj) => match &tj.relation {
-                TableFactor::Table { name, .. } => object_name_str(name),
-                _ => return Err("DELETE: only simple table references supported".into()),
-            },
-            None => return Err("DELETE must specify a table".into()),
-        },
-    };
-
-    let returning = del.returning.clone();
-
-    // Clone col_index to avoid borrow conflict with table.delete()
-    let col_idx = db.get_table(&table_name)?.col_index.clone();
-    let pred = del.selection.clone();
-
-    // Collect referencing tables with FK pointing to this table
-    let fk_refs: Vec<(String, usize)> = {
-        let names: Vec<&str> = db.table_names();
-        let mut refs = Vec::new();
-        for tn in names {
-            if let Ok(t) = db.get_table(tn) {
-                if tn == table_name {
-                    continue;
-                }
-                for fk in &t.foreign_keys {
-                    if fk.foreign_table == table_name {
-                        if let Some(&ci) = t.col_index.get(&fk.local_column) {
-                            refs.push((tn.to_string(), ci));
-                        }
-                    }
-                }
-            }
-        }
-        refs
-    };
-
-    // Collect PK values of rows matched for deletion (needed for FK validation)
-    let deleted_pks: Vec<(usize, String)> = {
-        let pk_idx = db.get_table(&table_name)?.columns.iter().position(|c| c.primary_key);
-        match pk_idx {
-            Some(pi) => {
-                let t = db.get_table(&table_name)?;
-                match &pred {
-                    Some(expr) => t
-                        .rows
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, row)| eval_expr(expr, row, &col_idx).map(|v| is_truthy(&v)).unwrap_or(false))
-                        .map(|(i, row)| (i, row[pi].to_string().to_lowercase()))
-                        .collect(),
-                    None => t
-                        .rows
-                        .iter()
-                        .enumerate()
-                        .map(|(i, row)| (i, row[pi].to_string().to_lowercase()))
-                        .collect(),
-                }
-            }
-            None => Vec::new(),
-        }
-    };
-
-    // Validate FK before deleting — CASCADE, SET NULL, or RESTRICT
-    for (ref_table, ref_col_idx) in &fk_refs {
-        let fk_info = {
-            let t = db.get_table(ref_table)?;
-            t.foreign_keys
-                .iter()
-                .find(|fk| fk.foreign_table == table_name && t.col_index.get(&fk.local_column) == Some(ref_col_idx))
-                .cloned()
-        };
-        let on_delete = fk_info.as_ref().and_then(|f| f.on_delete);
-
-        match on_delete {
-            Some(ReferentialAction::Cascade) => {
-                // Delete child rows referencing the deleted PKs
-                let child_pks_to_delete: Vec<String> = {
-                    let t = db.get_table(ref_table)?;
-                    let pk_idx = t.columns.iter().position(|c| c.primary_key);
-                    t.rows
-                        .iter()
-                        .filter(|row| {
-                            let child_val = row[*ref_col_idx].to_string().to_lowercase();
-                            deleted_pks.iter().any(|(_, pk)| *pk == child_val)
-                        })
-                        .map(|row| pk_idx.map(|pi| row[pi].to_string().to_lowercase()).unwrap_or_default())
-                        .collect()
-                };
-                for child_pk in &child_pks_to_delete {
-                    if child_pk.is_empty() {
-                        continue;
-                    }
-                    let child_table = db.get_table_mut(ref_table)?;
-                    let pk_idx = child_table.columns.iter().position(|c| c.primary_key);
-                    if let Some(pi) = pk_idx {
-                        child_table.delete(|row| row[pi].to_string().to_lowercase() == *child_pk);
-                    }
-                }
-            }
-            Some(ReferentialAction::SetNull) => {
-                // Set FK column to NULL in child rows
-                if let Ok(child_table) = db.get_table_mut(ref_table) {
-                    for row in &mut child_table.rows {
-                        let child_val = row[*ref_col_idx].to_string().to_lowercase();
-                        if deleted_pks.iter().any(|(_, pk)| *pk == child_val) {
-                            row[*ref_col_idx] = DbValue::Null;
-                        }
-                    }
-                }
-            }
-            _ => {
-                // RESTRICT / NO ACTION / None — reject
-                let t = db.get_table(ref_table)?;
-                let ref_pk_set: HashSet<String> = t
-                    .rows
-                    .iter()
-                    .map(|row| row[*ref_col_idx].to_string().to_lowercase())
-                    .collect();
-                for (_, pk_val) in &deleted_pks {
-                    if ref_pk_set.contains(pk_val) {
-                        return Err(format!(
-                            "FOREIGN KEY constraint violation: '{}' references '{}'",
-                            ref_table, pk_val
-                        ));
-                    }
-                }
-            }
-        }
-    }
-
-    // Capture old rows for RETURNING (before deletion)
-    let old_rows: Vec<Vec<DbValue>> = if returning.is_some() {
-        let t = db.get_table(&table_name)?;
-        match &pred {
-            Some(expr) => t
-                .rows
-                .iter()
-                .filter(|row| eval_expr(expr, row, &col_idx).map(|v| is_truthy(&v)).unwrap_or(false))
-                .cloned()
-                .collect(),
-            None => t.rows.to_vec(),
-        }
-    } else {
-        Vec::new()
-    };
-
-    let table = db.get_table_mut(&table_name)?;
-    let count = match pred {
-        Some(expr) => table.delete(|row| eval_expr(&expr, row, &col_idx).map(|v| is_truthy(&v)).unwrap_or(false)),
-        None => table.delete(|_| true),
-    };
-    drop(table);
-    db.last_changes = count;
-    LAST_CHANGES.with(|c| *c.borrow_mut() = count);
-
-    if let Some(returning) = &returning {
-        let table = db.get_table(&table_name)?;
-        let ref_rows: Vec<&[DbValue]> = old_rows.iter().map(|r| r.as_slice()).collect();
-        return Ok(format_projected_result(ref_rows, returning, &table.col_index, table));
-    }
-
-    fire_triggers(&table_name, "DELETE", db);
-    Ok(format!("\"Deleted {} row(s)\"", count))
-}
 
 // ── Expression evaluator ────────────────────────────────────────────────
 
@@ -3028,7 +2179,7 @@ fn cast_db_value(val: DbValue, target: &DataType) -> Result<DbValue, String> {
     }
 }
 
-fn eval_literal_expr(expr: &Expr) -> Result<DbValue, String> {
+pub(crate) fn eval_literal_expr(expr: &Expr) -> Result<DbValue, String> {
     match expr {
         Expr::Value(v) => Ok(sql_val_to_db(&v.value)),
         Expr::Nested(inner) => eval_literal_expr(inner),
@@ -3100,7 +2251,7 @@ fn extract_func_args(func: &Function) -> Vec<DbValue> {
 }
 
 /// Return current date as YYYY-MM-DD string.
-fn curdate_value() -> DbValue {
+pub(crate) fn curdate_value() -> DbValue {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -3163,7 +2314,7 @@ fn date_to_days(y: i64, m: i64, d: i64) -> i64 {
 }
 
 /// Return the current timestamp as a DbValue (ISO 8601 format).
-fn now_value() -> DbValue {
+pub(crate) fn now_value() -> DbValue {
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -3183,7 +2334,7 @@ fn now_value() -> DbValue {
 }
 
 /// Evaluate a standard SQL scalar function.
-fn exec_std_function(
+pub(crate) fn exec_std_function(
     func: &Function,
     name: String,
     row: &[DbValue],
@@ -3352,7 +2503,7 @@ fn exec_std_function(
 }
 
 /// Get function argument as Expr, assuming Unnamed(FunctionArgExpr::Expr(e))
-fn get_func_arg_unnamed(arg: &FunctionArg) -> Result<&Expr, String> {
+pub(crate) fn get_func_arg_unnamed(arg: &FunctionArg) -> Result<&Expr, String> {
     match arg {
         FunctionArg::Unnamed(FunctionArgExpr::Expr(e)) => Ok(e),
         FunctionArg::Unnamed(_) => Err("Expected expression argument".into()),
@@ -3393,7 +2544,7 @@ fn exec_fuzzy_match(func: &Function, row: &[DbValue], col_map: &HashMap<String, 
 
 // ── Binary operators ───────────────────────────────────────────────────
 
-fn apply_binary_op(left: &DbValue, op: &BinaryOperator, right: &DbValue) -> Result<DbValue, String> {
+pub(crate) fn apply_binary_op(left: &DbValue, op: &BinaryOperator, right: &DbValue) -> Result<DbValue, String> {
     match op {
         BinaryOperator::Eq => Ok(DbValue::Bool(values_equal(left, right))),
         BinaryOperator::NotEq => Ok(DbValue::Bool(!values_equal(left, right))),
@@ -3447,7 +2598,7 @@ fn apply_unary_op(op: &UnaryOperator, val: &DbValue) -> Result<DbValue, String> 
 
 // ── Comparison & coercion ──────────────────────────────────────────────
 
-fn values_equal(a: &DbValue, b: &DbValue) -> bool {
+pub(crate) fn values_equal(a: &DbValue, b: &DbValue) -> bool {
     // NULL != anything (including NULL), per SQL standard
     if matches!(a, DbValue::Null) || matches!(b, DbValue::Null) {
         return false;
@@ -3506,7 +2657,7 @@ fn to_float(v: &DbValue) -> Option<f64> {
     }
 }
 
-fn is_truthy(v: &DbValue) -> bool {
+pub(crate) fn is_truthy(v: &DbValue) -> bool {
     match v {
         DbValue::Null => false,
         DbValue::Bool(b) => *b,
@@ -3518,7 +2669,7 @@ fn is_truthy(v: &DbValue) -> bool {
     }
 }
 
-fn value_to_string(v: &DbValue) -> String {
+pub(crate) fn value_to_string(v: &DbValue) -> String {
     match v {
         DbValue::Null => "NULL".into(),
         DbValue::Bool(b) => b.to_string(),
@@ -3532,7 +2683,7 @@ fn value_to_string(v: &DbValue) -> String {
 
 // ── SQL value conversion ───────────────────────────────────────────────
 
-fn sql_val_to_db(v: &sqlparser::ast::Value) -> DbValue {
+pub(crate) fn sql_val_to_db(v: &sqlparser::ast::Value) -> DbValue {
     match v {
         sqlparser::ast::Value::Null => DbValue::Null,
         sqlparser::ast::Value::Boolean(b) => DbValue::Bool(*b),
@@ -3607,7 +2758,7 @@ fn parse_data_type(dt: &DataType) -> Result<ColumnType, String> {
 // ── Table resolution ───────────────────────────────────────────────────
 
 /// Materialize a view by executing its SQL and inserting the results as a temp table.
-fn materialize_view(name: &str, db: &mut Database) -> Result<(), String> {
+pub(crate) fn materialize_view(name: &str, db: &mut Database) -> Result<(), String> {
     let sql = db
         .get_view(name)
         .ok_or_else(|| format!("View '{}' not found", name))?
@@ -3648,7 +2799,7 @@ fn materialize_view(name: &str, db: &mut Database) -> Result<(), String> {
 }
 
 /// Resolve a table factor, materialising a view if the name is not a real table.
-fn resolve_table_factor(
+pub(crate) fn resolve_table_factor(
     factor: &TableFactor,
     db: &mut Database,
 ) -> Result<(String, crate::engine::table::Table), String> {
@@ -3665,7 +2816,7 @@ fn resolve_table_factor(
     }
 }
 
-fn resolve_single_table<'a>(from: &[TableWithJoins], db: &'a Database) -> Result<&'a Table, String> {
+pub(crate) fn resolve_single_table<'a>(from: &[TableWithJoins], db: &'a Database) -> Result<&'a Table, String> {
     let tf = from.first().ok_or("No FROM clause")?;
     match &tf.relation {
         TableFactor::Table { name, .. } => db.get_table(&object_name_str(name)),
@@ -3673,7 +2824,7 @@ fn resolve_single_table<'a>(from: &[TableWithJoins], db: &'a Database) -> Result
     }
 }
 
-fn resolve_table_from_joins(tj: &TableWithJoins) -> Result<String, String> {
+pub(crate) fn resolve_table_from_joins(tj: &TableWithJoins) -> Result<String, String> {
     match &tj.relation {
         TableFactor::Table { name, .. } => Ok(object_name_str(name)),
         _ => Err("Only simple table references supported".into()),
@@ -3847,7 +2998,7 @@ fn apply_order_limit(json_str: &str, query: &Query) -> Result<String, String> {
 
 /// Try to use a BTreeIndex for a simple `col = literal` WHERE clause.
 /// Returns `Some(rows)` if an index was used, `None` to fall back to full scan.
-fn try_btree_index<'a>(where_expr: Option<&Expr>, table: &'a Table) -> Option<Vec<&'a [DbValue]>> {
+pub(crate) fn try_btree_index<'a>(where_expr: Option<&Expr>, table: &'a Table) -> Option<Vec<&'a [DbValue]>> {
     let expr = where_expr?;
     let (col_name, value) = match expr {
         Expr::BinaryOp {
@@ -3868,7 +3019,7 @@ fn try_btree_index<'a>(where_expr: Option<&Expr>, table: &'a Table) -> Option<Ve
 
 /// Try to use a TrigramIndex for a `fuzzy_match(col, pattern)` WHERE clause.
 /// Returns `Some(candidate_rows)` if a trigram index exists, `None` to fall back to full scan.
-fn try_trigram_index<'a>(where_expr: Option<&Expr>, table: &'a Table) -> Option<Vec<&'a [DbValue]>> {
+pub(crate) fn try_trigram_index<'a>(where_expr: Option<&Expr>, table: &'a Table) -> Option<Vec<&'a [DbValue]>> {
     let expr = where_expr?;
     let (col_name, pattern_val) = match expr {
         Expr::Function(f) if f.name.to_string().to_lowercase() == "fuzzy_match" => {
@@ -4015,46 +3166,6 @@ fn json_value_to_dbvalue(v: &serde_json::Value) -> DbValue {
 
 // ── CREATE INDEX handling ──────────────────────────────────────────────
 
-fn exec_create_index(idx: &sqlparser::ast::CreateIndex, db: &mut Database) -> Result<String, String> {
-    let index_name = match &idx.name {
-        Some(name) => object_name_str(name),
-        None => return Err("CREATE INDEX requires a name".into()),
-    };
-    let table_name = object_name_str(&idx.table_name);
-
-    // IF NOT EXISTS — silently return if index already exists
-    if idx.if_not_exists {
-        let table = db.get_table(&table_name)?;
-        if table.has_index(&index_name) {
-            return Ok(format!("\"Index '{}' already exists\"", index_name));
-        }
-    }
-
-    // Determine index type from USING clause (default BTREE)
-    use sqlparser::ast::IndexType as SqlIdx;
-    let index_type = match &idx.using {
-        None | Some(SqlIdx::BTree) => A3IndexType::BTree,
-        Some(SqlIdx::GIN) => A3IndexType::Trigram,
-        Some(SqlIdx::Custom(id)) if id.value.to_uppercase() == "TRIGRAM" => A3IndexType::Trigram,
-        Some(other) => return Err(format!("Unsupported index type: {}", other)),
-    };
-
-    // Get the column name from the first index column
-    let column = match idx.columns.first() {
-        Some(col) => col.to_string().to_lowercase(),
-        None => return Err("CREATE INDEX requires at least one column".into()),
-    };
-
-    let table = db.get_table_mut(&table_name)?;
-    table.create_index(&index_name, &column, index_type)?;
-
-    Ok(format!(
-        "\"Created {} index '{}' on {}({})\"",
-        index_type, index_name, table_name, column
-    ))
-}
-
-/// Drop an index by name across all tables.
 fn drop_index_by_name(db: &mut Database, name: &str) -> bool {
     let table_names: Vec<String> = db.table_names().iter().map(|s| s.to_string()).collect();
     for tname in table_names {
@@ -4092,44 +3203,7 @@ pub(crate) fn parse_and_exec(sql: &str, db: &mut Database) -> Result<String, Str
 }
 
 /// Execute CREATE TRIGGER.
-fn exec_create_trigger(ct: &sqlparser::ast::CreateTrigger, db: &mut Database) -> Result<String, String> {
-    let table_name = ct.table_name.to_string().to_lowercase();
-    let trigger_name = ct.name.to_string().to_lowercase();
-    let _timing = ct.period.as_ref().map(|p| format!("{:?}", p)).unwrap_or_default();
-    let _event = ct.events.first().map(|e| format!("{:?}", e)).unwrap_or_default();
-    // Use first event only and infer FROM/UPDATE/DELETE
-
-    let event_str = match ct.events.first() {
-        Some(sqlparser::ast::TriggerEvent::Insert) => "INSERT",
-        Some(sqlparser::ast::TriggerEvent::Update(_)) => "UPDATE",
-        Some(sqlparser::ast::TriggerEvent::Delete) => "DELETE",
-        _ => return Err("Unsupported trigger event".into()),
-    };
-    let timing_str = match ct.period.as_ref() {
-        Some(p) => match p {
-            sqlparser::ast::TriggerPeriod::Before => "BEFORE",
-            sqlparser::ast::TriggerPeriod::After => "AFTER",
-            _ => return Err("Only BEFORE/AFTER triggers supported".into()),
-        },
-        None => return Err("Trigger timing (BEFORE/AFTER) required".into()),
-    };
-    // Extract body SQL from the statements block
-    let body = ct.statements.as_ref().map(|s| format!("{}", s)).unwrap_or_default();
-    if body.is_empty() {
-        return Err("Trigger requires a body (SQL statement)".into());
-    }
-    let table = db.get_table_mut(&table_name)?;
-    table.triggers.push(crate::engine::trigger::TriggerInfo {
-        name: trigger_name.clone(),
-        timing: timing_str.to_string(),
-        event: event_str.to_string(),
-        body,
-    });
-    Ok(format!("\"Trigger '{}' created on '{}'\"", trigger_name, table_name))
-}
-
-/// Fire AFTER triggers for a given table and event.
-fn fire_triggers(table_name: &str, event: &str, db: &mut Database) {
+pub(crate) fn fire_triggers(table_name: &str, event: &str, db: &mut Database) {
     crate::engine::trigger::fire_triggers(table_name, event, db)
 }
 // ── MERGE ───────────────────────────────────────────────────────────────
@@ -4184,7 +3258,7 @@ fn exec_merge(merge: &Merge, db: &mut Database) -> Result<String, String> {
                 matched_indices.push(ti);
             }
         }
-        drop(t);
+        let _ = t;
 
         if !matched_indices.is_empty() {
             if let Some(clause) = matched_clause {
@@ -4198,7 +3272,7 @@ fn exec_merge(merge: &Merge, db: &mut Database) -> Result<String, String> {
                         c.extend(t.rows[ti].iter().cloned());
                         c
                     };
-                    drop(t);
+                    let _ = t;
                     if !is_truthy(&eval_expr(pred, &combined, &col_map)?) {
                         continue;
                     }
@@ -4331,249 +3405,9 @@ fn exec_merge(merge: &Merge, db: &mut Database) -> Result<String, String> {
 // ── EXPLAIN ─────────────────────────────────────────────────────────────
 
 /// Generate an EXPLAIN plan description as a JSON array of plan nodes.
-fn explain_statement(stmt: &Statement, db: &Database) -> Result<String, String> {
-    use serde_json::json;
-
-    match stmt {
-        Statement::Query(query) => {
-            let mut steps: Vec<serde_json::Value> = Vec::new();
-
-            if let SetExpr::Select(select) = &*query.body {
-                let select = select.as_ref();
-
-                // FROM clause — table scans and joins
-                for twj in &select.from {
-                    match &twj.relation {
-                        TableFactor::Table { name, .. } => {
-                            let tname = name.to_string().to_lowercase();
-                            let mut scan = json!({"type": "SeqScan", "table": tname});
-
-                            // Show available indexes on this table
-                            if let Ok(table) = db.get_table(&tname) {
-                                if !table.indices.is_empty() {
-                                    let idxs: Vec<&str> = table.indices.iter().map(|(m, _)| m.name.as_str()).collect();
-                                    scan["indexes"] = json!(idxs);
-                                }
-                            }
-                            steps.push(scan);
-                        }
-                        _ => {
-                            steps.push(json!({"type": "SubQuery"}));
-                        }
-                    }
-
-                    for join in &twj.joins {
-                        let rel = match &join.relation {
-                            TableFactor::Table { name, .. } => name.to_string(),
-                            _ => "<subquery>".into(),
-                        };
-                        steps.push(json!({"type": "Join", "relation": rel}));
-                    }
-                }
-
-                // Bare SELECT (no FROM)
-                if select.from.is_empty() {
-                    steps.push(json!({"type": "Projection"}));
-                }
-
-                // WHERE clause
-                if let Some(expr) = &select.selection {
-                    steps.push(json!({"type": "Filter", "condition": format!("{}", expr)}));
-                }
-
-                // GROUP BY
-                use sqlparser::ast::GroupByExpr;
-                if let GroupByExpr::Expressions(exprs, _) = &select.group_by {
-                    if !exprs.is_empty() {
-                        let gb: Vec<String> = exprs.iter().map(|e| format!("{}", e)).collect();
-                        steps.push(json!({"type": "GroupBy", "columns": gb}));
-                    }
-                }
-
-                // HAVING
-                if let Some(expr) = &select.having {
-                    steps.push(json!({"type": "Having", "condition": format!("{}", expr)}));
-                }
-
-                // ORDER BY
-                if let Some(order_by) = &query.order_by {
-                    if let OrderByKind::Expressions(exprs) = &order_by.kind {
-                        if !exprs.is_empty() {
-                            let ob: Vec<String> = exprs.iter().map(|e| format!("{}", e.expr)).collect();
-                            steps.push(json!({"type": "OrderBy", "columns": ob}));
-                        }
-                    }
-                }
-
-                // LIMIT / OFFSET
-                if let Some(lc) = &query.limit_clause {
-                    if let LimitClause::LimitOffset { limit, offset, .. } = lc {
-                        let mut l = serde_json::Map::new();
-                        l.insert("type".into(), json!("Limit"));
-                        if let Some(e) = limit {
-                            l.insert("limit".into(), json!(format!("{}", e)));
-                        }
-                        if let Some(o) = offset {
-                            l.insert("offset".into(), json!(format!("{}", o.value)));
-                        }
-                        steps.push(serde_json::Value::Object(l));
-                    } else if let LimitClause::OffsetCommaLimit { offset, limit } = lc {
-                        steps.push(json!({
-                            "type": "Limit",
-                            "limit": format!("{}", limit),
-                            "offset": format!("{}", offset),
-                        }));
-                    }
-                }
-            }
-
-            if steps.is_empty() {
-                steps.push(json!({"type": "Unknown"}));
-            }
-
-            serde_json::to_string(&steps).map_err(|e| e.to_string())
-        }
-
-        Statement::Insert(ins) => {
-            let tname = ins.table.to_string().to_lowercase();
-            let ncols = ins.columns.len();
-            let mut plan = json!({"type": "Insert", "table": tname});
-            if ncols > 0 {
-                let cols: Vec<String> = ins.columns.iter().map(|c| c.to_string().to_lowercase()).collect();
-                plan["columns"] = json!(cols);
-            }
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
-        }
-
-        Statement::CreateTable(def) => {
-            let tname = def.name.to_string().to_lowercase();
-            let ncols = def.columns.len();
-            let plan = json!({"type": "CreateTable", "table": tname, "columns": ncols});
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
-        }
-
-        Statement::CreateIndex(idx) => {
-            let iname = idx
-                .name
-                .as_ref()
-                .map(|n| n.to_string())
-                .unwrap_or_default()
-                .to_lowercase();
-            let tname = idx.table_name.to_string().to_lowercase();
-            let plan = json!({"type": "CreateIndex", "index": iname, "table": tname});
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
-        }
-
-        Statement::Update(upd) => {
-            let tname = resolve_table_from_joins(&upd.table).unwrap_or_default();
-            let plan = json!({"type": "Update", "table": tname});
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
-        }
-
-        Statement::Delete(del) => {
-            let tname = match &del.from {
-                sqlparser::ast::FromTable::WithFromKeyword(tables)
-                | sqlparser::ast::FromTable::WithoutKeyword(tables) => match tables.first() {
-                    Some(tj) => match &tj.relation {
-                        TableFactor::Table { name, .. } => name.to_string().to_lowercase(),
-                        _ => String::new(),
-                    },
-                    None => String::new(),
-                },
-            };
-            let plan = json!({"type": "Delete", "table": tname});
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
-        }
-
-        Statement::Drop { names, object_type, .. } => {
-            let oname = names.first().map(|n| n.to_string()).unwrap_or_default();
-            let otype = format!("{}", object_type).to_lowercase();
-            let plan = json!({"type": "Drop", "object_type": otype, "name": oname});
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
-        }
-
-        Statement::Truncate(trunc) => {
-            let tname = trunc
-                .table_names
-                .first()
-                .map(|t| t.name.to_string())
-                .unwrap_or_default();
-            let plan = json!({"type": "Truncate", "table": tname.to_lowercase()});
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
-        }
-
-        Statement::AlterTable(at) => {
-            let tname = at.name.to_string().to_lowercase();
-            let ops: Vec<String> = at.operations.iter().map(|o| format!("{}", o)).collect();
-            let plan = json!({"type": "AlterTable", "table": tname, "operations": ops});
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
-        }
-
-        Statement::RenameTable(rt) => {
-            let old = rt[0].old_name.to_string().to_lowercase();
-            let new = rt[0].new_name.to_string().to_lowercase();
-            let plan = json!({"type": "RenameTable", "old_name": old, "new_name": new});
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
-        }
-
-        Statement::ShowTables { .. } => {
-            let plan = json!({"type": "ShowTables"});
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
-        }
-
-        Statement::StartTransaction { .. } => {
-            let plan = json!({"type": "StartTransaction"});
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
-        }
-
-        Statement::Commit { .. } => {
-            let plan = json!({"type": "Commit"});
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
-        }
-
-        Statement::Rollback { .. } => {
-            let plan = json!({"type": "Rollback"});
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
-        }
-
-        Statement::Savepoint { name, .. } => {
-            let plan = json!({"type": "Savepoint", "name": name.to_string()});
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
-        }
-
-        Statement::ReleaseSavepoint { name, .. } => {
-            let plan = json!({"type": "ReleaseSavepoint", "name": name.to_string()});
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
-        }
-
-        Statement::Merge(merge) => {
-            let tname = format!("{}", merge.table);
-            let plan = json!({"type": "Merge", "target": tname, "clauses": merge.clauses.len()});
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
-        }
-
-        Statement::AttachDatabase { schema_name, .. } => {
-            let plan = json!({"type": "AttachDatabase", "schema": schema_name.to_string()});
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
-        }
-
-        Statement::CreateVirtualTable { name, module_name, .. } => {
-            let plan =
-                json!({"type": "CreateVirtualTable", "table": name.to_string(), "module": module_name.to_string()});
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
-        }
-
-        // Fallback for unsupported statement types — show the SQL text
-        other => {
-            let plan = json!({"type": format!("{}", other)});
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
-        }
-    }
-}
-
 // ── LIKE pattern matching ──────────────────────────────────────────────
 
-fn simple_like(value: &str, pattern: &str) -> bool {
+pub(crate) fn simple_like(value: &str, pattern: &str) -> bool {
     let val_chars: Vec<char> = value.chars().collect();
     let pat_chars: Vec<char> = pattern.chars().collect();
     like_match(&val_chars, &pat_chars, 0, 0)
