@@ -89,7 +89,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download addon
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: a3sql-addon
           path: a3sql
@@ -111,7 +111,7 @@ jobs:
       - name: Install HEMTT
         uses: arma-actions/hemtt@v1
       - name: Download addon
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: a3sql-addon
           path: .hemttout/build
