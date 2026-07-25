@@ -1,0 +1,7 @@
+{
+    "inputDirs": ["P:/z/a3db/addons/sql/"],
+    "includePaths": ["P:/"],
+    "excludeList": [".inc.sqf", "\\dev\\", "\\test_"],
+    "outputDir": "P:/",
+    "workerThreads": 4
+}

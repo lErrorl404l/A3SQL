@@ -1,77 +1,66 @@
 #!/usr/bin/env python3
-"""A3DB development environment setup.
-
-Creates junction/symlink so Arma 3 can find the addon source for file patching:
-
-    <Arma 3>\\z\\a3db  →  <project>\\.hemttout\\dev
+"""A3DB dev setup — file patching symlink + BI key generation.
 
 Usage:
-    python tools/setup.py                   # auto-detect Steam path
-    python tools/setup.py "C:/Arma 3"       # explicit path
+    python tools/setup.py               # auto-detect + symlink
+    python tools/setup.py --report      # print env report
+    python tools/setup.py --keys        # generate signing keys
 """
 
-import os, sys, platform, pathlib
+import os, sys, pathlib
 
 PROJECT = pathlib.Path(__file__).resolve().parent.parent
-ARMA3_PATH = None
+
+try:
+    from tools.proton import find_arma3, report as env_report
+except ImportError:
+    find_arma3 = lambda: None
+    env_report = lambda: "proton.py not found"
 
 
-def find_steam_arma3() -> pathlib.Path | None:
-    """Try to find Arma 3 via Steam library."""
-    if platform.system() == "Windows":
-        candidates = [
-            "C:/Program Files (x86)/Steam/steamapps/common/Arma 3",
-            "D:/SteamLibrary/steamapps/common/Arma 3",
-        ]
-    else:
-        candidates = [
-            pathlib.Path.home() / ".steam/steam/steamapps/common/Arma 3",
-            pathlib.Path.home() / ".local/share/Steam/steamapps/common/Arma 3",
-        ]
-    for c in candidates:
-        p = pathlib.Path(c)
-        if p.is_dir():
-            return p
-    return None
-
-
-def setup(source: pathlib.Path, target: pathlib.Path) -> None:
-    """Create symlink or junction from target -> source."""
-    if target.is_symlink() or target.is_dir():
-        print(f"Already exists: {target}")
+def setup_file_patching(a3_path):
+    dev = PROJECT / ".hemttout" / "dev"
+    target = a3_path / "z" / "a3db"
+    if not dev.is_dir():
+        print(f"Run `hemtt build` first — no {dev}")
         return
+    if target.is_symlink() or target.is_dir():
+        print(f"Already set up: {target}")
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.symlink_to(dev, target_is_directory=True)
+    print(f"Symlink: {target} -> {dev}")
 
-    print(f"Creating link: {target} -> {source}")
 
-    if platform.system() == "Windows":
-        parent = target.parent
-        parent.mkdir(parents=True, exist_ok=True)
-        os.system(f'mklink /J "{target}" "{source}"')
+def generate_keys():
+    d = PROJECT / "keys"
+    d.mkdir(exist_ok=True)
+    exe = "/ext/SteamLibrary/steamapps/common/Arma 3 Tools/DSSignFile/DSCreateKey.exe"
+    k = d / "a3db"
+    if k.with_suffix(".biprivatekey").exists():
+        print(f"Keys exist: {k}")
+        return
+    if os.path.exists(exe):
+        import subprocess as sp
+
+        sp.run(["wine64", exe, str(k)], check=True)
+        print(f"Keys: {k}.bikey + .biprivatekey")
     else:
-        target.symlink_to(source, target_is_directory=True)
-
-    print("Done")
+        print("Arma 3 Tools not found — skipping keys")
 
 
 def main():
-    arma3 = ARMA3_PATH or find_steam_arma3()
-    if not arma3:
-        print("Arma 3 not found. Pass the path as argument:")
-        print(
-            f'  python {sys.argv[0]} "C:/Program Files (x86)/Steam/steamapps/common/Arma 3"'
-        )
-        sys.exit(1)
-
-    # Link .hemttout/dev -> <Arma3>/z/a3db
-    hemttout_dev = PROJECT / ".hemttout" / "dev"
-    target = arma3 / "z" / "a3db"
-
-    if not hemttout_dev.is_dir():
-        print(f"Build output not found at {hemttout_dev}. Run `hemtt build` first.")
-        sys.exit(1)
-
-    setup(hemttout_dev, target)
+    a3 = find_arma3()
+    if a3:
+        setup_file_patching(pathlib.Path(a3["path"]))
+    else:
+        print("Arma 3 not found (try --report)")
+    if "--keys" in sys.argv:
+        generate_keys()
 
 
 if __name__ == "__main__":
-    main()
+    if "--report" in sys.argv:
+        print(env_report())
+    else:
+        main()
