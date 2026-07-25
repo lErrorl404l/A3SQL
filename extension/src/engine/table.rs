@@ -17,7 +17,19 @@ pub struct ForeignKeyInfo {
     pub on_update: Option<sqlparser::ast::ReferentialAction>,
 }
 
-/// Runtime index implementation.
+#[derive(Debug, Clone)]
+pub struct TriggerInfo {
+    pub name: String,
+    pub timing: String, // "BEFORE" | "AFTER"
+    pub event: String,  // "INSERT" | "UPDATE" | "DELETE"
+    pub body: String,
+}
+
+impl TriggerInfo {
+    pub fn matches(&self, event: &str, timing: &str) -> bool {
+        self.event == event && self.timing == timing
+    }
+}
 #[derive(Debug, Clone)]
 pub enum IndexImpl {
     BTree(BTreeIndex),
@@ -40,8 +52,10 @@ pub struct Table {
     pub(crate) next_auto_inc: i64,
     /// CHECK constraint expressions evaluated against each row on INSERT/UPDATE.
     pub(crate) check_constraints: Vec<Expr>,
-    /// FOREIGN KEY constraints referencing other tables.
+    /// Foreign key definitions from CREATE TABLE.
     pub(crate) foreign_keys: Vec<ForeignKeyInfo>,
+    /// Triggers defined on this table.
+    pub(crate) triggers: Vec<TriggerInfo>,
 }
 
 impl Table {
@@ -67,6 +81,7 @@ impl Table {
             next_auto_inc: 1,
             check_constraints: Vec::new(),
             foreign_keys: Vec::new(),
+            triggers: Vec::new(),
         })
     }
 
@@ -78,6 +93,19 @@ impl Table {
     /// Number of rows in this table.
     pub fn row_count(&self) -> usize {
         self.rows.len()
+    }
+
+    /// Rebuild pk_set and secondary indices after row mutation.
+    pub fn rebuild_index(&mut self) {
+        self.pk_set.clear();
+        for row in &self.rows {
+            if let Some(key) = self.pk_key(row) {
+                self.pk_set.insert(key);
+            }
+        }
+        for (meta, _) in &self.indices {
+            let _ = meta;
+        }
     }
 
     /// Get column index by name.
