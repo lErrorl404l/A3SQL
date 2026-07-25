@@ -18,7 +18,7 @@ impl TriggerInfo {
 }
 
 /// Fire AFTER triggers for a given table and event.
-pub fn fire_triggers(table_name: &str, event: &str, db: &mut Database) {
+pub fn fire_triggers(_table_name: &str, event: &str, db: &mut Database) {
     let names: Vec<String> = db.table_names().iter().map(|s| s.to_string()).collect();
     for tn in names {
         if let Ok(t) = db.get_table(&tn) {
