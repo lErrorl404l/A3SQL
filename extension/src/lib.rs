@@ -55,6 +55,8 @@ const VERSION: &[u8] = b"a3db 0.1.0\0";
 pub unsafe extern "C" fn RVExtensionVersion(output: *mut c_char, output_size: u32) {
     let len = (output_size as usize).min(VERSION.len());
     std::ptr::copy_nonoverlapping(VERSION.as_ptr(), output as *mut u8, len);
+    // Init built-in plugins on first load
+    engine::plugin::init_builtin_plugins();
 }
 
 /// STRING callExtension STRING — compatibility entry point.
@@ -143,6 +145,12 @@ pub unsafe extern "C" fn RVExtensionRegisterCallback(callbackProc: Option<unsafe
 ///   - Multi-statement SQL (statements separated by `;`)
 ///   - Each parsed statement executed against the engine
 pub fn dispatch(input: &str, args: &[&str]) -> String {
+    // Lazy init built-in plugins (also called on RVExtensionVersion for release)
+    static PLUGIN_INIT: std::sync::Once = std::sync::Once::new();
+    PLUGIN_INIT.call_once(|| {
+        engine::plugin::init_builtin_plugins();
+    });
+
     let trimmed = input.trim();
 
     // ── Custom commands (handled before SQL parsing) ──────────────────
@@ -235,6 +243,26 @@ pub fn dispatch(input: &str, args: &[&str]) -> String {
     if lowered == "disconnect" {
         *REMOTE.lock().unwrap() = None;
         return ok_response("\"Disconnected\"");
+    }
+
+    // ── Plugin commands ─────────────────────────────────────────────────
+    if lowered == "plugins" {
+        let info = engine::plugin::list_plugins();
+        let json = serde_json::to_string(&info).unwrap_or_else(|_| "[]".into());
+        return ok_response(&json);
+    }
+    if lowered.starts_with("register_function ") {
+        let parts: Vec<&str> = trimmed.splitn(3, |c: char| c.is_whitespace()).collect();
+        let name = parts.get(1).unwrap_or(&"unknown");
+        let argc: usize = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
+        engine::plugin::register_sqf_function(name, argc);
+        return ok_response(&format!("\"Function '{}' registered with {} args\"", name, argc));
+    }
+    if lowered.starts_with("plugin_dir ") {
+        let dir = trimmed.trim_start_matches("plugin_dir ").trim();
+        let loaded = engine::plugin::load_plugin_dir(dir);
+        let json = serde_json::to_string(&loaded).unwrap_or_else(|_| "[]".into());
+        return ok_response(&json);
     }
 
     if trimmed.to_uppercase().starts_with("REPLACE INTO") {
@@ -1398,5 +1426,38 @@ mod tests {
             ),
             "SELECT '$1' AS literal FROM t WHERE k = 'real'"
         );
+    }
+
+    // ── Plugin tests ───────────────────────────────────────────────────
+
+    #[test]
+    fn plugins_list_empty() {
+        let r = dispatch("plugins", &[]);
+        assert!(r.starts_with("[0,"), "plugins should succeed: {}", r);
+    }
+
+    #[test]
+    fn plugins_register_sqf() {
+        let r = dispatch("register_function test_echo 1", &[]);
+        assert!(r.starts_with("[0,"), "register should succeed: {}", r);
+    }
+
+    #[test]
+    fn plugins_echo_builtin() {
+        // The builtin_echo plugin registers fn_echo()
+        // Create a table and call fn_echo() via SQL
+        dispatch("CREATE TABLE plugin_echo_test (id STRING PRIMARY KEY)", &[]);
+        dispatch("INSERT INTO plugin_echo_test VALUES ('hello')", &[]);
+        // In the current engine, plugin functions aren't fully wired through SQL
+        // We test the registry directly:
+        let exists = crate::engine::plugin::lookup_function("echo");
+        assert!(exists.is_some(), "builtin_echo should register fn_echo()");
+        let (pf, _) = exists.unwrap();
+        let result = (pf.func)(&[crate::engine::value::DbValue::String("world".into())]);
+        assert!(result.is_ok(), "echo should return ok");
+        // Verify the echoed value matches the input
+        let val = result.unwrap();
+        assert!(matches!(val, crate::engine::value::DbValue::String(ref s) if s == "world"));
+        dispatch("DROP TABLE plugin_echo_test", &[]);
     }
 }

@@ -4,6 +4,7 @@ pub mod database;
 pub mod error;
 pub mod execute;
 pub mod index;
+pub mod plugin;
 pub mod serialize;
 pub mod table;
 pub mod value;
