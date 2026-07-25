@@ -14,7 +14,7 @@
 mod engine;
 mod parser;
 
-use engine::error::{error_response, ok_response, A3dbError, ErrorCode};
+use engine::error::{error_response, ok_response, A3sqlError, ErrorCode};
 use engine::execute as engine_execute;
 
 use parser::parse_sql;
@@ -451,14 +451,14 @@ fn exec_sql_statements(statements: &[String], args: &[&str]) -> String {
                     match engine_execute(stmt, &mut db) {
                         Ok(data) => results.push(data),
                         Err(e) => {
-                            let err = A3dbError::new(ErrorCode::Exec, &e);
+                            let err = A3sqlError::new(ErrorCode::Exec, &e);
                             return err.to_response();
                         }
                     }
                 }
             }
             Err(e) => {
-                let err = A3dbError::new(ErrorCode::Parse, format!("{}", e));
+                let err = A3sqlError::new(ErrorCode::Parse, format!("{}", e));
                 return err.to_response();
             }
         }
