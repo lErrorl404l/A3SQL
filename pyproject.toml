@@ -1,0 +1,12 @@
+[project]
+name = "a3db-tools"
+version = "0.1.0"
+description = "A3DB development tooling (SQF validators, Steam/Proton helpers)"
+requires-python = ">=3.12"
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[tool.uv]
+package = false
