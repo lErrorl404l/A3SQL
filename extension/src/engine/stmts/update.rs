@@ -1,10 +1,8 @@
 use std::collections::HashSet;
 
 use super::super::database::Database;
-use super::super::execute::{
-    eval_expr, eval_literal_expr, fire_triggers, format_projected_result, is_truthy, resolve_table_from_joins,
-    LAST_CHANGES,
-};
+use super::super::execute::{fire_triggers, format_projected_result, resolve_table_from_joins, LAST_CHANGES};
+use super::super::functions::eval::{eval_expr, eval_literal_expr, is_truthy};
 use super::super::value::DbValue;
 use sqlparser::ast::{Expr, ReferentialAction, Update};
 

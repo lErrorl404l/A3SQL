@@ -1,9 +1,8 @@
 // Insert statement handler
 
 use super::super::database::Database;
-use super::super::execute::{
-    eval_expr, eval_literal_expr, format_projected_result, is_truthy, object_name_str, LAST_CHANGES, LAST_INSERT_ROWID,
-};
+use super::super::execute::{format_projected_result, object_name_str, LAST_CHANGES, LAST_INSERT_ROWID};
+use super::super::functions::eval::{eval_expr, eval_literal_expr, is_truthy};
 use super::super::stmts::select::exec_select;
 use super::super::value::DbValue;
 use crate::engine::trigger::fire_triggers;

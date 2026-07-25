@@ -3,9 +3,8 @@ use std::collections::HashSet;
 use sqlparser::ast::{Delete, FromTable, ReferentialAction, TableFactor};
 
 use super::super::database::Database;
-use super::super::execute::{
-    eval_expr, fire_triggers, format_projected_result, is_truthy, object_name_str, LAST_CHANGES,
-};
+use super::super::execute::{fire_triggers, format_projected_result, object_name_str, LAST_CHANGES};
+use super::super::functions::eval::{eval_expr, is_truthy};
 use super::super::value::DbValue;
 
 pub(crate) fn exec_delete(del: &Delete, db: &mut Database) -> Result<String, String> {

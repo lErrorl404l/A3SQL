@@ -5,18 +5,19 @@ use std::collections::HashMap;
 use sqlparser::ast::{
     DataType, Distinct, Expr, FunctionArguments, LimitClause, Merge, MergeAction, MergeClauseKind, MergeInsertKind,
     ObjectName, ObjectType, OrderByKind, Query, Select, SelectItem, SetExpr, Statement, TableFactor, TableWithJoins,
-    UnaryOperator, WindowFrame, WindowFrameBound, WindowFrameUnits, WindowType,
+    WindowFrame, WindowFrameBound, WindowFrameUnits, WindowType,
 };
 
 use super::database::Database;
 use super::functions::aggregate::{
     compute_aggregates, has_aggregate, has_group_by, partition_by_group, projection_expr_name,
 };
-use super::functions::eval::{
-    apply_binary_op, curdate_value, exec_function, exec_std_function, extract_func_arg, get_func_arg_unnamed,
-    materialize_view, now_value, resolve_single_table, resolve_table_factor, simple_like, sql_val_to_db, to_float,
-    try_btree_index, try_trigram_index, value_to_string, values_equal,
+use super::functions::builtin::{
+    curdate_value, exec_std_function, extract_func_arg, get_func_arg_unnamed, materialize_view, now_value,
+    resolve_single_table, resolve_table_factor, simple_like, sql_val_to_db, try_btree_index, try_trigram_index,
+    value_to_string, values_equal,
 };
+use super::functions::eval::{apply_binary_op, eval_expr, eval_literal_expr, is_truthy, to_float};
 use super::stmts;
 use super::table::Table;
 use super::value::{Column, ColumnType, DbValue};
@@ -1601,125 +1602,7 @@ pub(crate) fn parse_expr_as_usize(expr: Option<&Expr>) -> Option<usize> {
 // ── DELETE ──────────────────────────────────────────────────────────────
 
 // ── Expression evaluator ────────────────────────────────────────────────
-
-pub(crate) fn eval_expr(expr: &Expr, row: &[DbValue], col_map: &HashMap<String, usize>) -> Result<DbValue, String> {
-    match expr {
-        Expr::Identifier(ident) => {
-            let name = ident.value.to_lowercase();
-            if name == "current_timestamp" || name == "current_time" {
-                return Ok(now_value());
-            }
-            if name == "current_date" {
-                return Ok(curdate_value());
-            }
-            let idx = col_map.get(&name).ok_or_else(|| format!("Unknown column '{}'", name))?;
-            Ok(row[*idx].clone())
-        }
-        Expr::Value(v) => Ok(sql_val_to_db(v)),
-        Expr::BinaryOp { left, op, right } => {
-            let l = eval_expr(left, row, col_map)?;
-            let r = eval_expr(right, row, col_map)?;
-            apply_binary_op(&l, op, &r)
-        }
-        Expr::UnaryOp { op, expr } => {
-            let val = eval_expr(expr, row, col_map)?;
-            apply_unary_op(op, &val)
-        }
-        Expr::Nested(inner) => eval_expr(inner, row, col_map),
-        Expr::IsNull(expr) => {
-            let val = eval_expr(expr, row, col_map)?;
-            Ok(DbValue::Bool(matches!(val, DbValue::Null)))
-        }
-        Expr::IsNotNull(expr) => {
-            let val = eval_expr(expr, row, col_map)?;
-            Ok(DbValue::Bool(!matches!(val, DbValue::Null)))
-        }
-        Expr::Like {
-            negated, expr, pattern, ..
-        } => {
-            let val = eval_expr(expr, row, col_map)?;
-            let pat = eval_expr(pattern, row, col_map)?;
-            let matched = simple_like(&value_to_string(&val), &value_to_string(&pat));
-            Ok(DbValue::Bool(if *negated { !matched } else { matched }))
-        }
-        Expr::SimilarTo {
-            negated, expr, pattern, ..
-        } => {
-            let val = eval_expr(expr, row, col_map)?;
-            let pat = eval_expr(pattern, row, col_map)?;
-            // ponytail: SIMILAR TO uses LIKE-style matching (%, _ wildcards)
-            let matched = simple_like(&value_to_string(&val), &value_to_string(&pat));
-            Ok(DbValue::Bool(if *negated { !matched } else { matched }))
-        }
-        Expr::InList { expr, list, negated } => {
-            let val = eval_expr(expr, row, col_map)?;
-            let mut found = false;
-            for item in list {
-                let item_val = eval_expr(item, row, col_map)?;
-                if val == item_val {
-                    found = true;
-                    break;
-                }
-            }
-            Ok(DbValue::Bool(if *negated { !found } else { found }))
-        }
-        Expr::Function(func) => exec_function(func, row, col_map),
-        Expr::InSubquery {
-            expr,
-            subquery,
-            negated,
-        } => {
-            let val = eval_expr(expr, row, col_map)?;
-            let subq_result = exec_subquery(subquery)?;
-            let found = subq_result.contains(&val);
-            Ok(DbValue::Bool(if *negated { !found } else { found }))
-        }
-        Expr::Case {
-            operand,
-            conditions,
-            else_result,
-            ..
-        } => {
-            let operand_val = operand.as_ref().map(|o| eval_expr(o, row, col_map)).transpose()?;
-            for cw in conditions.iter() {
-                let matched = match &operand_val {
-                    Some(ref op_val) => *op_val == eval_expr(&cw.condition, row, col_map)?,
-                    None => is_truthy(&eval_expr(&cw.condition, row, col_map)?),
-                };
-                if matched {
-                    return eval_expr(&cw.result, row, col_map);
-                }
-            }
-            match else_result {
-                Some(expr) => eval_expr(expr, row, col_map),
-                None => Ok(DbValue::Null),
-            }
-        }
-        Expr::Between {
-            expr,
-            low,
-            high,
-            negated,
-        } => {
-            let val = eval_expr(expr, row, col_map)?;
-            let l = eval_expr(low, row, col_map)?;
-            let h = eval_expr(high, row, col_map)?;
-            use std::cmp::Ordering;
-            let ge = db_value_cmp(&val, &l) != Ordering::Less;
-            let le = db_value_cmp(&val, &h) != Ordering::Greater;
-            Ok(DbValue::Bool(if *negated { !(ge && le) } else { ge && le }))
-        }
-        Expr::Exists { subquery, negated } => {
-            let vals = exec_subquery(subquery)?;
-            Ok(DbValue::Bool(if *negated { vals.is_empty() } else { !vals.is_empty() }))
-        }
-        Expr::Cast { expr, data_type, .. } => {
-            let val = eval_expr(expr, row, col_map)?;
-            cast_db_value(val, data_type)
-        }
-        _ => Err(format!("Unsupported expression: {:?}", expr)),
-    }
-}
+// Moved to functions/eval.rs: eval_expr
 
 /// Convert a serde_json::Value to DbValue for CTE row processing.
 pub(crate) fn json_val_to_dbvalue(v: &serde_json::Value) -> DbValue {
@@ -1753,117 +1636,10 @@ fn json_type_to_column(v: &serde_json::Value) -> ColumnType {
     }
 }
 
-/// CAST a DbValue to the target sqlparser DataType.
-fn cast_db_value(val: DbValue, target: &DataType) -> Result<DbValue, String> {
-    use sqlparser::ast::DataType as DT;
-    match target {
-        DT::Bool | DT::Boolean => match val {
-            DbValue::Bool(b) => Ok(DbValue::Bool(b)),
-            DbValue::Int(i) => Ok(DbValue::Bool(i != 0)),
-            DbValue::Float(_) => Ok(DbValue::Bool(true)),
-            DbValue::String(s) => {
-                let lower = s.to_lowercase();
-                match lower.as_str() {
-                    "true" | "1" | "yes" => Ok(DbValue::Bool(true)),
-                    "false" | "0" | "no" => Ok(DbValue::Bool(false)),
-                    _ => Err(format!("Cannot cast '{}' to BOOL", s)),
-                }
-            }
-            DbValue::Null => Ok(DbValue::Null),
-            _ => Err(format!("Cannot cast {:?} to BOOL", val)),
-        },
-        DT::Int(_) | DT::BigInt(_) | DT::SmallInt(_) | DT::TinyInt(_) => match val {
-            DbValue::Int(i) => Ok(DbValue::Int(i)),
-            DbValue::Float(f) => Ok(DbValue::Int(f as i64)),
-            DbValue::String(s) => {
-                let trimmed = s.trim();
-                if trimmed.is_empty() {
-                    Ok(DbValue::Int(0))
-                } else {
-                    trimmed
-                        .parse::<i64>()
-                        .map(DbValue::Int)
-                        .map_err(|_| format!("Cannot cast '{}' to INT", s))
-                }
-            }
-            DbValue::Bool(b) => Ok(DbValue::Int(if b { 1 } else { 0 })),
-            DbValue::Null => Ok(DbValue::Null),
-            _ => Err(format!("Cannot cast {:?} to INT", val)),
-        },
-        DT::Float(_) | DT::Double(_) | DT::Real | DT::Decimal(_) | DT::Numeric(_) => match val {
-            DbValue::Int(i) => Ok(DbValue::Float(i as f64)),
-            DbValue::Float(f) => Ok(DbValue::Float(f)),
-            DbValue::String(s) => {
-                let trimmed = s.trim();
-                if trimmed.is_empty() {
-                    Ok(DbValue::Float(0.0))
-                } else {
-                    trimmed
-                        .parse::<f64>()
-                        .map(DbValue::Float)
-                        .map_err(|_| format!("Cannot cast '{}' to FLOAT", s))
-                }
-            }
-            DbValue::Bool(b) => Ok(DbValue::Float(if b { 1.0 } else { 0.0 })),
-            DbValue::Null => Ok(DbValue::Null),
-            _ => Err(format!("Cannot cast {:?} to FLOAT", val)),
-        },
-        DT::Varchar(_) | DT::Char(_) | DT::Text | DT::String(_) | DT::Uuid => Ok(DbValue::String(val.to_string())),
-        _ => Ok(DbValue::String(val.to_string())),
-    }
-}
-
-pub(crate) fn eval_literal_expr(expr: &Expr) -> Result<DbValue, String> {
-    match expr {
-        Expr::Value(v) => Ok(sql_val_to_db(&v.value)),
-        Expr::Nested(inner) => eval_literal_expr(inner),
-        Expr::UnaryOp { op, expr } => {
-            let val = eval_literal_expr(expr)?;
-            apply_unary_op(op, &val)
-        }
-        _ => Err(format!("Complex expressions not supported in values: {:?}", expr)),
-    }
-}
-
-// ── Function execution ──────────────────────────────────────────────────
-// Moved to functions/eval.rs: exec_function, extract_func_args
-
-// Moved to functions/eval.rs: curdate_value, parse_iso_date, date_to_days, now_value
-
-// Moved to functions/eval.rs: exec_std_function
-
-// Moved to functions/eval.rs: get_func_arg_unnamed, exec_fuzzy_match
-
-// Moved to functions/eval.rs: apply_binary_op
-
-fn apply_unary_op(op: &UnaryOperator, val: &DbValue) -> Result<DbValue, String> {
-    match op {
-        UnaryOperator::Not => Ok(DbValue::Bool(!is_truthy(val))),
-        UnaryOperator::Plus => Ok(val.clone()),
-        UnaryOperator::Minus => match val {
-            DbValue::Int(n) => Ok(DbValue::Int(-n)),
-            DbValue::Float(f) => Ok(DbValue::Float(-f)),
-            _ => Err(format!("Cannot negate {}", val)),
-        },
-        _ => Err(format!("Unsupported unary operator: {:?}", op)),
-    }
-}
-
-// Moved to functions/eval.rs: values_equal, cmp_values, arith_op, to_float
-
-pub(crate) fn is_truthy(v: &DbValue) -> bool {
-    match v {
-        DbValue::Null => false,
-        DbValue::Bool(b) => *b,
-        DbValue::Int(n) => *n != 0,
-        DbValue::Float(f) => *f != 0.0,
-        DbValue::String(s) => !s.is_empty(),
-        DbValue::Strings(arr) => !arr.is_empty(),
-        DbValue::Floats(arr) => !arr.is_empty(),
-    }
-}
-
-// Moved to functions/eval.rs: value_to_string, sql_val_to_db
+// Moved to functions/eval.rs: cast_db_value, eval_literal_expr, apply_unary_op, is_truthy
+// Moved to functions/builtin.rs: curdate_value, now_value, parse_iso_date, date_to_days,
+//   exec_std_function, get_func_arg_unnamed, exec_fuzzy_match, values_equal, cmp_values,
+//   arith_op, to_float, value_to_string, sql_val_to_db
 
 // ── Data type parsing ──────────────────────────────────────────────────
 
@@ -2097,7 +1873,7 @@ fn apply_order_limit(json_str: &str, query: &Query) -> Result<String, String> {
 
 /// Execute a subquery (SELECT) and return the first column of each row.
 /// Uses the thread-local DB snapshot set by exec_select (avoids deadlock).
-fn exec_subquery(query: &Query) -> Result<Vec<DbValue>, String> {
+pub(crate) fn exec_subquery(query: &Query) -> Result<Vec<DbValue>, String> {
     let db_snapshot = SUBQ_DB.with(|snap| {
         snap.borrow()
             .as_ref()

@@ -4,8 +4,9 @@ use std::collections::HashMap;
 
 use sqlparser::ast::{Expr, Function, Select, SelectItem};
 
-use super::super::execute::{db_value_cmp, eval_expr, eval_literal_expr, is_truthy};
-use super::super::functions::eval::{extract_func_arg, get_func_arg_unnamed, value_to_string};
+use super::super::execute::db_value_cmp;
+use super::super::functions::builtin::{extract_func_arg, get_func_arg_unnamed, value_to_string};
+use super::super::functions::eval::{eval_expr, eval_literal_expr, is_truthy};
 use super::super::value::DbValue;
 
 pub(crate) fn has_group_by(select: &Select) -> bool {

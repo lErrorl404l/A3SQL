@@ -1,5 +1,7 @@
 // a3sql database — table container + schema management
 
+pub mod save;
+
 use std::collections::HashMap;
 
 use super::table::Table;
