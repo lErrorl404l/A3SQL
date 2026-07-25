@@ -19,6 +19,12 @@ pub struct Database {
     views: HashMap<String, String>,
     /// Stack of savepoints for transaction rollback.
     savepoints: Vec<Snapshot>,
+    /// Last inserted row's primary key value (set after INSERT).
+    pub last_insert_rowid: Option<String>,
+    /// Number of rows modified by the last statement (INSERT/UPDATE/DELETE).
+    pub last_changes: usize,
+    /// Session-level configuration (SET / PRAGMA key=value pairs).
+    pub config: HashMap<String, String>,
 }
 
 impl Database {
@@ -27,6 +33,9 @@ impl Database {
             tables: HashMap::new(),
             views: HashMap::new(),
             savepoints: Vec::new(),
+            last_insert_rowid: None,
+            last_changes: 0,
+            config: HashMap::new(),
         }
     }
 
@@ -143,6 +152,16 @@ impl Database {
     }
 
     /// Check if a table exists.
+    /// Set a runtime config value.
+    pub fn set_config(&mut self, key: &str, value: &str) {
+        self.config.insert(key.to_lowercase(), value.to_string());
+    }
+
+    /// Get a runtime config value.
+    pub fn get_config(&self, key: &str) -> Option<&str> {
+        self.config.get(key).map(|s| s.as_str())
+    }
+
     pub fn has_table(&self, name: &str) -> bool {
         self.tables.contains_key(name)
     }
