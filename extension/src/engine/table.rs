@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet};
 use sqlparser::ast::Expr;
 
 use super::index::{BTreeIndex, IndexMeta, IndexType, TrigramIndex};
+use super::trigger::TriggerInfo;
 use super::value::{Column, ColumnType, DbValue};
 
 /// A foreign key constraint referencing another table's column.
@@ -17,19 +18,6 @@ pub struct ForeignKeyInfo {
     pub on_update: Option<sqlparser::ast::ReferentialAction>,
 }
 
-#[derive(Debug, Clone)]
-pub struct TriggerInfo {
-    pub name: String,
-    pub timing: String, // "BEFORE" | "AFTER"
-    pub event: String,  // "INSERT" | "UPDATE" | "DELETE"
-    pub body: String,
-}
-
-impl TriggerInfo {
-    pub fn matches(&self, event: &str, timing: &str) -> bool {
-        self.event == event && self.timing == timing
-    }
-}
 #[derive(Debug, Clone)]
 pub enum IndexImpl {
     BTree(BTreeIndex),
