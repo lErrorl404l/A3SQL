@@ -238,7 +238,7 @@ pub(crate) fn exec_comment_on(
 pub(crate) fn exec_call(func: &Function, _db: &mut Database) -> Result<String, String> {
     let empty = Vec::new();
     let empty_map = std::collections::HashMap::new();
-    match super::super::execute::exec_function(func, &empty, &empty_map) {
+    match super::super::functions::eval::exec_function(func, &empty, &empty_map) {
         Ok(val) => Ok(format!("\"CALL returned: {}\"", val)),
         Err(e) => Err(format!("CALL error: {}", e)),
     }

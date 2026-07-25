@@ -9,11 +9,16 @@ use sqlparser::ast::{
 
 use super::super::database::Database;
 use super::super::execute::{
-    apply_binary_op, apply_limit_offset, compute_aggregates, curdate_value, db_value_cmp, eval_expr, eval_literal_expr,
-    exec_std_function, extract_func_arg, format_projected_result, get_func_arg_unnamed, has_aggregate, has_group_by,
-    is_truthy, materialize_view, now_value, object_name_str, parse_expr_as_usize, partition_by_group,
-    projection_expr_name, resolve_single_table, resolve_table_factor, simple_like, sort_rows, sql_val_to_db,
-    try_btree_index, try_trigram_index, value_to_string, values_equal,
+    apply_limit_offset, db_value_cmp, eval_expr, eval_literal_expr, format_projected_result, is_truthy,
+    object_name_str, parse_expr_as_usize, sort_rows,
+};
+use super::super::functions::aggregate::{
+    compute_aggregates, has_aggregate, has_group_by, partition_by_group, projection_expr_name,
+};
+use super::super::functions::eval::{
+    apply_binary_op, curdate_value, exec_std_function, extract_func_arg, get_func_arg_unnamed, materialize_view,
+    now_value, resolve_single_table, resolve_table_factor, simple_like, sql_val_to_db, try_btree_index,
+    try_trigram_index, value_to_string, values_equal,
 };
 use super::super::table::Table;
 use super::super::value::DbValue;
