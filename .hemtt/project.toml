@@ -27,6 +27,14 @@ post_release = ["01_rename_zip"]
 # Launch profiles moved to .hemtt/launch.toml
 # Run: hemtt launch [profile]
 
+# ── Signing ───────────────────────────────────────────────────────────────
+[hemtt.signing]
+keyname = "a3db_0.1.0"
+# Path to the private key. On CI, use a GitHub secret or encrypted key file.
+private_key = "keys/a3db.biprivatekey"
+# ponytail: wine is available on this system — Arma 3 Tools DSSignFile runs via wine64
+dsign = ["wine64", "/ext/SteamLibrary/steamapps/common/Arma 3 Tools/DSSignFile/DSSignFile.exe"]
+
 # ── Release ──────────────────────────────────────────────────────────────
 [hemtt.release]
 folder = "a3db"
