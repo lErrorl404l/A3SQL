@@ -75,6 +75,11 @@ impl Table {
         self.columns.len()
     }
 
+    /// Number of rows in this table.
+    pub fn row_count(&self) -> usize {
+        self.rows.len()
+    }
+
     /// Get column index by name.
     pub fn col_idx(&self, name: &str) -> Option<usize> {
         self.col_index.get(name).copied()
