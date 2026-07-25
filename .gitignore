@@ -34,3 +34,5 @@ a3db.so
 release/
 releases/
 docs/wiki/.git
+.venv
+.venv
