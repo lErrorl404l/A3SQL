@@ -1,4 +1,4 @@
-// a3db SQL parser — wraps sqlparser-rs with custom dialect and preprocessing
+// a3sql SQL parser — wraps sqlparser-rs with custom dialect and preprocessing
 
 pub mod dialect;
 pub mod preprocessor;

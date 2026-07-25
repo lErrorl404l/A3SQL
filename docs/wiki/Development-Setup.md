@@ -15,11 +15,11 @@ Setting up your environment to build and test A3DB locally, following ACE3/CBA c
 
 ```bash
 # 1. Clone
-git clone https://github.com/lErrorl404l/a3db.git
-cd a3db
+git clone https://github.com/lErrorl404l/a3sql.git
+cd a3sql
 
 # 2. Build the Rust DLL (Linux native)
-cargo build --release -p a3db
+cargo build --release -p a3sql
 
 # 3. Build the addon PBOs
 hemtt build
@@ -71,7 +71,7 @@ Release builds should be signed with a BI key. Keys are generated using Arma 3 T
 
 ```bash
 uv run python3 tools/setup.py --keys
-# Creates keys/a3db.bikey + keys/a3db.biprivatekey
+# Creates keys/a3sql.bikey + keys/a3sql.biprivatekey
 ```
 
 HEMTT signs automatically during `hemtt release`. Config is in `.hemtt/project.toml`.
@@ -81,8 +81,8 @@ HEMTT signs automatically during `hemtt release`. Config is in `.hemtt/project.t
 ### Rust tests (CI — fastest feedback)
 
 ```bash
-cargo test --lib -p a3db        # 162+ tests
-cargo clippy -p a3db            # lint
+cargo test --lib -p a3sql        # 162+ tests
+cargo clippy -p a3sql            # lint
 cargo fmt --check               # formatting
 ```
 
@@ -97,20 +97,20 @@ uv run python3 tools/config_style_checker.py
 
 ```sqf
 // Run from Arma 3 debug console (server only)
-execVM "tests/a3db_smoke_test.sqf";
+execVM "tests/a3sql_smoke_test.sqf";
 // Check RPT log for "A3DB Smoke Test" results
 ```
 
 ## Project Structure
 
 ```
-a3db/
+a3sql/
 ├── extension/           # Rust DLL (cdylib + rlib)
 │   └── src/
 │       ├── lib.rs       # C ABI (RVExtension, dispatcher)
 │       ├── engine/      # In-memory database engine
 │       ├── parser/      # SQL parser (sqlparser-rs dialect)
-│       └── bin/         # a3db-server (standalone TCP)
+│       └── bin/         # a3sql-server (standalone TCP)
 ├── addons/
 │   ├── main/            # Core addon (CfgPatches, macros)
 │   └── sql/             # SQL engine SQF API (CfgFunctions)

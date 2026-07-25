@@ -2,7 +2,7 @@
 
 params [
     ["_table", "", [""]],
-    ["_extension", "a3db"]
+    ["_extension", "a3sql"]
 ];
 
 private _result = _extension callExtension [format ["export csv %1", _table], []];

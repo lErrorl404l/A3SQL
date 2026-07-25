@@ -2,7 +2,7 @@
 
 params [
     ["_sql", "", [""]],
-    ["_extension", "a3db"],
+    ["_extension", "a3sql"],
     ["_params", [], [[]]]
 ];
 

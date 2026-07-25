@@ -1,4 +1,4 @@
-// a3db serialization — JSON, CSV, SQL, and Binary formats
+// a3sql serialization — JSON, CSV, SQL, and Binary formats
 
 use super::database::Database;
 use super::table::Table;
@@ -299,7 +299,7 @@ fn parse_csv_line(line: &str) -> Vec<String> {
 /// Export full database as SQL statements.
 pub fn export_sql(db: &Database) -> String {
     let mut out = String::new();
-    out.push_str("-- a3db SQL dump\n\n");
+    out.push_str("-- a3sql SQL dump\n\n");
 
     for name in db.table_names() {
         let table = match db.get_table(name) {

@@ -1,15 +1,15 @@
-// a3db-server — standalone database server for a3db
+// a3sql-server — standalone database server for a3sql
 //
-// Thin CLI wrapper around a3db::start_server(). Shares ALL features with
+// Thin CLI wrapper around a3sql::start_server(). Shares ALL features with
 // the in-game extension: LOGIN auth, PING, DESCRIBE, multi-client TCP, etc.
 //
 // Usage:
-//   a3db-server                  # port 33306, localhost, in-memory
-//   a3db-server --port 33307     # custom port
-//   a3db-server --bind 0.0.0.0   # network-accessible
-//   a3db-server --db data.bin    # persistent (auto-save every 30s)
-//   a3db-server --interactive    # interactive REPL mode
-//   a3db-server --help           # options
+//   a3sql-server                  # port 33306, localhost, in-memory
+//   a3sql-server --port 33307     # custom port
+//   a3sql-server --bind 0.0.0.0   # network-accessible
+//   a3sql-server --db data.bin    # persistent (auto-save every 30s)
+//   a3sql-server --interactive    # interactive REPL mode
+//   a3sql-server --help           # options
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -40,7 +40,7 @@ fn main() {
                 interactive = true;
             }
             "--help" | "-h" => {
-                eprintln!("a3db-server [OPTIONS]");
+                eprintln!("a3sql-server [OPTIONS]");
                 eprintln!("  --port, -p <PORT>   TCP port (default: 33306)");
                 eprintln!("  --bind, -b <IP>     Bind address (default: 127.0.0.1)");
                 eprintln!("  --db, -d <PATH>     Persist database to file (auto-save)");
@@ -64,9 +64,9 @@ fn main() {
     })
     .expect("Error setting Ctrl+C handler");
 
-    match a3db::start_server(&bind, port, db_path.as_deref()) {
+    match a3sql::start_server(&bind, port, db_path.as_deref()) {
         Ok(addr) => {
-            eprintln!("a3db-server v{} on {}", env!("CARGO_PKG_VERSION"), addr);
+            eprintln!("a3sql-server v{} on {}", env!("CARGO_PKG_VERSION"), addr);
             if let Some(ref p) = db_path {
                 eprintln!("  persist: {} (auto-save every 30s)", p);
             }
@@ -100,7 +100,7 @@ fn repl(running: &AtomicBool) {
     eprintln!("Interactive REPL — type SQL or commands (:help for list)");
 
     loop {
-        let _ = write!(stdout, "a3db> ");
+        let _ = write!(stdout, "a3sql> ");
         let _ = stdout.flush();
 
         let mut line = String::new();
@@ -135,7 +135,7 @@ fn repl(running: &AtomicBool) {
             }
         }
 
-        let result = a3db::dispatch(trimmed, &[]);
+        let result = a3sql::dispatch(trimmed, &[]);
         println!("{}", result);
     }
 }
@@ -143,12 +143,12 @@ fn repl(running: &AtomicBool) {
 /// Stop the TCP listener and persist database if configured.
 fn graceful_shutdown(db_path: &Option<String>) {
     // Stop accepting new TCP connections
-    a3db::dispatch("stop", &[]);
+    a3sql::dispatch("stop", &[]);
 
     // Final save if persistence is enabled
     if let Some(ref path) = db_path {
         eprintln!("Saving database to {}...", path);
-        let r = a3db::dispatch(&format!("save {}", path), &[]);
+        let r = a3sql::dispatch(&format!("save {}", path), &[]);
         if r.contains("ERR") {
             eprintln!("Save failed: {}", r);
         } else {

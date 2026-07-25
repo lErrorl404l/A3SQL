@@ -20,7 +20,7 @@ except ImportError:
 
 def setup_file_patching(a3_path):
     dev = PROJECT / ".hemttout" / "dev"
-    target = a3_path / "z" / "a3db"
+    target = a3_path / "z" / "a3sql"
     if not dev.is_dir():
         print(f"Run `hemtt build` first — no {dev}")
         return
@@ -36,7 +36,7 @@ def generate_keys():
     d = PROJECT / "keys"
     d.mkdir(exist_ok=True)
     exe = "/ext/SteamLibrary/steamapps/common/Arma 3 Tools/DSSignFile/DSCreateKey.exe"
-    k = d / "a3db"
+    k = d / "a3sql"
     if k.with_suffix(".biprivatekey").exists():
         print(f"Keys exist: {k}")
         return

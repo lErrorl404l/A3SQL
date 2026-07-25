@@ -1,5 +1,5 @@
 {
-    "inputDirs": ["P:/z/a3db/addons/main/"],
+    "inputDirs": ["P:/z/a3sql/addons/main/"],
     "includePaths": ["P:/"],
     "excludeList": [".inc.sqf", "\\dev\\", "\\test_"],
     "outputDir": "P:/",

@@ -8,7 +8,7 @@ private _pass = 0;
 
 private _fnc_test = {
     params ["_name", "_sql", "_expected_ok"];
-    private _result = [_sql] call a3db_fnc_execute;
+    private _result = [_sql] call a3sql_fnc_execute;
     private _ok = (_result select 0) == 0;
     if (_ok == _expected_ok) then {
         _pass = _pass + 1;

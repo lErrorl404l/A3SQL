@@ -10,7 +10,7 @@
 #define MAINPREFIX z
 #endif
 #ifndef PREFIX
-#define PREFIX a3db
+#define PREFIX a3sql
 #endif
 
 #include "script_version.hpp"

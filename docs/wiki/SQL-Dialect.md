@@ -4,9 +4,9 @@ An embeddable SQL database engine for Arma 3 mods. Like **SQLite for Arma** — 
 Rust `callExtension` that lets modders write SQL directly in SQF.
 
 ```sqf
-["CREATE TABLE weapons (id STRING PRIMARY KEY, name STRING)"] call a3db_fnc_execute;
-["INSERT INTO weapons VALUES ('m4a1', 'M4A1')"] call a3db_fnc_execute;
-_result = ["SELECT * FROM weapons WHERE name %% 'm4'"] call a3db_fnc_execute;
+["CREATE TABLE weapons (id STRING PRIMARY KEY, name STRING)"] call a3sql_fnc_execute;
+["INSERT INTO weapons VALUES ('m4a1', 'M4A1')"] call a3sql_fnc_execute;
+_result = ["SELECT * FROM weapons WHERE name %% 'm4'"] call a3sql_fnc_execute;
 ```
 
 ## Features
@@ -30,25 +30,25 @@ _result = ["SELECT * FROM weapons WHERE name %% 'm4'"] call a3db_fnc_execute;
 
 ## Quick Start
 
-### 1. Add a3db as a dependency
+### 1. Add a3sql as a dependency
 
 In your mod's CfgPatches:
 
 ```cpp
-requiredAddons[] = {"cba_main", "a3db_main", "a3db_sql"};
+requiredAddons[] = {"cba_main", "a3sql_main", "a3sql_sql"};
 ```
 
 ### 2. Call from SQF
 
 ```sqf
 // Create
-["CREATE TABLE players (uid STRING PRIMARY KEY, name STRING, score INT)"] call a3db_fnc_execute;
+["CREATE TABLE players (uid STRING PRIMARY KEY, name STRING, score INT)"] call a3sql_fnc_execute;
 
 // Insert
-["INSERT INTO players VALUES ('76561198000000001', 'Scarface', 1500)"] call a3db_fnc_execute;
+["INSERT INTO players VALUES ('76561198000000001', 'Scarface', 1500)"] call a3sql_fnc_execute;
 
 // Query
-_result = ["SELECT name, score FROM players WHERE score > 1000 ORDER BY score DESC"] call a3db_fnc_execute;
+_result = ["SELECT name, score FROM players WHERE score > 1000 ORDER BY score DESC"] call a3sql_fnc_execute;
 // Returns: [0, "OK", [["name","score"],["Scarface",1500]]]
 ```
 
@@ -56,23 +56,23 @@ _result = ["SELECT name, score FROM players WHERE score > 1000 ORDER BY score DE
 
 ```sqf
 // Fuzzy search
-_result = ["SELECT name FROM weapons WHERE name %% 'm4'"] call a3db_fnc_execute;
+_result = ["SELECT name FROM weapons WHERE name %% 'm4'"] call a3sql_fnc_execute;
 
 // Transactions
-["BEGIN"] call a3db_fnc_execute;
-["INSERT INTO log (action) VALUES ('mission_start')"] call a3db_fnc_execute;
-["COMMIT"] call a3db_fnc_execute;
+["BEGIN"] call a3sql_fnc_execute;
+["INSERT INTO log (action) VALUES ('mission_start')"] call a3sql_fnc_execute;
+["COMMIT"] call a3sql_fnc_execute;
 
 // Save/load persistence
-["data.bin"] call a3db_fnc_save;
-["data.bin"] call a3db_fnc_load;
+["data.bin"] call a3sql_fnc_save;
+["data.bin"] call a3sql_fnc_load;
 
 // Export
-_table_data = ["players"] call a3db_fnc_exportJSON;
-_sql_backup = [] call a3db_fnc_exportSQL;
+_table_data = ["players"] call a3sql_fnc_exportJSON;
+_sql_backup = [] call a3sql_fnc_exportSQL;
 
 // External TCP query (from Python)
-// ["listen"] call a3db_fnc_execute;  // auto-starts at game boot
+// ["listen"] call a3sql_fnc_execute;  // auto-starts at game boot
 ```
 
 ### 4. CBA Addon Settings
@@ -88,7 +88,7 @@ Options → Addon Configuration → A3DB:
 | Listener Password | EDIT | (empty) | TCP login |
 | Auto-Save | CHECKBOX | false | Save on mission end |
 | Auto-Load | CHECKBOX | false | Load on mission start |
-| Auto-Save Path | EDIT | a3db_autosave.bin | File path |
+| Auto-Save Path | EDIT | a3sql_autosave.bin | File path |
 | Log Level | LIST | INFO | RPT verbosity |
 - **Auto-Save**: Save database when mission ends
 - **Auto-Save File**: File path for auto-save
@@ -98,22 +98,22 @@ Options → Addon Configuration → A3DB:
 ```sqf
 if (isServer) then {
     // Create tables on mission start
-    ["CREATE TABLE IF NOT EXISTS stats (uid STRING, name STRING, score INT)"] call a3db_fnc_execute;
+    ["CREATE TABLE IF NOT EXISTS stats (uid STRING, name STRING, score INT)"] call a3sql_fnc_execute;
 
     // Restore from previous session
-    ["stats_data.bin"] call a3db_fnc_load;
+    ["stats_data.bin"] call a3sql_fnc_load;
 
     // Auto-save on mission end
     addMissionEventHandler ["Ended", {
-        ["stats_data.bin"] call a3db_fnc_save;
+        ["stats_data.bin"] call a3sql_fnc_save;
     }];
 };
 
 // Record event
-["INSERT INTO stats VALUES ('76561198000000001', 'Scarface', 1500)"] call a3db_fnc_execute;
+["INSERT INTO stats VALUES ('76561198000000001', 'Scarface', 1500)"] call a3sql_fnc_execute;
 
 // Query top scores
-_result = ["SELECT name, score FROM stats ORDER BY score DESC LIMIT 10"] call a3db_fnc_execute;
+_result = ["SELECT name, score FROM stats ORDER BY score DESC LIMIT 10"] call a3sql_fnc_execute;
 ```
 
 ### 6. External query (TCP)
@@ -269,7 +269,7 @@ REINDEX weapons;
 
 ```sqf
 // In init.sqf or CfgFunctions init:
-private _version = "a3db" callExtension "version";
+private _version = "a3sql" callExtension "version";
 diag_log text format ["[A3DB] Loading: %1", _version];
 ```
 
@@ -277,13 +277,13 @@ diag_log text format ["[A3DB] Loading: %1", _version];
 
 ```sqf
 // Single SQL statement (STRING callExtension STRING):
-private _result = "a3db" callExtension "SELECT * FROM weapons";
+private _result = "a3sql" callExtension "SELECT * FROM weapons";
 
 // SQL with args (STRING callExtension ARRAY):
-private _result = ["a3db", "INSERT INTO weapons VALUES ('m4a1', 'M4A1', '5.56x45mm', 368.3)"] callExtension;
+private _result = ["a3sql", "INSERT INTO weapons VALUES ('m4a1', 'M4A1', '5.56x45mm', 368.3)"] callExtension;
 
 // Multi-statement (separate with semicolons):
-private _result = "a3db" callExtension "CREATE TABLE t (id STRING); INSERT INTO t VALUES ('a'); SELECT * FROM t";
+private _result = "a3sql" callExtension "CREATE TABLE t (id STRING); INSERT INTO t VALUES ('a'); SELECT * FROM t";
 ```
 
 ### Response Format
@@ -318,19 +318,19 @@ For JOINs with prefixed column names:
 
 ```sqf
 // Version
-private _version = "a3db" callExtension "version";
-// → [0,"OK","a3db 0.1.0"]
+private _version = "a3sql" callExtension "version";
+// → [0,"OK","a3sql 0.1.0"]
 
 // SQL dump
-private _dump = "a3db" callExtension "dump_sql";
+private _dump = "a3sql" callExtension "dump_sql";
 // → [0,"OK","CREATE TABLE weapons (...);..."]
 
 // Query with parameterized args (SQL injection safe)
-private _result = ["a3db", "SELECT * FROM weapons WHERE id = $1", ["m4a1"]] callExtension;
+private _result = ["a3sql", "SELECT * FROM weapons WHERE id = $1", ["m4a1"]] callExtension;
 
 // TCP listener (auto-starts on game boot). Manual control:
-private _result = ["a3db", "listen", ["33306"]] callExtension;
-private _result = ["a3db", "stop"] callExtension;
+private _result = ["a3sql", "listen", ["33306"]] callExtension;
+private _result = ["a3sql", "stop"] callExtension;
 ```
 
 ### CBA Functions
@@ -339,18 +339,18 @@ When using CBA (recommended), the addon registers these functions via `CfgFuncti
 
 | Function | Description |
 |---|---|
-| `a3db_fnc_init` | Initialize extension, returns version string |
-| `a3db_fnc_execute` | Execute SQL, returns parsed result |
-| `a3db_fnc_loadJSON` | Import JSON data into a table |
-| `a3db_fnc_dumpSQL` | Export full database as SQL dump |
-| `a3db_fnc_exportJSON` | Export table as JSON |
-| `a3db_fnc_exportCSV` | Export table as CSV |
-| `a3db_fnc_exportSQL` | Export full database as SQL statements |
-| `a3db_fnc_save` | Persist database to binary file |
-| `a3db_fnc_load` | Restore database from binary file |
-| `a3db_fnc_init` | Initialize extension |
-| `a3db_fnc_settings` | Register CBA settings (auto-called via PreInit) |
-| `a3db_fnc_postInit` | Post-mission init (auto-save/load hooks) |
+| `a3sql_fnc_init` | Initialize extension, returns version string |
+| `a3sql_fnc_execute` | Execute SQL, returns parsed result |
+| `a3sql_fnc_loadJSON` | Import JSON data into a table |
+| `a3sql_fnc_dumpSQL` | Export full database as SQL dump |
+| `a3sql_fnc_exportJSON` | Export table as JSON |
+| `a3sql_fnc_exportCSV` | Export table as CSV |
+| `a3sql_fnc_exportSQL` | Export full database as SQL statements |
+| `a3sql_fnc_save` | Persist database to binary file |
+| `a3sql_fnc_load` | Restore database from binary file |
+| `a3sql_fnc_init` | Initialize extension |
+| `a3sql_fnc_settings` | Register CBA settings (auto-called via PreInit) |
+| `a3sql_fnc_postInit` | Post-mission init (auto-save/load hooks) |
 
 ## Security
 
@@ -361,10 +361,10 @@ Prevent SQL injection by passing user input as separate args with `$1`, `$2` pla
 ```sqf
 // UNSAFE — string interpolation (SQL injection possible)
 private _sql = format ["SELECT * FROM users WHERE name = '%1'", _userInput];
-["a3db", _sql] callExtension;
+["a3sql", _sql] callExtension;
 
 // SAFE — parameterized query (injection prevented)
-["a3db", "SELECT * FROM users WHERE name = $1", [_userInput]] callExtension;
+["a3sql", "SELECT * FROM users WHERE name = $1", [_userInput]] callExtension;
 ```
 
 ### TCP Authentication
@@ -418,7 +418,7 @@ Output goes to `.hemttout/build/`.
 
 ```bash
 # All 118 tests (0.01s)
-cargo test --lib -p a3db
+cargo test --lib -p a3sql
 ```
 
 ### Linting & validation
@@ -429,8 +429,8 @@ cargo fmt --check
 cargo clippy --all-targets
 
 # SQF
-sqflint addons/a3db/*.sqf
-sqfvm --parse-only -i addons/a3db/fn_init.sqf
+sqflint addons/a3sql/*.sqf
+sqfvm --parse-only -i addons/a3sql/fn_init.sqf
 
 # Arma addon structure
 hemtt check
@@ -443,7 +443,7 @@ The project includes a GitHub Actions workflow (`.github/workflows/ci.yml`) that
 1. Runs `cargo test`
 2. Builds for 4 targets: `x86_64-linux`, `i686-linux`, `x86_64-windows`, `i686-windows`
 3. Runs `hemtt build` to produce the addon PBOs
-4. On release: creates a `a3db-<tag>.zip` with the complete mod
+4. On release: creates a `a3sql-<tag>.zip` with the complete mod
 
 Test locally with [ACT](https://github.com/nektos/act):
 
@@ -455,7 +455,7 @@ act --list           # List all jobs
 ## Project Structure
 
 ```
-a3db/
+a3sql/
 ├── Cargo.toml                  # Workspace → extension/
 ├── extension/                  # Rust extension crate (cdylib + rlib)
 │   ├── Cargo.toml
@@ -523,9 +523,9 @@ Built following the same conventions as ACE3 and CBA_A3:
 
 | Aspect | Convention |
 |---|---|
-| **Prefix** | `prefix = "a3db"`, `mainprefix = "z"` |
-| **PBO path** | `z\a3db\addons\{addon_name}` |
-| **Include path** | `\z\a3db\addons\main\script_mod.hpp` |
+| **Prefix** | `prefix = "a3sql"`, `mainprefix = "z"` |
+| **PBO path** | `z\a3sql\addons\{addon_name}` |
+| **Include path** | `\z\a3sql\addons\main\script_mod.hpp` |
 | **CBA dependency** | CBA_A3 required (`cba_main`, `cba_xeh`) |
 | **Build system** | HEMTT v1 (`.hemtt/project.toml`) |
 | **Rust workspace** | Workspace at root, crate in `extension/` |

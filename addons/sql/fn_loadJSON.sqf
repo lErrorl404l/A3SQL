@@ -3,7 +3,7 @@
 params [
     ["_table", "", [""]],
     ["_data", "", ["", []]],
-    ["_extension", "a3db"]
+    ["_extension", "a3sql"]
 ];
 
 if (_table isEqualTo "") exitWith { [0, "ERR_EXEC", "Empty table name"] };

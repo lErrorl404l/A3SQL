@@ -1,7 +1,7 @@
 #include "script_component.hpp"
 
 params [
-    ["_extension", "a3db"]
+    ["_extension", "a3sql"]
 ];
 
 private _result = _extension callExtension "export_sql";

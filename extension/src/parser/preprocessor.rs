@@ -1,6 +1,6 @@
-// SQL preprocessor for a3db
+// SQL preprocessor for a3sql
 //
-/// Transforms custom a3db SQL syntax into standard SQL that sqlparser-rs can
+/// Transforms custom a3sql SQL syntax into standard SQL that sqlparser-rs can
 /// parse with GenericDialect:
 ///
 ///   `%%` fuzzy match operator → `fuzzy_match()` function call

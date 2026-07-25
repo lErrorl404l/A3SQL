@@ -1,4 +1,4 @@
-// a3db core types — column types and runtime values
+// a3sql core types — column types and runtime values
 
 use std::fmt;
 
