@@ -22,13 +22,10 @@ git_hash = 0
 # ── Hooks ────────────────────────────────────────────────────────────────
 [hemtt.hooks]
 pre_build = ["01_set_version"]
+post_release = ["01_rename_zip"]
 
-# ── Launch profiles ──────────────────────────────────────────────────────
-[hemtt.launch.default]
-workshop = ["450814997"]  # CBA_A3
-mission = "test.VR"
-parameters = ["-world=VR"]
-file_patching = false
+# Launch profiles moved to .hemtt/launch.toml
+# Run: hemtt launch [profile]
 
 # ── Release ──────────────────────────────────────────────────────────────
 [hemtt.release]

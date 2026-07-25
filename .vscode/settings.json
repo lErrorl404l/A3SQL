@@ -3,5 +3,23 @@
         "**/.hemttout": true,
         "**/include": true
     },
-    "files.insertFinalNewline": true
+    "files.insertFinalNewline": true,
+    "files.autoSave": "onFocusChange",
+    "files.encoding": "utf8",
+    "files.eol": "\n",
+    "editor.rulers": [120],
+    "rust-analyzer.check.command": "clippy",
+    "rust-analyzer.check.extraArgs": ["--all-targets"],
+    "[sqf]": {
+        "editor.tabSize": 4,
+        "editor.insertSpaces": false
+    },
+    "[cpp]": {
+        "editor.tabSize": 4,
+        "editor.insertSpaces": false
+    },
+    "[rust]": {
+        "editor.tabSize": 4,
+        "editor.insertSpaces": true
+    },
 }

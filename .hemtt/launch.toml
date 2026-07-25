@@ -1,0 +1,15 @@
+# A3DB launch profiles — run with `hemtt launch <profile>`
+# Based on ACE3/ACRE2 convention
+
+[default]
+workshop = ["450814997"]  # CBA_A3
+mission = "test.VR"
+parameters = ["-world=VR", "-skipIntro", "-noSplash", "-showScriptErrors"]
+file_patching = true
+
+# For release testing (binarized)
+[release]
+extends = "default"
+file_patching = false
+binarize = true
+rapify = true

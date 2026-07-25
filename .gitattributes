@@ -1,0 +1,15 @@
+# A3DB — git attributes (ACE3/CBA convention)
+* text=auto
+
+*.png binary
+*.jpg binary
+*.paa binary
+*.oggt binary
+*.wss binary
+
+# GitHub linguist — SQF files
+addons/**/*.cpp linguist-language=SQF
+addons/**/*.hpp linguist-language=SQF
+optionals/**/*.cpp linguist-language=SQF
+optionals/**/*.hpp linguist-language=SQF
+include/* linguist-vendored
