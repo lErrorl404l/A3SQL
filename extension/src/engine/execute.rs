@@ -254,6 +254,17 @@ pub fn execute(stmt: &Statement, db: &mut Database) -> Result<String, String> {
                 value.as_ref().map(|v| v.to_string()).unwrap_or_default()
             ))
         }
+        Statement::ShowColumns { show_options, .. } => stmts::ddl::exec_show_columns(show_options, db),
+        Statement::ShowCreate { obj_type, obj_name } => stmts::ddl::exec_show_create(obj_type, obj_name, db),
+        Statement::DropTrigger(dt) => stmts::ddl::exec_drop_trigger(&dt.trigger_name, dt.table_name.as_ref(), db),
+        Statement::AttachDatabase {
+            schema_name,
+            database_file_name,
+            database,
+        } => {
+            db.set_config(&format!("attach_{}", schema_name), &database_file_name.to_string());
+            Ok(format!("\"Attached '{}' as '{}'\"", database_file_name, schema_name))
+        }
         Statement::ShowTables { .. } => {
             let names = db.table_names();
             let inner: Vec<String> = names.iter().map(|n| format!("\"{}\"", n)).collect();
