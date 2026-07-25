@@ -6,9 +6,9 @@ use super::table::ForeignKeyInfo;
 use super::table::IndexImpl;
 use sqlparser::ast::table_constraints::TableConstraint;
 use sqlparser::ast::{
-    BinaryOperator, ColumnOption, DataType, Expr, Function, FunctionArg, FunctionArgExpr, FunctionArguments, Ident,
-    LimitClause, Merge, MergeAction, MergeClauseKind, MergeInsertKind, ObjectName, ObjectType, OrderByKind, Query,
-    ReferentialAction, Select, SelectItem, SetExpr, SqliteOnConflict, Statement, TableFactor, TableWithJoins,
+    BinaryOperator, ColumnOption, DataType, Distinct, Expr, Function, FunctionArg, FunctionArgExpr, FunctionArguments,
+    Ident, LimitClause, Merge, MergeAction, MergeClauseKind, MergeInsertKind, ObjectName, ObjectType, OrderByKind,
+    Query, ReferentialAction, Select, SelectItem, SetExpr, SqliteOnConflict, Statement, TableFactor, TableWithJoins,
     UnaryOperator, Values, WindowFrame, WindowFrameBound, WindowFrameUnits, WindowType,
 };
 
@@ -180,6 +180,57 @@ pub fn execute(stmt: &Statement, db: &mut Database) -> Result<String, String> {
                 let _ = db.drop_table(name);
             }
 
+            // SELECT INTO TABLE — create table from query results
+            if let Ok(ref json) = result {
+                if let SetExpr::Select(select) = &*q.body {
+                    if let Some(ref into) = select.into {
+                        let target_name = into.name.to_string().to_lowercase();
+                        if !into.table {
+                            // non-table INTO (e.g. INTO OUTFILE) not supported
+                        } else if let Ok(rows) = serde_json::from_str::<Vec<Vec<serde_json::Value>>>(json) {
+                            if rows.len() >= 2 {
+                                let header = &rows[0];
+                                let cols: Vec<Column> = header
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(i, h)| {
+                                        let dtype = rows[1]
+                                            .get(i)
+                                            .map(|v| match v {
+                                                serde_json::Value::Number(n) => {
+                                                    if n.is_f64() {
+                                                        ColumnType::Float
+                                                    } else {
+                                                        ColumnType::Int
+                                                    }
+                                                }
+                                                serde_json::Value::Bool(_) => ColumnType::Bool,
+                                                _ => ColumnType::String,
+                                            })
+                                            .unwrap_or(ColumnType::String);
+                                        Column {
+                                            name: h.as_str().unwrap_or(&format!("col{}", i)).to_lowercase(),
+                                            dtype,
+                                            primary_key: false,
+                                            not_null: false,
+                                            default: None,
+                                            auto_increment: false,
+                                        }
+                                    })
+                                    .collect();
+                                if let Ok(mut table) = Table::new(target_name.clone(), cols) {
+                                    for row_data in &rows[1..] {
+                                        let db_row: Vec<DbValue> = row_data.iter().map(json_val_to_dbvalue).collect();
+                                        let _ = table.insert(db_row);
+                                    }
+                                    db.add_table(target_name.clone(), table);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             result
         }
         Statement::Update(upd) => exec_update(upd, db),
@@ -276,6 +327,14 @@ pub fn execute(stmt: &Statement, db: &mut Database) -> Result<String, String> {
             let names = db.table_names();
             let inner: Vec<String> = names.iter().map(|n| format!("\"{}\"", n)).collect();
             Ok(format!("[{}]", inner.join(",")))
+        }
+        Statement::ShowVariables { .. } | Statement::ShowStatus { .. } => {
+            let vars: Vec<String> = db
+                .config
+                .keys()
+                .map(|k| format!("\"{} = {}\"", k, db.config.get(k).unwrap_or(&String::new())))
+                .collect();
+            Ok(format!("[{}]", vars.join(",")))
         }
         Statement::StartTransaction { .. } => {
             db.begin();
@@ -763,7 +822,11 @@ fn exec_insert(ins: &sqlparser::ast::Insert, db: &mut Database) -> Result<String
                 inserted_rows.push(full_row);
             }
             // INSERT OR IGNORE: skip conflicting row silently
-            Err(e) if matches!(on_conflict, Some(SqliteOnConflict::Ignore)) && e.contains("Duplicate primary key") => {
+            // INSERT OR IGNORE / INSERT IGNORE: skip conflicting row silently
+            Err(e)
+                if (matches!(on_conflict, Some(SqliteOnConflict::Ignore)) || ins.ignore)
+                    && e.contains("Duplicate primary key") =>
+            {
                 // ponytail: silently skip — row already exists
             }
             // INSERT OR ROLLBACK: rollback transaction on conflict
@@ -804,12 +867,17 @@ fn exec_insert(ins: &sqlparser::ast::Insert, db: &mut Database) -> Result<String
                                             if let sqlparser::ast::AssignmentTarget::ColumnName(name) = &assign.target {
                                                 let col_name = name.to_string().to_lowercase();
                                                 if let Some(&ci) = table.col_index.get(&col_name) {
-                                                    let new_val = eval_expr(
-                                                        &assign.value,
-                                                        &table.rows[row_idx],
-                                                        &table.col_index,
-                                                    )
-                                                    .map_err(|_| format!("UPSERT: invalid expr for '{}'", col_name))?;
+                                                    // Build col_map with EXCLUDED pseudo-columns
+                                                    let mut upsert_map = table.col_index.clone();
+                                                    for (col, &idx) in &table.col_index {
+                                                        upsert_map.insert(format!("excluded.{}", col), idx);
+                                                    }
+                                                    // Use full_row (the proposed new values) for EXCLUDED references
+                                                    let upsert_row = &full_row;
+                                                    let new_val = eval_expr(&assign.value, upsert_row, &upsert_map)
+                                                        .map_err(|_| {
+                                                            format!("UPSERT: invalid expr for '{}'", col_name)
+                                                        })?;
                                                     table.rows[row_idx][ci] = new_val;
                                                 }
                                             }
@@ -1325,24 +1393,35 @@ fn exec_select(query: &Query, db: &mut Database) -> Result<String, String> {
         filtered_rows
     };
 
-    // 3.5 DISTINCT — dedup by comparing projected values
+    // 3.5 DISTINCT — dedup by comparing projected values (or DISTINCT ON expressions)
     let deduped_rows: Vec<&[DbValue]> = if select.distinct.is_some() {
         let mut seen: Vec<Vec<DbValue>> = Vec::new();
+        let distinct_on_exprs: Option<Vec<Expr>> = match &select.distinct {
+            Some(Distinct::On(exprs)) => Some(exprs.clone()),
+            _ => None,
+        };
         grouped_rows
             .into_iter()
             .filter(|row| {
-                // For DISTINCT, compare the projected (selected) column values
-                let proj: Vec<DbValue> = select
-                    .projection
-                    .iter()
-                    .filter_map(|item| {
-                        if let SelectItem::UnnamedExpr(e) = item {
-                            eval_expr(e, row, &table.col_index).ok()
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
+                let proj: Vec<DbValue> = if let Some(on_exprs) = &distinct_on_exprs {
+                    // DISTINCT ON (expr1, expr2) — only compare these expressions
+                    on_exprs
+                        .iter()
+                        .filter_map(|e| eval_expr(e, row, &table.col_index).ok())
+                        .collect()
+                } else {
+                    select
+                        .projection
+                        .iter()
+                        .filter_map(|item| {
+                            if let SelectItem::UnnamedExpr(e) = item {
+                                eval_expr(e, row, &table.col_index).ok()
+                            } else {
+                                None
+                            }
+                        })
+                        .collect()
+                };
                 if seen.contains(&proj) {
                     false
                 } else {
@@ -2181,6 +2260,15 @@ fn eval_expr_on_group(expr: &Expr, rows: &[&[DbValue]], col_map: &HashMap<String
     eval_expr(expr, rows[0], col_map)
 }
 
+/// Check if a row passes the aggregate FILTER clause (if any).
+fn passes_filter(func: &Function, row: &[DbValue], col_map: &HashMap<String, usize>) -> bool {
+    func.filter.as_ref().map_or(true, |filter_expr| {
+        eval_expr(filter_expr, row, col_map)
+            .ok()
+            .map_or(true, |v| is_truthy(&v))
+    })
+}
+
 fn aggregate_sum(func: &Function, rows: &[&[DbValue]], col_map: &HashMap<String, usize>) -> Result<DbValue, String> {
     let arg = extract_func_arg(func)?;
     if rows.is_empty() {
@@ -2191,6 +2279,7 @@ fn aggregate_sum(func: &Function, rows: &[&[DbValue]], col_map: &HashMap<String,
         DbValue::Int(..) => {
             let sum: i64 = rows
                 .iter()
+                .filter(|r| passes_filter(func, r, col_map))
                 .filter_map(|r| {
                     eval_expr(arg, r, col_map).ok().and_then(|v| match v {
                         DbValue::Int(n) => Some(n),
@@ -2765,6 +2854,15 @@ pub(crate) fn eval_expr(expr: &Expr, row: &[DbValue], col_map: &HashMap<String, 
         } => {
             let val = eval_expr(expr, row, col_map)?;
             let pat = eval_expr(pattern, row, col_map)?;
+            let matched = simple_like(&value_to_string(&val), &value_to_string(&pat));
+            Ok(DbValue::Bool(if *negated { !matched } else { matched }))
+        }
+        Expr::SimilarTo {
+            negated, expr, pattern, ..
+        } => {
+            let val = eval_expr(expr, row, col_map)?;
+            let pat = eval_expr(pattern, row, col_map)?;
+            // ponytail: SIMILAR TO uses LIKE-style matching (%, _ wildcards)
             let matched = simple_like(&value_to_string(&val), &value_to_string(&pat));
             Ok(DbValue::Bool(if *negated { !matched } else { matched }))
         }

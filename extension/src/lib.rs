@@ -285,6 +285,18 @@ pub fn dispatch(input: &str, args: &[&str]) -> String {
     }
 
     // ── Remote forwarding — if connected to a remote server, forward ──
+    // Rewrite standalone REINDEX to VACUUM REINDEX (sqlparser only parses VACUUM REINDEX)
+    if lowered == "reindex" || lowered.starts_with("reindex ") {
+        let reindex_sql = if lowered == "reindex" {
+            "VACUUM REINDEX".to_string()
+        } else {
+            format!("VACUUM REINDEX {}", &trimmed[8..])
+        };
+        let statements = split_sql(&reindex_sql);
+        let result = exec_sql_statements(&statements, args);
+        return result;
+    }
+
     {
         let remote = REMOTE.lock().unwrap();
         if let Some(stream) = remote.as_ref() {

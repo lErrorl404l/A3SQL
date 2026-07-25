@@ -33,6 +33,5 @@ a3sql.so
 *.zip
 release/
 releases/
-docs/wiki/.git
 .venv
 .venv
