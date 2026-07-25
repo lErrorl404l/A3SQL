@@ -44,6 +44,13 @@ pub fn execute(stmt: &Statement, db: &mut Database) -> Result<String, String> {
                 for cte in &with.cte_tables {
                     let alias = cte.alias.name.value.to_lowercase();
                     let cte_alias = alias.clone();
+
+                    // NOT MATERIALIZED: skip temp table creation (inline in main query)
+                    use sqlparser::ast::CteAsMaterialized;
+                    if cte.materialized == Some(CteAsMaterialized::NotMaterialized) {
+                        continue;
+                    }
+
                     // For recursive CTEs, only execute the anchor (non-recursive) term first
                     let json = if with.recursive {
                         if let SetExpr::SetOperation { left, .. } = &*cte.query.body {
@@ -168,6 +175,7 @@ pub fn execute(stmt: &Statement, db: &mut Database) -> Result<String, String> {
         }
         Statement::Update(upd) => exec_update(upd, db),
         Statement::Delete(del) => exec_delete(del, db),
+        Statement::CreateTrigger(ct) => exec_create_trigger(ct, db),
         Statement::CreateIndex(idx) => exec_create_index(idx, db),
         Statement::Drop {
             names,
@@ -700,6 +708,44 @@ fn exec_insert(ins: &sqlparser::ast::Insert, db: &mut Database) -> Result<String
                     return Err(e);
                 }
             }
+            Err(e) if e.contains("Duplicate primary key") && ins.on.is_some() => {
+                // UPSERT: ON CONFLICT DO UPDATE or ON CONFLICT DO NOTHING
+                use sqlparser::ast::OnInsert;
+                match &ins.on {
+                    Some(OnInsert::OnConflict(oc)) => {
+                        match &oc.action {
+                            sqlparser::ast::OnConflictAction::DoNothing => {
+                                // Skip conflicting row silently
+                            }
+                            sqlparser::ast::OnConflictAction::DoUpdate(du) => {
+                                // Apply SET assignments to the existing row
+                                if let Some(pk_col) = table.columns.iter().position(|c| c.primary_key) {
+                                    let pk_val = &full_row[pk_col];
+                                    if let Some(row_idx) = table.rows.iter().position(|r| &r[pk_col] == pk_val) {
+                                        for assign in &du.assignments {
+                                            if let sqlparser::ast::AssignmentTarget::ColumnName(name) = &assign.target {
+                                                let col_name = name.to_string().to_lowercase();
+                                                if let Some(&ci) = table.col_index.get(&col_name) {
+                                                    let new_val = eval_expr(
+                                                        &assign.value,
+                                                        &table.rows[row_idx],
+                                                        &table.col_index,
+                                                    )
+                                                    .map_err(|_| format!("UPSERT: invalid expr for '{}'", col_name))?;
+                                                    table.rows[row_idx][ci] = new_val;
+                                                }
+                                            }
+                                        }
+                                        table.rebuild_index();
+                                        inserted += 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    _ => return Err(e),
+                }
+            }
             Err(e) => return Err(e),
         }
     }
@@ -710,6 +756,7 @@ fn exec_insert(ins: &sqlparser::ast::Insert, db: &mut Database) -> Result<String
         return Ok(format_projected_result(ref_rows, returning, &table.col_index, table));
     }
 
+    fire_triggers(&table_name, "INSERT", db);
     Ok(format!("\"Inserted {} row(s)\"", inserted))
 }
 
@@ -2382,6 +2429,7 @@ fn exec_update(upd: &sqlparser::ast::Update, db: &mut Database) -> Result<String
         return Ok(format_projected_result(ref_rows, returning, &table.col_index, table));
     }
 
+    fire_triggers(&table_name, "UPDATE", db);
     Ok(format!("\"Updated {} row(s)\"", validated_updates.len()))
 }
 
@@ -2549,6 +2597,7 @@ fn exec_delete(del: &sqlparser::ast::Delete, db: &mut Database) -> Result<String
         return Ok(format_projected_result(ref_rows, returning, &table.col_index, table));
     }
 
+    fire_triggers(&table_name, "DELETE", db);
     Ok(format!("\"Deleted {} row(s)\"", count))
 }
 
@@ -3649,6 +3698,90 @@ fn drop_index_by_name(db: &mut Database, name: &str) -> bool {
         }
     }
     false
+}
+
+// ── TRIGGERS ─────────────────────────────────────────────────────────────
+
+/// Parse and execute a raw SQL statement string within the DB context.
+fn parse_and_exec(sql: &str, db: &mut Database) -> Result<String, String> {
+    use sqlparser::dialect::SQLiteDialect;
+    use sqlparser::parser::Parser;
+    // Try SQLite dialect first (handles CREATE TRIGGER with BEGIN...END body)
+    let mut sqlite = SQLiteDialect {};
+    if let Ok(stmts) = Parser::parse_sql(&mut sqlite, sql) {
+        let mut results = Vec::new();
+        for stmt in stmts {
+            results.push(execute(&stmt, db)?);
+        }
+        return Ok(results.join("\n"));
+    }
+    let mut meta = sqlparser::dialect::GenericDialect {};
+    let stmts = Parser::parse_sql(&mut meta, sql).map_err(|e| format!("Parse error in trigger body: {}", e))?;
+    let mut results = Vec::new();
+    for stmt in stmts {
+        results.push(execute(&stmt, db)?);
+    }
+    Ok(results.join("\n"))
+}
+
+/// Execute CREATE TRIGGER.
+fn exec_create_trigger(ct: &sqlparser::ast::CreateTrigger, db: &mut Database) -> Result<String, String> {
+    let table_name = ct.table_name.to_string().to_lowercase();
+    let trigger_name = ct.name.to_string().to_lowercase();
+    let _timing = ct.period.as_ref().map(|p| format!("{:?}", p)).unwrap_or_default();
+    let _event = ct.events.first().map(|e| format!("{:?}", e)).unwrap_or_default();
+    // Use first event only and infer FROM/UPDATE/DELETE
+
+    let event_str = match ct.events.first() {
+        Some(sqlparser::ast::TriggerEvent::Insert) => "INSERT",
+        Some(sqlparser::ast::TriggerEvent::Update(_)) => "UPDATE",
+        Some(sqlparser::ast::TriggerEvent::Delete) => "DELETE",
+        _ => return Err("Unsupported trigger event".into()),
+    };
+    let timing_str = match ct.period.as_ref() {
+        Some(p) => match p {
+            sqlparser::ast::TriggerPeriod::Before => "BEFORE",
+            sqlparser::ast::TriggerPeriod::After => "AFTER",
+            _ => return Err("Only BEFORE/AFTER triggers supported".into()),
+        },
+        None => return Err("Trigger timing (BEFORE/AFTER) required".into()),
+    };
+    // Extract body SQL from the statements block
+    let body = ct.statements.as_ref().map(|s| format!("{}", s)).unwrap_or_default();
+    if body.is_empty() {
+        return Err("Trigger requires a body (SQL statement)".into());
+    }
+    let table = db.get_table_mut(&table_name)?;
+    table.triggers.push(crate::engine::table::TriggerInfo {
+        name: trigger_name.clone(),
+        timing: timing_str.to_string(),
+        event: event_str.to_string(),
+        body,
+    });
+    Ok(format!("\"Trigger '{}' created on '{}'\"", trigger_name, table_name))
+}
+
+/// Fire AFTER triggers for a given table and event.
+fn fire_triggers(_table_name: &str, event: &str, db: &mut Database) {
+    let names: Vec<String> = db.table_names().iter().map(|s| s.to_string()).collect();
+    for tn in names {
+        if let Ok(t) = db.get_table(&tn) {
+            let triggers: Vec<crate::engine::table::TriggerInfo> = t
+                .triggers
+                .iter()
+                .filter(|tr| tr.event == event && tr.timing == "AFTER")
+                .cloned()
+                .collect();
+            drop(t);
+            for tr in triggers {
+                // Replace OLD and NEW references with the target table
+                let body = tr.body.replace("OLD.", "").replace("NEW.", "");
+                if let Err(e) = parse_and_exec(&body, db) {
+                    eprintln!("Trigger '{}' error: {}", tr.name, e);
+                }
+            }
+        }
+    }
 }
 
 // ── EXPLAIN ─────────────────────────────────────────────────────────────
