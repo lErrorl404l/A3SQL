@@ -1,6 +1,6 @@
 # Plugins
 
-A3DB supports three ways to extend its functionality, from simple SQF functions to full native C/Rust plugins.
+A3SQL supports three ways to extend its functionality, from simple SQF functions to full native C/Rust plugins.
 
 ## 1. SQF Functions (Lightest)
 
@@ -51,7 +51,7 @@ Shared libraries (`.so` / `.dll`) placed in the plugin directory are loaded at r
 // my_plugin.c
 #include "a3sql_plugin.h"
 
-A3DB_PLUGIN_INIT {
+A3SQL_PLUGIN_INIT {
     a3sql_plugin_register_function("my_plugin", "echo", 1, 1);
     return "my_plugin";
 }

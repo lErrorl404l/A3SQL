@@ -21,9 +21,9 @@ for file in os.listdir(addon_base_path):
             arr[extension_type] = sha1.hexdigest()
             extensions[key] = arr
 
-file_out = pathlib.Path(addon_base_path, "addons", "main", "A3DB_ExtensionsHashes.hpp")
+file_out = pathlib.Path(addon_base_path, "addons", "main", "A3SQL_ExtensionsHashes.hpp")
 with open(file_out, "w") as file_write:
-    print(f"class A3DB_ExtensionsHashes {{", file=file_write)
+    print(f"class A3SQL_ExtensionsHashes {{", file=file_write)
     for key, values in extensions.items():
         print(f"    class {key} {{", file=file_write)
         for type, hash in values.items():

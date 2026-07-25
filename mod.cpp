@@ -1,8 +1,8 @@
-name = "A3DB";
+name = "A3SQL";
 actionName = "GitHub";
 action = "https://github.com/ABETeam/a3sql";
 description = "An embeddable SQL database engine for Arma 3 mods.";
-tooltip = "A3DB";
+tooltip = "A3SQL";
 author = "ABE Team";
 overview = "An embeddable SQL database engine for Arma 3 mods. Supports standard SQL, persistence, transactions, fuzzy search, and external TCP query access.";
 picture = "z\a3sql\addons\main\data\logo.paa";

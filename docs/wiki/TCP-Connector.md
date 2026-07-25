@@ -1,6 +1,6 @@
 # TCP Connector
 
-A3DB exposes a lightweight TCP interface that lets external tools query the in-game database while the game is running.
+A3SQL exposes a lightweight TCP interface that lets external tools query the in-game database while the game is running.
 
 ## Enabling
 

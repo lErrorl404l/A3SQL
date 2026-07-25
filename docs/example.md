@@ -1,13 +1,13 @@
-# A3DB — Worked Example
+# A3SQL — Worked Example
 
-This guide walks through building a simple Arma 3 mod that uses A3DB to
+This guide walks through building a simple Arma 3 mod that uses A3SQL to
 persist player stats between missions.
 
 ---
 
 ## 1. Project Setup
 
-Your mod needs A3DB and CBA_A3 as dependencies.
+Your mod needs A3SQL and CBA_A3 as dependencies.
 
 ```toml
 # .hemtt/project.toml (your addon)
@@ -200,7 +200,7 @@ systemChat format ["Scores: %1", _result];
 
 ---
 
-## A3DB API Reference
+## A3SQL API Reference
 
 All functions accept an optional extension name as the last parameter
 (defaults to `"a3sql"`). All return a parsed JSON array:
@@ -222,7 +222,7 @@ All functions accept an optional extension name as the last parameter
 
 ## External TCP Connection
 
-A3DB exposes a simple TCP interface for external tools. Call once from SQF:
+A3SQL exposes a simple TCP interface for external tools. Call once from SQF:
 
 ```sqf
 // Start listener on port 33306 (default)

@@ -1,4 +1,4 @@
-# a3db Rust formatting
+# a3sql Rust formatting
 edition = "2021"
 max_width = 120
 tab_spaces = 4
