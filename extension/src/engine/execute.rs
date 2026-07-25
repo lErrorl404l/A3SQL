@@ -2587,8 +2587,7 @@ fn exec_function(func: &Function, row: &[DbValue], col_map: &HashMap<String, usi
         "fts_score" => exec_fts_score(func, row, col_map),
         _ => {
             // Check plugin registry for fn_ prefixed functions
-            if name.starts_with("fn_") {
-                let fn_name = &name[3..];
+            if let Some(fn_name) = name.strip_prefix("fn_") {
                 if let Some((pfunc, _plugin)) = crate::engine::plugin::lookup_function(fn_name) {
                     let args = extract_func_args(func);
                     if args.len() < pfunc.min_args {
@@ -2613,17 +2612,21 @@ fn extract_func_args(func: &Function) -> Vec<DbValue> {
     let mut args = Vec::new();
     if let sqlparser::ast::FunctionArguments::List(list) = &func.args {
         for arg in &list.args {
-            if let sqlparser::ast::FunctionArg::Unnamed(ua) = arg {
-                if let sqlparser::ast::FunctionArgExpr::Expr(expr) = ua {
-                    // ponytail: can't evaluate without context, so pass raw SQL name
+            use sqlparser::ast::FunctionArg::*;
+            use sqlparser::ast::FunctionArgExpr;
+            match arg {
+                Unnamed(FunctionArgExpr::Expr(expr))
+                | Named {
+                    arg: FunctionArgExpr::Expr(expr),
+                    ..
+                } => {
+                    // ponytail: no eval context, pass raw SQL repr
                     args.push(DbValue::String(format!("{:?}", expr)));
-                } else if let sqlparser::ast::FunctionArgExpr::Wildcard = ua {
+                }
+                Unnamed(FunctionArgExpr::Wildcard) => {
                     args.push(DbValue::String("*".into()));
                 }
-            } else if let sqlparser::ast::FunctionArg::Named { arg: ua, .. } = arg {
-                if let sqlparser::ast::FunctionArgExpr::Expr(expr) = ua {
-                    args.push(DbValue::String(format!("{:?}", expr)));
-                }
+                _ => {}
             }
         }
     }
