@@ -14,6 +14,7 @@ use sqlparser::ast::{
 
 use super::database::Database;
 use super::index::IndexType as A3IndexType;
+use super::stmts;
 use super::table::Table;
 use super::value::{Column, ColumnType, DbValue};
 
@@ -240,6 +241,18 @@ pub fn execute(stmt: &Statement, db: &mut Database) -> Result<String, String> {
                 db.get_table_mut(&name)?.truncate()?;
                 Ok(format!("\"Table '{}' truncated\"", name))
             }
+        }
+        Statement::Set(set) => stmts::transaction::exec_set(set, db),
+        Statement::Pragma { name, value, is_eq } => {
+            // ponytail: PRAGMA stored in config, no actual behavior change
+            if let Some(v) = value {
+                db.set_config(&object_name_str(name), &v.to_string());
+            }
+            Ok(format!(
+                "\"PRAGMA {} = {:?}\"",
+                object_name_str(name),
+                value.as_ref().map(|v| v.to_string()).unwrap_or_default()
+            ))
         }
         Statement::ShowTables { .. } => {
             let names = db.table_names();
@@ -711,6 +724,18 @@ fn exec_insert(ins: &sqlparser::ast::Insert, db: &mut Database) -> Result<String
                 inserted += 1;
                 inserted_rows.push(full_row);
             }
+            // INSERT OR IGNORE: skip conflicting row silently
+            Err(e) if matches!(on_conflict, Some(SqliteOnConflict::Ignore)) && e.contains("Duplicate primary key") => {
+                // ponytail: silently skip — row already exists
+            }
+            // INSERT OR ROLLBACK: rollback transaction on conflict
+            Err(e)
+                if matches!(on_conflict, Some(SqliteOnConflict::Rollback)) && e.contains("Duplicate primary key") =>
+            {
+                db.rollback();
+                return Err(e);
+            }
+            // INSERT OR REPLACE / INSERT OR REPLACE: delete and re-insert
             Err(e) if is_replace && e.contains("Duplicate primary key") => {
                 // REPLACE: find the old row by PK and replace it
                 if let Some(pk_col) = table.columns.iter().position(|c| c.primary_key) {

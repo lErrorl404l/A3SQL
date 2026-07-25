@@ -152,6 +152,16 @@ impl Database {
     }
 
     /// Check if a table exists.
+    /// Set a runtime config value.
+    pub fn set_config(&mut self, key: &str, value: &str) {
+        self.config.insert(key.to_lowercase(), value.to_string());
+    }
+
+    /// Get a runtime config value.
+    pub fn get_config(&self, key: &str) -> Option<&str> {
+        self.config.get(key).map(|s| s.as_str())
+    }
+
     pub fn has_table(&self, name: &str) -> bool {
         self.tables.contains_key(name)
     }

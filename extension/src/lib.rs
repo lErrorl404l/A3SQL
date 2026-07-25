@@ -637,7 +637,7 @@ fn handle_create_trigger(sql: &str, db: &mut crate::engine::database::Database) 
 
     // Store the trigger
     let table = db.get_table_mut(&table_name)?;
-    table.triggers.push(crate::engine::table::TriggerInfo {
+    table.triggers.push(engine::trigger::TriggerInfo {
         name: name.clone(),
         timing: timing.to_string(),
         event: event.clone(),
