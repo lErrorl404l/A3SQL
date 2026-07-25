@@ -3905,7 +3905,7 @@ fn drop_index_by_name(db: &mut Database, name: &str) -> bool {
 // ── TRIGGERS ─────────────────────────────────────────────────────────────
 
 /// Parse and execute a raw SQL statement string within the DB context.
-fn parse_and_exec(sql: &str, db: &mut Database) -> Result<String, String> {
+pub(crate) fn parse_and_exec(sql: &str, db: &mut Database) -> Result<String, String> {
     use sqlparser::dialect::SQLiteDialect;
     use sqlparser::parser::Parser;
     // Try SQLite dialect first (handles CREATE TRIGGER with BEGIN...END body)
@@ -3954,7 +3954,7 @@ fn exec_create_trigger(ct: &sqlparser::ast::CreateTrigger, db: &mut Database) ->
         return Err("Trigger requires a body (SQL statement)".into());
     }
     let table = db.get_table_mut(&table_name)?;
-    table.triggers.push(crate::engine::table::TriggerInfo {
+    table.triggers.push(crate::engine::trigger::TriggerInfo {
         name: trigger_name.clone(),
         timing: timing_str.to_string(),
         event: event_str.to_string(),
@@ -3964,28 +3964,9 @@ fn exec_create_trigger(ct: &sqlparser::ast::CreateTrigger, db: &mut Database) ->
 }
 
 /// Fire AFTER triggers for a given table and event.
-fn fire_triggers(_table_name: &str, event: &str, db: &mut Database) {
-    let names: Vec<String> = db.table_names().iter().map(|s| s.to_string()).collect();
-    for tn in names {
-        if let Ok(t) = db.get_table(&tn) {
-            let triggers: Vec<crate::engine::table::TriggerInfo> = t
-                .triggers
-                .iter()
-                .filter(|tr| tr.event == event && tr.timing == "AFTER")
-                .cloned()
-                .collect();
-            drop(t);
-            for tr in triggers {
-                // Replace OLD and NEW references with the target table
-                let body = tr.body.replace("OLD.", "").replace("NEW.", "");
-                if let Err(e) = parse_and_exec(&body, db) {
-                    eprintln!("Trigger '{}' error: {}", tr.name, e);
-                }
-            }
-        }
-    }
+fn fire_triggers(table_name: &str, event: &str, db: &mut Database) {
+    crate::engine::trigger::fire_triggers(table_name, event, db)
 }
-
 // ── MERGE ───────────────────────────────────────────────────────────────
 
 fn exec_merge(merge: &Merge, db: &mut Database) -> Result<String, String> {
@@ -4629,7 +4610,7 @@ mod tests {
         db
     }
 
-    fn parse_and_exec(sql: &str, db: &mut Database) -> Result<String, String> {
+    pub(crate) fn parse_and_exec(sql: &str, db: &mut Database) -> Result<String, String> {
         let stmts = crate::parser::parse_sql(sql).map_err(|e| format!("{}", e))?;
         let mut result = String::new();
         for stmt in &stmts {
