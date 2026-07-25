@@ -243,7 +243,7 @@ pub fn execute(stmt: &Statement, db: &mut Database) -> Result<String, String> {
             }
         }
         Statement::Set(set) => stmts::transaction::exec_set(set, db),
-        Statement::Pragma { name, value, is_eq } => {
+        Statement::Pragma { name, value, is_eq: _ } => {
             // ponytail: PRAGMA stored in config, no actual behavior change
             if let Some(v) = value {
                 db.set_config(&object_name_str(name), &v.to_string());
@@ -260,11 +260,18 @@ pub fn execute(stmt: &Statement, db: &mut Database) -> Result<String, String> {
         Statement::AttachDatabase {
             schema_name,
             database_file_name,
-            database,
+            database: _,
         } => {
             db.set_config(&format!("attach_{}", schema_name), &database_file_name.to_string());
             Ok(format!("\"Attached '{}' as '{}'\"", database_file_name, schema_name))
         }
+        Statement::Merge(merge) => stmts::ddl::exec_merge(merge, db),
+        Statement::CreateVirtualTable {
+            name,
+            if_not_exists,
+            module_name,
+            module_args,
+        } => stmts::ddl::exec_create_virtual_table(name, *if_not_exists, module_name, module_args, db),
         Statement::ShowTables { .. } => {
             let names = db.table_names();
             let inner: Vec<String> = names.iter().map(|n| format!("\"{}\"", n)).collect();
@@ -2701,7 +2708,7 @@ fn exec_delete(del: &sqlparser::ast::Delete, db: &mut Database) -> Result<String
 
 // ── Expression evaluator ────────────────────────────────────────────────
 
-fn eval_expr(expr: &Expr, row: &[DbValue], col_map: &HashMap<String, usize>) -> Result<DbValue, String> {
+pub(crate) fn eval_expr(expr: &Expr, row: &[DbValue], col_map: &HashMap<String, usize>) -> Result<DbValue, String> {
     match expr {
         Expr::Identifier(ident) => {
             let name = ident.value.to_lowercase();

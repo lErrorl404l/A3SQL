@@ -20,7 +20,7 @@ use engine::execute as engine_execute;
 use parser::parse_sql;
 use std::ffi::CStr;
 use std::os::raw::c_char;
-use std::sync::atomic::{AtomicBool, Ordering};
+
 use std::sync::{LazyLock, Mutex};
 
 /// Global database instance (single-threaded, mutex-protected).
@@ -35,9 +35,6 @@ static LISTENER: LazyLock<Mutex<Option<std::net::TcpListener>>> = LazyLock::new(
 /// Stored credentials for TCP authentication. Empty = anonymous access.
 static CREDENTIALS: LazyLock<Mutex<(String, String)>> = LazyLock::new(|| Mutex::new((String::new(), String::new())));
 static REMOTE: LazyLock<Mutex<Option<std::net::TcpStream>>> = LazyLock::new(|| Mutex::new(None));
-// Flag set by dispatch() when REPLACE INTO is detected before SQL parsing.
-// Read by exec_insert() to handle PK conflict via delete+re-insert.
-pub(crate) static REPLACE_FLAG: AtomicBool = AtomicBool::new(false);
 
 // ── ABI ─────────────────────────────────────────────────────────────────────
 
@@ -265,16 +262,6 @@ pub fn dispatch(input: &str, args: &[&str]) -> String {
         return ok_response(&json);
     }
 
-    if trimmed.to_uppercase().starts_with("REPLACE INTO") {
-        REPLACE_FLAG.store(true, Ordering::SeqCst);
-        // Replace "REPLACE INTO" with "INSERT INTO" for sqlparser
-        let insert_sql = format!("INSERT INTO {}", &trimmed[12..]);
-        let statements = split_sql(&insert_sql);
-        let result = exec_sql_statements(&statements, args);
-        REPLACE_FLAG.store(false, Ordering::SeqCst);
-        return result;
-    }
-
     // Handle DESCRIBE table / SHOW CREATE TABLE before SQL parsing (case-insensitive)
     if let Some(rest) = lowered.strip_prefix("describe ") {
         let name = rest.trim();
@@ -483,7 +470,7 @@ fn exec_sql_statements(statements: &[String], args: &[&str]) -> String {
         }
 
         // Skip standalone END statements that were part of a trigger body
-        let trimmed_sql = sql.trim();
+        let _trimmed_sql = sql.trim();
         if lowered_sql == "end" || lowered_sql == "end;" {
             continue;
         }
@@ -519,9 +506,9 @@ fn exec_sql_statements(statements: &[String], args: &[&str]) -> String {
 /// Manually parse and execute CREATE TRIGGER (bypasses sqlparser which doesn't handle BEGIN...END).
 fn handle_create_trigger(sql: &str, db: &mut crate::engine::database::Database) -> Result<String, String> {
     let s = sql.trim();
-    let lower = s.to_lowercase();
+    let _lower = s.to_lowercase();
     // Parse: CREATE TRIGGER name AFTER|BEFORE event ON table [FOR EACH ROW] BEGIN body END
-    let mut rest = s
+    let rest = s
         .strip_prefix("CREATE TRIGGER ")
         .or_else(|| s.strip_prefix("create trigger "))
         .ok_or_else(|| "CREATE TRIGGER syntax error".to_string())?;
