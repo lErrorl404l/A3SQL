@@ -106,7 +106,18 @@ jobs:
           path: .hemttout/build
       - name: Set publishedid
         run: echo 'publishedid = ${{ secrets.STEAM_WORKSHOP_PUBLISHEDID }}' > meta.cpp
+      - name: Fetch changelog from release
+        run: |
+          echo 'CHANGE_NOTES<<EOF' >> $GITHUB_ENV
+          gh release view "${{ github.event.release.tag_name }}" --json body --jq .body >> $GITHUB_ENV
+          echo 'EOF' >> $GITHUB_ENV
+        env:
+          GH_TOKEN: ${{ github.token }}
       - name: Publish
-        run: hemtt publish --steam-user '${{ secrets.STEAM_USERNAME }}' --steam-pass '${{ secrets.STEAM_PASSWORD }}'
+        run: |
+          hemtt publish \
+            --steam-user '${{ secrets.STEAM_USERNAME }}' \
+            --steam-pass '${{ secrets.STEAM_PASSWORD }}' \
+            --change-notes "$CHANGE_NOTES"
         env:
           HEMTT_STEAM_GUARD_CODE: ${{ secrets.STEAM_GUARD_CODE }}
