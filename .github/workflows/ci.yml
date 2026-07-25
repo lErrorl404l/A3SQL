@@ -42,7 +42,7 @@ jobs:
           mkdir -p extension/target/release
           mv target/i686-unknown-linux-gnu/release/liba3sql.so extension/target/release/a3sql_x86.so 2>/dev/null || true
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: a3sql-i686-unknown-linux-gnu
           path: extension/target/release/a3sql_*.so
@@ -65,7 +65,7 @@ jobs:
       - name: Build addon
         run: hemtt build
       - name: Upload addon
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: a3sql-addon
           path: .hemttout/build/
