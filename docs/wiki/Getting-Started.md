@@ -135,7 +135,34 @@ if (isServer) then {
 };
 ```
 
-## 8. Transactions
+## 8. RETURNING Clause
+
+Get back the affected rows after INSERT/UPDATE/DELETE:
+
+```sqf
+_result = ["INSERT INTO player_stats VALUES ('u2', 5, 2, 1) RETURNING *"] call a3db_fnc_execute;
+// → [0, "OK", [["uid","kills","deaths","captures"],["u2",5,2,1]]]
+
+_result = ["UPDATE player_stats SET kills = kills + 1 WHERE uid = 'u2' RETURNING uid, kills"] call a3db_fnc_execute;
+// → [0, "OK", [["uid","kills"],["u2",6]]]
+```
+
+## 9. Views
+
+Define reusable queries:
+
+```sqf
+// Create a view
+_result = ["CREATE VIEW top_players AS SELECT * FROM player_stats ORDER BY kills DESC LIMIT 10"] call a3db_fnc_execute;
+
+// Query it like a table
+_result = ["SELECT * FROM top_players WHERE deaths < 10"] call a3db_fnc_execute;
+
+// Drop it
+["DROP VIEW top_players"] call a3db_fnc_execute;
+```
+
+## 10. Transactions
 
 Group multiple writes atomically:
 

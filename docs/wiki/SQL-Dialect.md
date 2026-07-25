@@ -13,16 +13,16 @@ _result = ["SELECT * FROM weapons WHERE name %% 'm4'"] call a3db_fnc_execute;
 
 | Category | Features |
 |---|---|
-| **SQL** | CREATE/DROP TABLE/INDEX, INSERT, SELECT, UPDATE, DELETE, REPLACE INTO, TRUNCATE, RENAME |
-| **Advanced SQL** | JOINs (CROSS/INNER/LEFT), GROUP BY/HAVING, ORDER BY/LIMIT/OFFSET, UNION/UNION ALL, CTE (WITH), subqueries |
+| **SQL** | CREATE/DROP TABLE/INDEX, INSERT, SELECT, UPDATE, DELETE, REPLACE INTO, TRUNCATE, RENAME, **CREATE/DROP VIEW** |
+| **Advanced SQL** | JOINs (CROSS/INNER/LEFT/**FULL OUTER**/**NATURAL**/**USING**), GROUP BY/HAVING, ORDER BY/LIMIT/OFFSET, UNION/**EXCEPT**/**INTERSECT**, CTE (**WITH RECURSIVE**), subqueries |
 | **Expressions** | `%%` fuzzy match, LIKE, BETWEEN, IN, IS NULL, CASE WHEN, EXISTS, CAST |
-| **Functions** | UPPER/LOWER, LENGTH, SUBSTR, TRIM, CONCAT, COALESCE/IFNULL, ROUND, ABS, NOW()/CURRENT_TIMESTAMP |
-| **Window** | ROW_NUMBER, RANK, DENSE_RANK with OVER/PARTITION BY/ORDER BY |
-| **Constraints** | PRIMARY KEY, NOT NULL, DEFAULT, CHECK, FOREIGN KEY, AUTO_INCREMENT |
+| **Functions** | UPPER/LOWER, LENGTH, SUBSTR, TRIM, CONCAT, COALESCE/IFNULL, ROUND, ABS, NOW()/CURRENT_TIMESTAMP, **COUNT(DISTINCT col)**, **fn_*** (plugin) |
+| **Window** | ROW_NUMBER, RANK, DENSE_RANK with OVER/PARTITION BY/ORDER BY / **ROWS BETWEEN** |
+| **Constraints** | PRIMARY KEY, NOT NULL, DEFAULT, **CHECK** (enforced), **FOREIGN KEY** (enforced), AUTO_INCREMENT |
 | **Types** | INT (BIGINT/SMALLINT/TINYINT), FLOAT (DECIMAL/NUMERIC/DOUBLE), STRING (VARCHAR/CHAR/TEXT), BOOL, DATE/TIMESTAMP, STRINGS[]/FLOATS[] |
-| **Indices** | BTREE (exact/range), TRIGRAM (fuzzy GIN-style candidate filter) |
-| **Transactions** | BEGIN/COMMIT/ROLLBACK, SAVEPOINT/RELEASE |
-| **Persistence** | SAVE/LOAD (binary), export/import JSON/CSV/SQL, export_to_file |
+| **Indices** | BTREE (exact/range), TRIGRAM (fuzzy GIN-style candidate filter), **FTS** (full-text trigram search) |
+| **Transactions** | BEGIN/COMMIT/**ROLLBACK (no-op when idle)**, SAVEPOINT/RELEASE |
+| **Persistence** | SAVE/LOAD (binary), export/import JSON/CSV/SQL, export_to_file, **VACUUM/REINDEX** |
 | **Security** | Parameterized queries (`$1`,`$2`), TCP LOGIN auth, CBA credential settings |
 | **Network** | TCP listener (auto-start at game boot), external queries via Python/CLI |
 | **Multi-statement** | Run `;`-separated SQL batches |
@@ -208,6 +208,59 @@ SELECT name || ' (' || caliber || ')' AS combined FROM weapons;
 SELECT NOW(), CURRENT_TIMESTAMP;
 SELECT COALESCE(barrelLength, 0.0) FROM weapons;
 SELECT UPPER(name), LOWER(name), LENGTH(name), SUBSTR(name, 1, 3) FROM weapons;
+
+-- COUNT DISTINCT
+SELECT COUNT(DISTINCT caliber) FROM weapons;
+
+-- Plugin functions
+SELECT fn_echo('hello') FROM weapons;
+
+-- RETURNING clause
+INSERT INTO weapons VALUES ('test', 'Test', '9x19mm', 200.0) RETURNING *;
+UPDATE weapons SET barrelLength = 300.0 WHERE id = 'test' RETURNING id, name;
+DELETE FROM weapons WHERE id = 'test' RETURNING *;
+
+-- Views
+CREATE VIEW short_weapons AS SELECT id, name FROM weapons WHERE barrelLength < 300.0;
+SELECT * FROM short_weapons;
+DROP VIEW short_weapons;
+
+-- EXPLAIN
+EXPLAIN SELECT * FROM weapons WHERE caliber = '5.56x45mm';
+EXPLAIN INSERT INTO weapons VALUES ('t', 'T', '9mm', 100.0);
+
+-- Set operations
+SELECT id FROM weapons EXCEPT SELECT weaponId FROM attachments;
+SELECT id FROM weapons INTERSECT SELECT weaponId FROM attachments;
+
+-- FULL OUTER JOIN
+SELECT * FROM weapons w FULL OUTER JOIN attachments a ON w.id = a.weaponId;
+
+-- NATURAL JOIN / JOIN USING
+SELECT * FROM weapons NATURAL JOIN attachments;
+SELECT * FROM weapons JOIN attachments USING (id);
+
+-- Window frames
+SELECT id, name, AVG(barrelLength) OVER (
+    ORDER BY name ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING
+) AS moving_avg FROM weapons;
+
+-- Recursive CTE
+WITH RECURSIVE nums(n) AS (
+    SELECT 1 UNION ALL SELECT n + 1 FROM nums WHERE n < 10
+) SELECT * FROM nums;
+
+-- CHECK constraint (enforced)
+CREATE TABLE prices (item STRING PRIMARY KEY, price INT CHECK (price > 0));
+INSERT INTO prices VALUES ('a', -5);  -- error: CHECK constraint failed
+
+-- FOREIGN KEY (enforced)
+CREATE TABLE orders (id STRING PRIMARY KEY, item STRING REFERENCES prices(item));
+INSERT INTO orders VALUES ('o1', 'nonexistent');  -- error: FK violation
+
+-- VACUUM / REINDEX
+VACUUM weapons;
+REINDEX weapons;
 ```
 
 ## SQF API
