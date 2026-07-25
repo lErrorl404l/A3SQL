@@ -1,6 +1,6 @@
 # Security
 
-A3DB provides two layers of security: **parameterized queries** for SQL injection prevention and **TCP login authentication** for network access.
+A3SQL provides two layers of security: **parameterized queries** for SQL injection prevention and **TCP login authentication** for network access.
 
 ## Parameterized Queries
 

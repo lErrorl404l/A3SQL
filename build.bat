@@ -1,8 +1,8 @@
 @echo off
-REM A3DB build script for Windows developers
+REM A3SQL build script for Windows developers
 REM Builds the Rust extension DLL then runs HEMTT for the addon
 
-echo === Building A3DB ===
+echo === Building A3SQL ===
 
 echo.
 echo -- Rust DLL (Windows x86_64) --

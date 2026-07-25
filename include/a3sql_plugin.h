@@ -9,8 +9,8 @@
 //
 // For full docs: https://github.com/lErrorl404l/a3sql/wiki/Plugins
 
-#ifndef A3DB_PLUGIN_H
-#define A3DB_PLUGIN_H
+#ifndef A3SQL_PLUGIN_H
+#define A3SQL_PLUGIN_H
 
 #include <stdint.h>
 
@@ -24,7 +24,7 @@ extern "C" {
 // Returns the plugin name (static string, not freed).
 // Called once at startup.
 typedef const char* (*a3sql_plugin_init_t)(void);
-#define A3DB_PLUGIN_INIT __attribute__((visibility("default"))) const char* a3sql_plugin_init
+#define A3SQL_PLUGIN_INIT __attribute__((visibility("default"))) const char* a3sql_plugin_init
 
 // ── Registration callbacks (call from init) ────────────────────────────
 
@@ -47,7 +47,7 @@ int32_t a3sql_plugin_register_function(
 //     return 0;
 // }
 //
-// A3DB_PLUGIN_INIT {
+// A3SQL_PLUGIN_INIT {
 //     a3sql_plugin_register_function("my_plugin", "echo", 1, 1);
 //     return "my_plugin";
 // }
@@ -56,4 +56,4 @@ int32_t a3sql_plugin_register_function(
 }
 #endif
 
-#endif // A3DB_PLUGIN_H
+#endif // A3SQL_PLUGIN_H

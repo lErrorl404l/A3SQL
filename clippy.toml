@@ -1,2 +1,2 @@
-# a3db clippy configuration
+# a3sql clippy configuration
 msrv = "1.87"

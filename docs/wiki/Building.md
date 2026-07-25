@@ -1,6 +1,6 @@
 # Building
 
-A3DB has two build steps: the **Rust extension** (native DLL/SO) and the **Arma 3 addon** (PBO files via HEMTT).
+A3SQL has two build steps: the **Rust extension** (native DLL/SO) and the **Arma 3 addon** (PBO files via HEMTT).
 
 ## Prerequisites
 
@@ -76,7 +76,7 @@ uv run python3 tools/setup.py --keys
 
 ### Code Signing (BIKey)
 
-A3DB supports code signing via `DSSignFile.exe` (from Arma 3 Tools) running under Wine/Proton on Linux:
+A3SQL supports code signing via `DSSignFile.exe` (from Arma 3 Tools) running under Wine/Proton on Linux:
 
 ```bash
 # Generate signing keys

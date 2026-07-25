@@ -380,7 +380,7 @@ fn sql_value(v: &DbValue) -> String {
 // ═══════════════════════════════════════════════════════════════════════════
 //
 // Format:
-//   [4 bytes] magic "A3DB"
+//   [4 bytes] magic "A3SQL"
 //   [1 byte]  version (0x01)
 //   [4 bytes] table count (u32 LE)
 //   for each table:
@@ -396,7 +396,7 @@ fn sql_value(v: &DbValue) -> String {
 //         [1 byte] value tag
 //         value data
 
-const BINARY_MAGIC: &[u8; 4] = b"A3DB";
+const BINARY_MAGIC: &[u8; 4] = b"A3SQ"; // 4 chars — was A3DB, now A3SQ
 const BINARY_VERSION: u8 = 0x01;
 
 #[repr(u8)]

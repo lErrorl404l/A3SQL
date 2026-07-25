@@ -1,9 +1,9 @@
-// A3DB main — follows ACE3/CBA_A3 convention
+// A3SQL main — follows ACE3/CBA_A3 convention
 #ifndef COMPONENT
     #define COMPONENT main
 #endif
 #ifndef COMPONENT_BEAUTIFIED
-    #define COMPONENT_BEAUTIFIED A3DB_Main
+    #define COMPONENT_BEAUTIFIED A3SQL_Main
 #endif
 
 #ifndef MAINPREFIX
@@ -22,9 +22,9 @@
 #define REQUIRED_VERSION 2.02
 
 #ifdef SUBCOMPONENT_BEAUTIFIED
-    #define COMPONENT_NAME QUOTE(A3DB - COMPONENT_BEAUTIFIED - SUBCOMPONENT_BEAUTIFIED)
+    #define COMPONENT_NAME QUOTE(A3SQL - COMPONENT_BEAUTIFIED - SUBCOMPONENT_BEAUTIFIED)
 #else
-    #define COMPONENT_NAME QUOTE(A3DB - COMPONENT_BEAUTIFIED)
+    #define COMPONENT_NAME QUOTE(A3SQL - COMPONENT_BEAUTIFIED)
 #endif
 
 #include "\x\cba\addons\main\script_mod.hpp"

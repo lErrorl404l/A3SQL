@@ -1,4 +1,4 @@
-# A3DB — Arma 3 Database Engine
+# A3SQL — Arma 3 Database Engine
 
 An embeddable SQL database engine for Arma 3 mods. Like **SQLite for Arma** — a
 Rust `callExtension` that lets modders write SQL directly in SQF.
@@ -77,7 +77,7 @@ _sql_backup = [] call a3sql_fnc_exportSQL;
 
 ### 4. CBA Addon Settings
 
-Options → Addon Configuration → A3DB:
+Options → Addon Configuration → A3SQL:
 
 | Setting | Type | Default | Purpose |
 |---|---|---|---|
@@ -217,7 +217,7 @@ SELECT UPPER(name), LOWER(name), LENGTH(name), SUBSTR(name, 1, 3) FROM weapons;
 ```sqf
 // In init.sqf or CfgFunctions init:
 private _version = "a3sql" callExtension "version";
-diag_log text format ["[A3DB] Loading: %1", _version];
+diag_log text format ["[A3SQL] Loading: %1", _version];
 ```
 
 ### SQL Execution
@@ -316,7 +316,7 @@ private _sql = format ["SELECT * FROM users WHERE name = '%1'", _userInput];
 
 ### TCP Authentication
 
-Set a username and password in CBA Settings (Options → Addon Configuration → A3DB).
+Set a username and password in CBA Settings (Options → Addon Configuration → A3SQL).
 When credentials are non-empty, clients must `LOGIN` before querying:
 
 ```python

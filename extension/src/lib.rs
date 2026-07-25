@@ -967,7 +967,7 @@ mod tests {
 
         // Verify the binary file has correct magic and content
         let saved = std::fs::read(&tmp).unwrap();
-        assert_eq!(&saved[0..4], b"A3DB", "magic bytes");
+        assert_eq!(&saved[0..4], b"A3SQ", "magic bytes");
         assert!(saved.len() > 100, "file size");
 
         // NOTE: LOAD is not tested via dispatch because it calls db.clear()

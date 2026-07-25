@@ -1,11 +1,11 @@
-# A3DB — Arma 3 Database Engine
+# A3SQL — Arma 3 Database Engine
 
 An embeddable SQL database engine for Arma 3 mods. Like **SQLite for Arma** — a
 Rust `callExtension` that lets modders write SQL directly in SQF.
 
 ```sqf
-["CREATE TABLE players (uid STRING PRIMARY KEY, name STRING, score INT)"] call a3db_fnc_execute;
-_result = ["SELECT name, score FROM players WHERE score > 1000 ORDER BY score DESC"] call a3db_fnc_execute;
+["CREATE TABLE players (uid STRING PRIMARY KEY, name STRING, score INT)"] call a3sql_fnc_execute;
+_result = ["SELECT name, score FROM players WHERE score > 1000 ORDER BY score DESC"] call a3sql_fnc_execute;
 ```
 
 ## Features
@@ -24,27 +24,27 @@ _result = ["SELECT name, score FROM players WHERE score > 1000 ORDER BY score DE
 | **Persistence** | SAVE/LOAD (binary), export/import JSON/CSV/SQL, export_to_file |
 | **Security** | Parameterized queries (`$1`, `$2`), TCP LOGIN auth, CBA credential settings |
 | **Plugins** | Rust trait, C ABI dynamic `.so`/`.dll`, SQF `register_function` |
-| **Network** | TCP listener (auto-start), standalone server (`a3db-server`), remote connect mode |
+| **Network** | TCP listener (auto-start), standalone server (`a3sql-server`), remote connect mode |
 | **Multi-dialect** | Accepts PostgreSQL, MySQL/MariaDB, SQLite, DataFusion-style SQL |
 
 ## Quick Start
 
-### 1. Add a3db as a dependency
+### 1. Add a3sql as a dependency
 
 ```cpp
-requiredAddons[] = {"cba_main", "a3db_main", "a3db_sql"};
+requiredAddons[] = {"cba_main", "a3sql_main", "a3sql_sql"};
 ```
 
 ### 2. Call from SQF
 
 ```sqf
-private _result = ["SELECT * FROM players WHERE score > 1000"] call a3db_fnc_execute;
+private _result = ["SELECT * FROM players WHERE score > 1000"] call a3sql_fnc_execute;
 ```
 
 ### 3. Run the standalone server
 
 ```bash
-cargo run --bin a3db-server -- --port 33307
+cargo run --bin a3sql-server -- --port 33307
 echo "SELECT * FROM players" | nc localhost 33307
 ```
 
@@ -72,9 +72,9 @@ s.close()
 ## Building
 
 ```bash
-cargo build --release -p a3db   # extension
+cargo build --release -p a3sql   # extension
 hemtt build                      # addon PBOs
-cargo test --lib -p a3db         # 162+ tests
+cargo test --lib -p a3sql         # 162+ tests
 ```
 
 See the [Building page](https://github.com/lErrorl404l/db_a3/wiki/Building) for cross-compilation, code signing, and CI details.
@@ -82,7 +82,7 @@ See the [Building page](https://github.com/lErrorl404l/db_a3/wiki/Building) for 
 ## Project Structure
 
 ```
-a3db/
+a3sql/
 ├── extension/           # Rust crate (cdylib + rlib)
 │   └── src/             # lib.rs (C ABI), engine/, parser/, bin/
 ├── addons/{main,sql}/   # Arma 3 addon PBOs

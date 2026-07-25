@@ -1,5 +1,5 @@
 #define COMPONENT a3sql
-#define COMPONENT_BEAUTIFIED A3DB
+#define COMPONENT_BEAUTIFIED A3SQL
 #include "\z\a3sql\addons\main\script_mod.hpp"
 
 // #define DEBUG_MODE_FULL

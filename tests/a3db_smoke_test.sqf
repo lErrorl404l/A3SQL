@@ -1,4 +1,4 @@
-/* A3DB in-game smoke test
+/* A3SQL in-game smoke test
  * Run this from the Arma 3 debug console (server only) to verify all features.
  * Outputs results to RPT log.
  */
@@ -12,10 +12,10 @@ private _fnc_test = {
     private _ok = (_result select 0) == 0;
     if (_ok == _expected_ok) then {
         _pass = _pass + 1;
-        diag_log text format ["[A3DB TEST] ✓ %1", _name];
+        diag_log text format ["[A3SQL TEST] ✓ %1", _name];
     } else {
         _fail = _fail + 1;
-        diag_log text format ["[A3DB TEST] ✗ %1 → %2", _name, _result];
+        diag_log text format ["[A3SQL TEST] ✗ %1 → %2", _name, _result];
     };
 };
 
@@ -33,4 +33,4 @@ private _fnc_test = {
 ["SELECT * FROM nonexistent", false] call _fnc_test;
 ["DROP TABLE smoke_test", true] call _fnc_test;
 
-diag_log text format ["=== A3DB Smoke Test: %1/%2 passed (%3 failed) ===", _pass, _pass + _fail, _fail];
+diag_log text format ["=== A3SQL Smoke Test: %1/%2 passed (%3 failed) ===", _pass, _pass + _fail, _fail];

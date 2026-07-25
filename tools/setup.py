@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""A3DB dev setup — file patching symlink + BI key generation.
+"""A3SQL dev setup — file patching symlink + BI key generation.
 
 Usage:
     python tools/setup.py               # auto-detect + symlink

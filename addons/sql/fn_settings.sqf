@@ -2,49 +2,49 @@
 
 ["a3sql_listener_enabled", "CHECKBOX",
     ["Enable TCP Listener", "Start TCP listener on mission start for external queries."],
-    "A3DB", true, false
+    "A3SQL", true, false
 ] call CBA_fnc_addSetting;
 
 ["a3sql_listener_port", "EDIT",
     ["Listener Port", "TCP port for external query listener."],
-    "A3DB", "33306", false
+    "A3SQL", "33306", false
 ] call CBA_fnc_addSetting;
 
 ["a3sql_listener_bind", "EDIT",
     ["Listener Bind Address", "IP to bind to: 127.0.0.1 (localhost) or 0.0.0.0 (network)."],
-    "A3DB", "127.0.0.1", false
+    "A3SQL", "127.0.0.1", false
 ] call CBA_fnc_addSetting;
 
 ["a3sql_auto_save", "CHECKBOX",
     ["Auto-Save on Mission End", "Save database to file when mission ends."],
-    "A3DB", false, false
+    "A3SQL", false, false
 ] call CBA_fnc_addSetting;
 
 ["a3sql_auto_load", "CHECKBOX",
     ["Auto-Load on Mission Start", "Restore database from file when mission starts."],
-    "A3DB", false, false
+    "A3SQL", false, false
 ] call CBA_fnc_addSetting;
 
 ["a3sql_auto_save_path", "EDIT",
     ["Auto-Save File Path", "File path relative to Arma 3 directory, or absolute path."],
-    "A3DB", "a3sql_autosave.bin", false
+    "A3SQL", "a3sql_autosave.bin", false
 ] call CBA_fnc_addSetting;
 
 ["a3sql_log_level", "LIST",
     ["Log Level", "Verbosity of .rpt diagnostic messages."],
-    "A3DB",
+    "A3SQL",
     [[0, 1, 2, 3], ["ERROR", "WARN", "INFO", "DEBUG"], 2],
     false
 ] call CBA_fnc_addSetting;
 
 ["a3sql_listener_user", "EDIT",
     ["Listener Username", "Username required for TCP login. Leave empty for anonymous access."],
-    "A3DB", "", false
+    "A3SQL", "", false
 ] call CBA_fnc_addSetting;
 
 ["a3sql_listener_password", "EDIT",
     ["Listener Password", "Password required for TCP login. Leave empty for anonymous access."],
-    "A3DB", "", false
+    "A3SQL", "", false
 ] call CBA_fnc_addSetting;
 
 // ── Auto-start listener at game startup ─────────────────────────────
@@ -64,6 +64,6 @@ if (missionNamespace getVariable ["a3sql_listener_enabled", true]) then {
 
     private _result = _ext callExtension ["listen", [str _port]];
     if (missionNamespace getVariable ["a3sql_log_level", 2] >= 2) then {
-        diag_log text format ["[A3DB] Listener on port %1: %2", _port, _result];
+        diag_log text format ["[A3SQL] Listener on port %1: %2", _port, _result];
     };
 };

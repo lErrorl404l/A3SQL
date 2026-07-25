@@ -17,7 +17,7 @@ use sqlparser::dialect::{Dialect, GenericDialect};
 use sqlparser::parser::{Parser, ParserError};
 use std::any::TypeId;
 
-/// A3DB's custom SQL dialect — extends GenericDialect implicitly.
+/// A3SQL's custom SQL dialect — extends GenericDialect implicitly.
 ///
 /// Returns None from parse_statement() for all custom statements,
 /// delegating everything to GenericDialect's default behavior.

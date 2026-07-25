@@ -1,6 +1,6 @@
 # Standalone Server
 
-A3DB can run as an independent TCP server outside of Arma 3. This is useful for testing, external tooling, or as a central database that multiple game clients connect to.
+A3SQL can run as an independent TCP server outside of Arma 3. This is useful for testing, external tooling, or as a central database that multiple game clients connect to.
 
 ## Usage
 

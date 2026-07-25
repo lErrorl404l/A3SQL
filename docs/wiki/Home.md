@@ -1,4 +1,4 @@
-# A3DB — Arma 3 Database Engine
+# A3SQL — Arma 3 Database Engine
 
 An embeddable SQL database engine for Arma 3 mods. Like **SQLite for Arma**.
 
@@ -18,7 +18,7 @@ _result = ["SELECT name, score FROM players WHERE score > 1000 ORDER BY score DE
 - **[Security](Security)** — Parameterized queries, TCP authentication
 - **[TCP Connector](TCP-Connector)** — External query access
 - **[Standalone Server](Standalone-Server)** — Run without Arma, remote mode
-- **[Plugins](Plugins)** — Extend A3DB with Rust, C, or SQF plugins
+- **[Plugins](Plugins)** — Extend A3SQL with Rust, C, or SQF plugins
 - **[Development Setup](Development-Setup)** — Full dev environment guide
 - **[Building](Building)** — Compiling the extension and addon
 

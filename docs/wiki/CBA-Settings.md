@@ -1,6 +1,6 @@
 # CBA Settings
 
-All settings are under the **A3DB** category in CBA Settings (in-game → Options → Addon Options).
+All settings are under the **A3SQL** category in CBA Settings (in-game → Options → Addon Options).
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|

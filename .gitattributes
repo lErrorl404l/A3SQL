@@ -1,4 +1,4 @@
-# A3DB — git attributes (ACE3/CBA convention)
+# A3SQL — git attributes (ACE3/CBA convention)
 * text=auto
 
 *.png binary

@@ -1,4 +1,4 @@
-# A3DB launch profiles — run with `hemtt launch <profile>`
+# A3SQL launch profiles — run with `hemtt launch <profile>`
 # Based on ACE3/ACRE2 convention
 
 [default]

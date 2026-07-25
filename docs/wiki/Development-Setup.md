@@ -1,6 +1,6 @@
 # Development Setup
 
-Setting up your environment to build and test A3DB locally, following ACE3/CBA conventions.
+Setting up your environment to build and test A3SQL locally, following ACE3/CBA conventions.
 
 ## Prerequisites
 
@@ -98,7 +98,7 @@ uv run python3 tools/config_style_checker.py
 ```sqf
 // Run from Arma 3 debug console (server only)
 execVM "tests/a3sql_smoke_test.sqf";
-// Check RPT log for "A3DB Smoke Test" results
+// Check RPT log for "A3SQL Smoke Test" results
 ```
 
 ## Project Structure
