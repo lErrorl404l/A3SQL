@@ -1,13 +1,13 @@
-// a3db Plugin API — C ABI for external plugins
+// a3sql Plugin API — C ABI for external plugins
 //
-// Write a shared library (.so / .dll) that exports a3db_plugin_init.
+// Write a shared library (.so / .dll) that exports a3sql_plugin_init.
 //
 // Build (example):
 //   gcc -shared -o my_plugin.so my_plugin.c -fPIC
 //
-// Drop into @a3db/plugins/ — loaded at startup.
+// Drop into @a3sql/plugins/ — loaded at startup.
 //
-// For full docs: https://github.com/lErrorl404l/a3db/wiki/Plugins
+// For full docs: https://github.com/lErrorl404l/a3sql/wiki/Plugins
 
 #ifndef A3DB_PLUGIN_H
 #define A3DB_PLUGIN_H
@@ -23,15 +23,15 @@ extern "C" {
 // Every plugin MUST export this function.
 // Returns the plugin name (static string, not freed).
 // Called once at startup.
-typedef const char* (*a3db_plugin_init_t)(void);
-#define A3DB_PLUGIN_INIT __attribute__((visibility("default"))) const char* a3db_plugin_init
+typedef const char* (*a3sql_plugin_init_t)(void);
+#define A3DB_PLUGIN_INIT __attribute__((visibility("default"))) const char* a3sql_plugin_init
 
 // ── Registration callbacks (call from init) ────────────────────────────
 
 // Register a SQL function callable as fn_<name>(args).
 // min_args/max_args: argument count constraints (-1 = unlimited).
 // The function name is prefixed with fn_ automatically.
-int32_t a3db_plugin_register_function(
+int32_t a3sql_plugin_register_function(
     const char* plugin_name,
     const char* function_name,
     int32_t min_args,
@@ -40,7 +40,7 @@ int32_t a3db_plugin_register_function(
 
 // ── Example plugin template ─────────────────────────────────────────────
 //
-// #include "a3db_plugin.h"
+// #include "a3sql_plugin.h"
 //
 // static int my_echo(const char* arg) {
 //     // ...
@@ -48,7 +48,7 @@ int32_t a3db_plugin_register_function(
 // }
 //
 // A3DB_PLUGIN_INIT {
-//     a3db_plugin_register_function("my_plugin", "echo", 1, 1);
+//     a3sql_plugin_register_function("my_plugin", "echo", 1, 1);
 //     return "my_plugin";
 // }
 

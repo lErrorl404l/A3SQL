@@ -1,4 +1,4 @@
-// a3db indices — BTREE (sorted lookups) and TRIGRAM (fuzzy GIN)
+// a3sql indices — BTREE (sorted lookups) and TRIGRAM (fuzzy GIN)
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 

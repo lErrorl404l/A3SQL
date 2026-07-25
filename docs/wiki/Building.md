@@ -14,12 +14,12 @@ A3DB has two build steps: the **Rust extension** (native DLL/SO) and the **Arma 
 
 ```bash
 # 1. Build the Rust extension
-cargo build --release -p a3db
+cargo build --release -p a3sql
 
 # 2. Copy to Arma 3 directory
-cp target/release/liba3db.so "/path/to/Arma 3/@a3db/a3db_x64.so"
+cp target/release/liba3sql.so "/path/to/Arma 3/@a3sql/a3sql_x64.so"
 # or for Windows cross-compile:
-cp target/x86_64-pc-windows-gnu/release/a3db.dll "/path/to/Arma 3/@a3db/a3db_x64.dll"
+cp target/x86_64-pc-windows-gnu/release/a3sql.dll "/path/to/Arma 3/@a3sql/a3sql_x64.dll"
 
 # 3. Build addon PBOs
 hemtt build
@@ -33,23 +33,23 @@ The extension targets 4 architectures via `rust-toolchain.toml`:
 
 ```bash
 # Linux x86_64 (native)
-cargo build --release --target x86_64-unknown-linux-gnu -p a3db
+cargo build --release --target x86_64-unknown-linux-gnu -p a3sql
 
 # Linux 32-bit
-cargo build --release --target i686-unknown-linux-gnu -p a3db
+cargo build --release --target i686-unknown-linux-gnu -p a3sql
 
 # Windows x86_64 (MinGW cross)
-cargo build --release --target x86_64-pc-windows-gnu -p a3db
+cargo build --release --target x86_64-pc-windows-gnu -p a3sql
 
 # Windows 32-bit
-cargo build --release --target i686-pc-windows-gnu -p a3db
+cargo build --release --target i686-pc-windows-gnu -p a3sql
 ```
 
 ## Testing
 
 ```bash
-cargo test -p a3db            # 118+ tests
-cargo clippy -p a3db          # lint
+cargo test -p a3sql            # 118+ tests
+cargo clippy -p a3sql          # lint
 cargo fmt --check             # formatting
 hemtt check                   # SQF + config validation
 ```
@@ -81,7 +81,7 @@ A3DB supports code signing via `DSSignFile.exe` (from Arma 3 Tools) running unde
 ```bash
 # Generate signing keys
 uv run python3 tools/setup.py --keys
-# Creates keys/a3db.bikey + keys/a3db.biprivatekey
+# Creates keys/a3sql.bikey + keys/a3sql.biprivatekey
 
 # HEMTT signs automatically during `hemtt release`
 # Config in .hemtt/project.toml → [hemtt.signing]
@@ -104,15 +104,15 @@ GitHub Actions (`.github/workflows/ci.yml`) runs on push/PR to `main`:
 5. **build-addon** — downloads all artifacts, runs `hemtt build`, outputs PBOs
 6. **workshop** — publish to Steam Workshop (on release)
 
-On a release publish, it creates `a3db-release.zip` with the full addon.
+On a release publish, it creates `a3sql-release.zip` with the full addon.
 
 ## Standalone Server
 
-The a3db-server binary is part of the same workspace:
+The a3sql-server binary is part of the same workspace:
 
 ```bash
-cargo run --bin a3db-server -- --port 33307
-cargo build --release --bin a3db-server
+cargo run --bin a3sql-server -- --port 33307
+cargo build --release --bin a3sql-server
 ```
 
 ## Arma 3 Installation
@@ -121,10 +121,10 @@ Deploy the addon to your Arma 3 directory:
 
 ```bash
 # Linux (native)
-cp extension/target/release/a3db_x64.so ~/.local/share/Steam/steamapps/common/Arma\ 3/@a3db/
+cp extension/target/release/a3sql_x64.so ~/.local/share/Steam/steamapps/common/Arma\ 3/@a3sql/
 
 # Windows (cross-compiled via MinGW)
-cp target/x86_64-pc-windows-gnu/release/a3db.dll "/path/to/Arma 3/@a3db/a3db_x64.dll"
+cp target/x86_64-pc-windows-gnu/release/a3sql.dll "/path/to/Arma 3/@a3sql/a3sql_x64.dll"
 ```
 
-The HEMTT-built PBOs go in the same `@a3db` directory alongside the DLLs.
+The HEMTT-built PBOs go in the same `@a3sql` directory alongside the DLLs.

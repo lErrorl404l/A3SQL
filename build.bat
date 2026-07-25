@@ -6,13 +6,13 @@ echo === Building A3DB ===
 
 echo.
 echo -- Rust DLL (Windows x86_64) --
-cargo build --release --target x86_64-pc-windows-gnu -p a3db
+cargo build --release --target x86_64-pc-windows-gnu -p a3sql
 if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
 
 echo.
 echo -- Copying DLL to project root --
-copy /Y target\x86_64-pc-windows-gnu\release\a3db.dll a3db_x64.dll
-copy /Y target\x86_64-pc-windows-gnu\release\a3db.dll a3db.dll
+copy /Y target\x86_64-pc-windows-gnu\release\a3sql.dll a3sql_x64.dll
+copy /Y target\x86_64-pc-windows-gnu\release\a3sql.dll a3sql.dll
 
 echo.
 echo -- Building addon PBOs --

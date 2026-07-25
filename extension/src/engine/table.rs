@@ -1,4 +1,4 @@
-// a3db table — schema + row storage + CRUD operations
+// a3sql table — schema + row storage + CRUD operations
 
 use std::collections::{HashMap, HashSet};
 

@@ -1,5 +1,5 @@
 [project]
-name = "a3db-tools"
+name = "a3sql-tools"
 version = "0.1.0"
 description = "A3DB development tooling (SQF validators, Steam/Proton helpers)"
 requires-python = ">=3.12"

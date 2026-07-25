@@ -23,10 +23,10 @@ Thumbs.db
 .omo/
 
 # Extension binary symlinks (created for hemtt launch)
-a3db_x64.dll
-a3db_x64.so
-a3db.dll
-a3db.so
+a3sql_x64.dll
+a3sql_x64.so
+a3sql.dll
+a3sql.so
 
 # Release artifacts
 @*

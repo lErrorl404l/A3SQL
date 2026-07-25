@@ -1,4 +1,4 @@
-# a3db cross-compilation config
+# a3sql cross-compilation config
 #
 # These linkers are needed when building Windows targets on Linux CI runners.
 # On Ubuntu: sudo apt-get install mingw-w64

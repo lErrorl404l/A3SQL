@@ -1,6 +1,6 @@
-#define COMPONENT a3db
+#define COMPONENT a3sql
 #define COMPONENT_BEAUTIFIED A3DB
-#include "\z\a3db\addons\main\script_mod.hpp"
+#include "\z\a3sql\addons\main\script_mod.hpp"
 
 // #define DEBUG_MODE_FULL
 #define DISABLE_COMPILE_CACHE

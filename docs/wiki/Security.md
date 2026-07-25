@@ -9,11 +9,11 @@ The primary SQL injection prevention mechanism. Pass user input as separate `cal
 ```sqf
 // ❌ Unsafe — string interpolation allows injection
 _uid = "foo' OR '1'='1";
-_result = [format ["DELETE FROM players WHERE uid = '%1'", _uid]] call a3db_fnc_execute;
+_result = [format ["DELETE FROM players WHERE uid = '%1'", _uid]] call a3sql_fnc_execute;
 
 // ✅ Safe — $1 placeholder gets escaped by the extension
 _uid = "foo' OR '1'='1";
-_result = ["a3db", "DELETE FROM players WHERE uid = $1", [_uid]] call a3db_fnc_execute;
+_result = ["a3sql", "DELETE FROM players WHERE uid = $1", [_uid]] call a3sql_fnc_execute;
 ```
 
 **Escaping rules** (applied by the Rust extension before SQL parsing):
@@ -39,9 +39,9 @@ Set credentials via CBA Settings or in SQF before starting the listener:
 
 ```sqf
 // In fn_settings.sqf (PreInit) or from a mission
-["a3db_listener_user", "admin"] call CBA_fnc_setVar;
-["a3db_listener_password", "secret123"] call CBA_fnc_setVar;
-["a3db_listener_enabled", true] call CBA_fnc_setVar;
+["a3sql_listener_user", "admin"] call CBA_fnc_setVar;
+["a3sql_listener_password", "secret123"] call CBA_fnc_setVar;
+["a3sql_listener_enabled", true] call CBA_fnc_setVar;
 ```
 
 When credentials are set, the listener requires every TCP client to authenticate first.
@@ -69,11 +69,11 @@ Clients that fail authentication are disconnected immediately. Clients that don'
 
 ### Anonymous Access
 
-Leave both `a3db_listener_user` and `a3db_listener_password` empty (default) for anonymous access — no `LOGIN` command needed.
+Leave both `a3sql_listener_user` and `a3sql_listener_password` empty (default) for anonymous access — no `LOGIN` command needed.
 
 ### Remote Server Mode
 
-When using the extension's `connect` command to forward queries to a remote a3db-server, the TCP connection itself is unauthenticated (the remote server's local credentials check applies if configured). Future versions may add credential forwarding.
+When using the extension's `connect` command to forward queries to a remote a3sql-server, the TCP connection itself is unauthenticated (the remote server's local credentials check applies if configured). Future versions may add credential forwarding.
 
 ### Response Format
 

@@ -1,4 +1,4 @@
-// a3db structured error codes
+// a3sql structured error codes
 
 use std::fmt;
 

@@ -1,5 +1,5 @@
 name = "A3DB"
-prefix = "a3db"
+prefix = "a3sql"
 mainprefix = "z"
 author = "ABE Team"
 
@@ -29,4 +29,4 @@ post_release = ["01_rename_zip"]
 
 # ── Release ──────────────────────────────────────────────────────────────
 [hemtt.release]
-folder = "a3db"
+folder = "a3sql"

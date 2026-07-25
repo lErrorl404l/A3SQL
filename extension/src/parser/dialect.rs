@@ -1,4 +1,4 @@
-// A3DbDialect — custom SQL dialect for a3db
+// A3DbDialect — custom SQL dialect for a3sql
 //
 // Extends GenericDialect (most permissive) with:
 //   - %% fuzzy match operator   → handled via preprocessor → fuzzy_match()

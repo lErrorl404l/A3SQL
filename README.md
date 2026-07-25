@@ -61,13 +61,13 @@ s.close()
 
 ## Documentation
 
-- [Getting Started](https://github.com/lErrorl404l/a3db/wiki/Getting-Started) — Full worked example
-- [SQL Dialect](https://github.com/lErrorl404l/a3db/wiki/SQL-Dialect) — Supported SQL syntax
-- [CBA Settings](https://github.com/lErrorl404l/a3db/wiki/CBA-Settings) — Addon configuration
-- [Standalone Server](https://github.com/lErrorl404l/a3db/wiki/Standalone-Server) — Run without Arma
-- [Plugins](https://github.com/lErrorl404l/a3db/wiki/Plugins) — Extend with Rust/C/SQF
-- [Building](https://github.com/lErrorl404l/a3db/wiki/Building) — Compiling from source
-- [Development Setup](https://github.com/lErrorl404l/a3db/wiki/Development-Setup) — Dev environment guide
+- [Getting Started](https://github.com/lErrorl404l/db_a3/wiki/Getting-Started) — Full worked example
+- [SQL Dialect](https://github.com/lErrorl404l/db_a3/wiki/SQL-Dialect) — Supported SQL syntax
+- [CBA Settings](https://github.com/lErrorl404l/db_a3/wiki/CBA-Settings) — Addon configuration
+- [Standalone Server](https://github.com/lErrorl404l/db_a3/wiki/Standalone-Server) — Run without Arma
+- [Plugins](https://github.com/lErrorl404l/db_a3/wiki/Plugins) — Extend with Rust/C/SQF
+- [Building](https://github.com/lErrorl404l/db_a3/wiki/Building) — Compiling from source
+- [Development Setup](https://github.com/lErrorl404l/db_a3/wiki/Development-Setup) — Dev environment guide
 
 ## Building
 
@@ -77,7 +77,7 @@ hemtt build                      # addon PBOs
 cargo test --lib -p a3db         # 162+ tests
 ```
 
-See the [Building page](https://github.com/lErrorl404l/a3db/wiki/Building) for cross-compilation, code signing, and CI details.
+See the [Building page](https://github.com/lErrorl404l/db_a3/wiki/Building) for cross-compilation, code signing, and CI details.
 
 ## Project Structure
 

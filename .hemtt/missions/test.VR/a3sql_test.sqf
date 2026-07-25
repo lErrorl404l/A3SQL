@@ -2,7 +2,7 @@
 // and press the Local Execute button. Results appear in the console
 // and are logged to the .rpt file via diag_log.
 
-private _ext = "a3db";
+private _ext = "a3sql";
 
 diag_log "=== A3DB SMOKE TEST ===";
 
@@ -75,10 +75,10 @@ _dump = _ext callExtension "dump_sql";
 systemChat format ["[A3DB] dump sql: %1", _dump];
 
 // Save/load round-trip
-_save = _ext callExtension ["save", ["a3db_smoke_test.bin"]];
+_save = _ext callExtension ["save", ["a3sql_smoke_test.bin"]];
 systemChat format ["[A3DB] save: %1", _save];
 
-_load = _ext callExtension ["load", ["a3db_smoke_test.bin"]];
+_load = _ext callExtension ["load", ["a3sql_smoke_test.bin"]];
 systemChat format ["[A3DB] load: %1", _load];
 
 _reverify = _ext callExtension "SELECT * FROM smoke";

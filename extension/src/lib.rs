@@ -1,4 +1,4 @@
-// a3db — Arma 3 Database Engine
+// a3sql — Arma 3 Database Engine
 // C ABI: RVExtension, RVExtensionArgs, RVExtensionVersion
 //
 // Build targets:
@@ -45,7 +45,7 @@ pub(crate) static REPLACE_FLAG: AtomicBool = AtomicBool::new(false);
 const OUTPUT_BUF_SIZE: u32 = 10240;
 
 /// Version string — max 32 bytes including null terminator.
-const VERSION: &[u8] = b"a3db 0.1.0\0";
+const VERSION: &[u8] = b"a3sql 0.1.0\0";
 
 /// Called by engine on extension load.
 ///
@@ -160,7 +160,7 @@ pub fn dispatch(input: &str, args: &[&str]) -> String {
         return ok_response("\"PONG\"");
     }
     if lowered == "version" {
-        return ok_response("\"a3db 0.1.0\"");
+        return ok_response("\"a3sql 0.1.0\"");
     }
     if lowered == "dump_sql" || lowered == "export_sql" {
         return handle_dump_sql();
@@ -563,7 +563,7 @@ fn handle_dump_sql() -> String {
 }
 
 fn handle_save(args: &[&str]) -> String {
-    let filename = args.first().unwrap_or(&"a3db.bin");
+    let filename = args.first().unwrap_or(&"a3sql.bin");
     let db = DB.lock().unwrap();
     let bytes = engine::serialize::export_binary(&db);
     match std::fs::write(filename, bytes) {
@@ -573,7 +573,7 @@ fn handle_save(args: &[&str]) -> String {
 }
 
 fn handle_load(args: &[&str]) -> String {
-    let filename = args.first().unwrap_or(&"a3db.bin");
+    let filename = args.first().unwrap_or(&"a3sql.bin");
     match std::fs::read(filename) {
         Ok(bytes) => {
             let mut db = DB.lock().unwrap();
@@ -657,14 +657,14 @@ fn serve_client(stream: std::net::TcpStream) {
 /// Start a TCP server on `bind:port`. Each client gets a thread.
 /// Pass `db_path` for persistence (loads on start, saves on writes).
 /// This is the shared entry point used by both the extension's `listen` command
-/// and the standalone `a3db-server` binary.
+/// and the standalone `a3sql-server` binary.
 pub fn start_server(bind: &str, port: u16, db_path: Option<&str>) -> Result<String, String> {
     let addr = format!("{}:{}", bind, port);
 
     if let Some(path) = db_path {
         // Load existing database if file exists
         let r = dispatch(&format!("load {}", path), &[]);
-        eprintln!("[a3db-server] Loaded from {}: {}", path, r);
+        eprintln!("[a3sql-server] Loaded from {}: {}", path, r);
     }
 
     let listener = try_bind(&addr).map_err(|e| format!("Bind failed: {}", e))?;
@@ -676,7 +676,7 @@ pub fn start_server(bind: &str, port: u16, db_path: Option<&str>) -> Result<Stri
             std::thread::sleep(std::time::Duration::from_secs(30));
             let r = dispatch(&format!("save {}", path), &[]);
             if r.contains("ERR") {
-                eprintln!("[a3db-server] auto-save: {}", r);
+                eprintln!("[a3sql-server] auto-save: {}", r);
             }
         });
     }
@@ -737,11 +737,11 @@ fn handle_export_to_file(trimmed: &str, args: &[&str]) -> String {
         Some(p) => p.to_string(),
         None => {
             if format_str == "sql" {
-                "a3db_export.sql".into()
+                "a3sql_export.sql".into()
             } else if let Some(t) = table_name {
                 format!("{}.{}", t, format_str)
             } else {
-                "a3db_export.txt".into()
+                "a3sql_export.txt".into()
             }
         }
     };
@@ -866,7 +866,7 @@ mod tests {
 
     #[test]
     fn abi_full_lifecycle() {
-        // Simulates SQF: "a3db" callExtension "CREATE TABLE ..."
+        // Simulates SQF: "a3sql" callExtension "CREATE TABLE ..."
         let r = dispatch(
             "CREATE TABLE abi_life (id STRING PRIMARY KEY, name STRING, qty INT)",
             &[],
@@ -955,7 +955,7 @@ mod tests {
 
     #[test]
     fn abi_save_load() {
-        let tmp = std::env::temp_dir().join("a3db_abi_save_test.bin");
+        let tmp = std::env::temp_dir().join("a3sql_abi_save_test.bin");
         let path = tmp.to_string_lossy().to_string();
 
         dispatch("CREATE TABLE abi_sl (k STRING PRIMARY KEY, v INT)", &[]);
@@ -1182,11 +1182,11 @@ mod tests {
             assert!(v.len() > 5 && v.contains("0.1.0"), "RVExtensionVersion: {}", v);
         }
 
-        // 2. RVExtension string form — simulates: "a3db" callExtension "version"
+        // 2. RVExtension string form — simulates: "a3sql" callExtension "version"
         let r = abi_call("version");
         assert!(r.starts_with("[0,"), "string ABI version: {}", r);
 
-        // 3. RVExtensionArgs array form — simulates: "a3db" callExtension ["version", []]
+        // 3. RVExtensionArgs array form — simulates: "a3sql" callExtension ["version", []]
         let r = abi_call_args("version", &[]);
         assert!(r.starts_with("[0,"), "args ABI version: {}", r);
 
@@ -1287,7 +1287,7 @@ mod tests {
         assert_eq!(s, "OK");
 
         // 8. save/load
-        let tmp = std::env::temp_dir().join("a3db_resp_seq.bin");
+        let tmp = std::env::temp_dir().join("a3sql_resp_seq.bin");
         let path = tmp.to_string_lossy().to_string();
         let r = abi_call_args("save", &[&path]);
         let (c, _, _) = validate_response(&r);

@@ -34,7 +34,7 @@
 
 // Path macros — PREFIX set by script_mod.hpp or HEMTT auto-defines
 #ifndef PREFIX
-#define PREFIX a3db
+#define PREFIX a3sql
 #endif
 #define DOUBLES_PREFIX(var1,var2) var1##_##var2
 #define QPATHTO_FOLDER(var) QUOTE(z\PREFIX\addons\var)

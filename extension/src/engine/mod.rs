@@ -1,4 +1,4 @@
-// a3db engine — in-memory database engine
+// a3sql engine — in-memory database engine
 
 pub mod database;
 pub mod error;

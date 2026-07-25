@@ -12,7 +12,7 @@ virtual_paths = [
     "P:/a3|/a3",  # "{}|/a3".format(os.path.join(addon_base_path, "include", "a3")),
     "P:/a3|/A3",
     "P:/x/cba|/x/cba",
-    "{}|/z/a3db".format(addon_base_path),
+    "{}|/z/a3sql".format(addon_base_path),
 ]
 
 

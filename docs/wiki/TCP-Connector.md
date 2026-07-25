@@ -4,17 +4,17 @@ A3DB exposes a lightweight TCP interface that lets external tools query the in-g
 
 ## Enabling
 
-The TCP listener starts automatically at game boot when `a3db_listener_enabled` is true (CBA Setting, defaults to on). It binds to `127.0.0.1:33306` by default.
+The TCP listener starts automatically at game boot when `a3sql_listener_enabled` is true (CBA Setting, defaults to on). It binds to `127.0.0.1:33306` by default.
 
 ```sqf
 // Manual start from SQF (if auto-start is disabled)
-["listen", ["33307"]] call a3db_fnc_execute;
+["listen", ["33307"]] call a3sql_fnc_execute;
 
 // With explicit binding
-["listen 33307"] call a3db_fnc_execute;
+["listen 33307"] call a3sql_fnc_execute;
 
 // Stop
-["stop"] call a3db_fnc_execute;
+["stop"] call a3sql_fnc_execute;
 ```
 
 ## Protocol
@@ -50,7 +50,7 @@ The TCP listener spawns a thread per connection. Slow queries from one client do
 
 ## Authentication
 
-If CBA credentials are set (`a3db_listener_user` / `a3db_listener_password`), the first message MUST be `LOGIN`:
+If CBA credentials are set (`a3sql_listener_user` / `a3sql_listener_password`), the first message MUST be `LOGIN`:
 
 ```
 > LOGIN admin secret123
@@ -101,4 +101,4 @@ echo "SELECT name FROM players" | nc localhost 33306
 
 ## Security Note
 
-By default the listener binds to `127.0.0.1` (localhost only). To allow network access, change `a3db_listener_bind` to `0.0.0.0` — but set a username/password first.
+By default the listener binds to `127.0.0.1` (localhost only). To allow network access, change `a3sql_listener_bind` to `0.0.0.0` — but set a username/password first.

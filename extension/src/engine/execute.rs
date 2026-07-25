@@ -1,4 +1,4 @@
-// a3db statement executor — interprets sqlparser AST against Database
+// a3sql statement executor — interprets sqlparser AST against Database
 
 use std::collections::{HashMap, HashSet};
 

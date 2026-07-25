@@ -8,10 +8,10 @@ Register an SQF function callable from SQL as `fn_<name>()`:
 
 ```sqf
 // Register
-["register_function", ["my_func", 2]] call a3db_fnc_execute;
+["register_function", ["my_func", 2]] call a3sql_fnc_execute;
 
 // Use in SQL
-_result = ["SELECT fn_my_func('a', 'b') FROM t"] call a3db_fnc_execute;
+_result = ["SELECT fn_my_func('a', 'b') FROM t"] call a3sql_fnc_execute;
 ```
 
 SQF functions are tracked by name only — the actual evaluation is handled by your SQF code before calling `fn_execute.sqf`.
@@ -21,7 +21,7 @@ SQF functions are tracked by name only — the actual evaluation is handled by y
 For built-in extensions compiled into the DLL:
 
 ```rust
-use a3db::engine::plugin::{PluginFunction, register_plugin};
+use a3sql::engine::plugin::{PluginFunction, register_plugin};
 
 register_plugin(
     "my_plugin",
@@ -49,10 +49,10 @@ Shared libraries (`.so` / `.dll`) placed in the plugin directory are loaded at r
 
 ```c
 // my_plugin.c
-#include "a3db_plugin.h"
+#include "a3sql_plugin.h"
 
 A3DB_PLUGIN_INIT {
-    a3db_plugin_register_function("my_plugin", "echo", 1, 1);
+    a3sql_plugin_register_function("my_plugin", "echo", 1, 1);
     return "my_plugin";
 }
 ```
@@ -67,7 +67,7 @@ gcc -shared -o my_plugin.so my_plugin.c -fPIC
 
 Drop the compiled `.so`/`.dll` into a directory and load from SQF:
 ```sqf
-["plugin_dir @a3db/plugins"] call a3db_fnc_execute;
+["plugin_dir @a3sql/plugins"] call a3sql_fnc_execute;
 ```
 
 Or load via TCP:
@@ -78,19 +78,19 @@ plugin_dir /path/to/plugins
 ## Listing Plugins
 
 ```sqf
-_result = ["plugins"] call a3db_fnc_execute;
+_result = ["plugins"] call a3sql_fnc_execute;
 // → [0, "OK", [["builtin_echo", ["echo"], []], ["sqf_user", ["my_func"], ["sqf_called"]]]]
 //         plugin_name    functions    hooks
 ```
 
 ## C API Reference
 
-See `include/a3db_plugin.h` in the repository for the full header.
+See `include/a3sql_plugin.h` in the repository for the full header.
 
 | Function | Purpose |
 |----------|---------|
-| `a3db_plugin_init()` | **Required.** Entry point, called at load. Returns plugin name. |
-| `a3db_plugin_register_function(name, fn_name, min_args, max_args)` | Register a SQL function (callable as `fn_<name>`) |
+| `a3sql_plugin_init()` | **Required.** Entry point, called at load. Returns plugin name. |
+| `a3sql_plugin_register_function(name, fn_name, min_args, max_args)` | Register a SQL function (callable as `fn_<name>`) |
 
 ## Example
 

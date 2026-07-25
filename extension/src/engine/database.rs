@@ -1,4 +1,4 @@
-// a3db database — table container + schema management
+// a3sql database — table container + schema management
 
 use std::collections::HashMap;
 

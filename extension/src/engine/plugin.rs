@@ -1,4 +1,4 @@
-// a3db plugin system — three tiers:
+// a3sql plugin system — three tiers:
 //
 // 1. Rust trait: compile-time plugins (A3Plugin)
 // 2. C ABI: dynamic .so/.dll loaded at runtime (via libloading)
@@ -195,7 +195,7 @@ pub fn load_plugin_dir(path: &str) -> Vec<String> {
             Err(e) => {
                 // ponytail: log and skip bad plugins
                 let fname = p.file_name().map(|n| n.to_string_lossy()).unwrap_or_default();
-                eprintln!("[a3db] plugin load failed {}: {}", fname, e);
+                eprintln!("[a3sql] plugin load failed {}: {}", fname, e);
             }
         }
     }
@@ -204,13 +204,13 @@ pub fn load_plugin_dir(path: &str) -> Vec<String> {
 
 fn load_plugin_file(path: &str) -> Result<String, String> {
     // Safety: libloading is safe — the plugin is a shared lib we control.
-    // The plugin C ABI must match a3db_plugin.h.
+    // The plugin C ABI must match a3sql_plugin.h.
     unsafe {
         let lib = libloading::Library::new(path).map_err(|e| format!("dlopen: {}", e))?;
 
         let init: libloading::Symbol<unsafe extern "C" fn(*mut std::ffi::c_void) -> *const std::ffi::c_char> = lib
-            .get(b"a3db_plugin_init")
-            .map_err(|_| "no a3db_plugin_init symbol".to_string())?;
+            .get(b"a3sql_plugin_init")
+            .map_err(|_| "no a3sql_plugin_init symbol".to_string())?;
 
         let registry_ptr: *mut std::ffi::c_void = std::ptr::null_mut();
         let name_ptr = init(registry_ptr);
@@ -220,7 +220,7 @@ fn load_plugin_file(path: &str) -> Result<String, String> {
         let name = std::ffi::CStr::from_ptr(name_ptr).to_string_lossy().into_owned();
 
         // Register functions from the plugin using the C ABI callback.
-        // The plugin calls back into a3db to register each function.
+        // The plugin calls back into a3sql to register each function.
         // We pass a function pointer for the plugin to call.
         // For now, plugins register via the init() call.
         // The library handle is leaked intentionally — plugins live for the process lifetime.
@@ -237,7 +237,7 @@ fn load_plugin_file(path: &str) -> Result<String, String> {
 /// C-callable function for plugins to register a SQL function.
 /// Called from the plugin's init() via the callback pointer.
 #[no_mangle]
-pub extern "C" fn a3db_plugin_register_function(
+pub extern "C" fn a3sql_plugin_register_function(
     plugin_name: *const std::ffi::c_char,
     func_name: *const std::ffi::c_char,
     min_args: i32,
