@@ -68,7 +68,7 @@ jobs:
       - name: Install HEMTT
         uses: arma-actions/hemtt@a0570ddd80d2b7be9c0f052494c0f700b42668dd # v1
       - name: Download all artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: a3sql-*
           merge-multiple: true
@@ -89,7 +89,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Download addon
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: a3sql-addon
           path: a3sql
@@ -111,7 +111,7 @@ jobs:
       - name: Install HEMTT
         uses: arma-actions/hemtt@v1
       - name: Download addon
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: a3sql-addon
           path: .hemttout/build
