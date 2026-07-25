@@ -14,8 +14,33 @@ ctrlc = "3.4"
 lazy_static = "1.5"
 libloading = "0.9"
 
+# Error handling
+thiserror = "2.0"
+
+# Date/time support (lightweight, ~75KB)
+time = { version = "0.3", features = ["formatting", "parsing"] }
+
+# REGEXP operator support
+regex = "1.11"
+
+# UUID column type
+uuid = { version = "1.16", features = ["v4", "serde"] }
+
+# Ordered HashMap for column ordering in queries
+indexmap = "2.7"
+
+# Decimal type for DECIMAL(p,s) columns
+rust_decimal = { version = "1.36", features = ["serde"] }
+
+# SQL formatting for SHOW CREATE TABLE output
+sqlformat = "0.5"
+
+# Zero-copy binary serialization for persistence
+rkyv = { version = "0.8.17", features = [] }
+
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
+proptest = "1.11"
 
 [[bench]]
 name = "queries"
