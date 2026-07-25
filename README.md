@@ -1,5 +1,12 @@
 # A3SQL — Arma 3 Database Engine
 
+[![CI](https://github.com/lErrorl404l/a3sql/actions/workflows/ci.yml/badge.svg)](https://github.com/lErrorl404l/a3sql/actions)
+[![Tests](https://img.shields.io/badge/tests-162-brightgreen)](https://github.com/lErrorl404l/a3sql)
+[![Rust](https://img.shields.io/badge/rust-stable-orange)](https://rustup.rs/)
+[![HEMTT](https://img.shields.io/badge/HEMTT-1.20+-blue)](https://hemtt.dev/)
+[![License](https://img.shields.io/badge/license-APL--SA-red)](LICENSE)
+[![Wiki](https://img.shields.io/badge/docs-wiki-green)](https://github.com/lErrorl404l/a3sql/wiki)
+
 An embeddable SQL database engine for Arma 3 mods. Like **SQLite for Arma** — a
 Rust `callExtension` that lets modders write SQL directly in SQF.
 
