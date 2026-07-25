@@ -102,8 +102,9 @@ a3sql/
 | CI/CD | GitHub Actions (test + 4-platform build + release) |
 | Cross-platform | Linux x86_64/i686, Windows x86_64/i686 |
 | Signing | DSSignFile via Wine/Proton (Linux CI) |
-| License | MIT |
+| License | APL-SA — Arma Public License Share Alike |
 
 ## License
 
-MIT — use freely in your Arma 3 mods.
+[Arma Public License Share Alike (APL-SA)](LICENSE) — as required by Bohemia Interactive for
+Arma 3 mods. See [LICENSE](LICENSE) for full terms.
