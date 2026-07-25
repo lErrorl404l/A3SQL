@@ -23,6 +23,7 @@ _result = ["SELECT * FROM weapons WHERE name %% 'm4'"] call a3sql_fnc_execute;
 | **Indices** | BTREE (exact/range), TRIGRAM (fuzzy GIN-style candidate filter), **FTS** (full-text trigram search) |
 | **Transactions** | BEGIN/COMMIT/**ROLLBACK (no-op when idle)**, SAVEPOINT/RELEASE |
 | **Persistence** | SAVE/LOAD (binary), export/import JSON/CSV/SQL, export_to_file, **VACUUM/REINDEX** |
+| **Recursive CTEs** | `WITH RECURSIVE cte AS (...) SELECT * FROM cte` — iterative fixpoint |
 | **Security** | Parameterized queries (`$1`,`$2`), TCP LOGIN auth, CBA credential settings |
 | **Network** | TCP listener (auto-start at game boot), external queries via Python/CLI |
 | **Multi-statement** | Run `;`-separated SQL batches |

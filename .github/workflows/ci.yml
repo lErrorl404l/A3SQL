@@ -23,6 +23,17 @@ jobs:
       crate-path: extension
       rust-cross: true
 
+  # ── Benchmarks (after CI, before build) ─────────────────────────────
+  bench:
+    name: cargo bench
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+      - name: Run benchmarks
+        run: cargo bench --manifest-path extension/Cargo.toml
+
   # ── i686 Linux cross-compile (not in reusable workflow) ─────────────
   build-linux-i686:
     name: build i686-unknown-linux-gnu
