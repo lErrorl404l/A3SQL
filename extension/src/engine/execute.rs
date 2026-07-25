@@ -5,8 +5,8 @@ use std::collections::{HashMap, HashSet};
 use sqlparser::ast::table_constraints::TableConstraint;
 use sqlparser::ast::{
     BinaryOperator, ColumnOption, DataType, Expr, Function, FunctionArg, FunctionArgExpr, FunctionArguments,
-    LimitClause, ObjectName, ObjectType, OrderByKind, Query, Select, SelectItem, SetExpr, Statement, TableFactor,
-    TableWithJoins, UnaryOperator, Values, WindowFrame, WindowFrameBound, WindowFrameUnits, WindowType,
+    LimitClause, ObjectName, ObjectType, OrderByKind, Query, ReferentialAction, Select, SelectItem, SetExpr, Statement,
+    TableFactor, TableWithJoins, UnaryOperator, Values, WindowFrame, WindowFrameBound, WindowFrameUnits, WindowType,
 };
 
 use super::table::ForeignKeyInfo;
@@ -2248,6 +2248,8 @@ fn exec_update(upd: &sqlparser::ast::Update, db: &mut Database) -> Result<String
     }?;
 
     // Validate FOREIGN KEY constraints for each update
+    // Pre-collect PK update cascade data (must outlive the immutable borrow block)
+    let mut pk_cascade_queue: Vec<(String, usize, String, DbValue)> = Vec::new();
     {
         let t = db.get_table(&table_name)?;
         // Pre-collect FK lookup data: local_column → (foreign_table, pk_set)
@@ -2299,22 +2301,58 @@ fn exec_update(upd: &sqlparser::ast::Update, db: &mut Database) -> Result<String
                     }
                 }
             }
-            // (b) PK column update: RESTRICT - reject if any child references the old value
+            // (b) PK column update: collect CASCADE info during immutable phase
             if let Some(pk_ci) = pk_col_idx {
                 if *col_ci == pk_ci {
                     let old_val = t.rows[*row_i][pk_ci].to_string().to_lowercase();
+                    let new_val_cascade = val.clone();
+                    // (use outer pk_cascade_queue)
                     for (ref_table, ref_col_idx) in &fk_refs {
-                        let child = db.get_table(ref_table).map_err(|e| format!("FK ref: {}", e))?;
-                        for child_row in &child.rows {
-                            let child_val = child_row[*ref_col_idx].to_string().to_lowercase();
-                            if child_val == old_val {
-                                return Err(format!(
-                                    "FOREIGN KEY constraint violation: '{}' has reference to '{}' in '{}'",
-                                    ref_table, old_val, table_name
-                                ));
+                        let child = db.get_table(ref_table)?;
+                        let on_update = child
+                            .foreign_keys
+                            .iter()
+                            .find(|fk| {
+                                fk.foreign_table == table_name
+                                    && child.col_index.get(&fk.local_column) == Some(ref_col_idx)
+                            })
+                            .and_then(|fk| fk.on_update);
+                        let has_ref = child
+                            .rows
+                            .iter()
+                            .any(|r| r[*ref_col_idx].to_string().to_lowercase() == old_val);
+                        if has_ref {
+                            match on_update {
+                                Some(ReferentialAction::Cascade) => {
+                                    pk_cascade_queue.push((
+                                        ref_table.clone(),
+                                        *ref_col_idx,
+                                        old_val.clone(),
+                                        new_val_cascade.clone(),
+                                    ));
+                                }
+                                _ => {
+                                    return Err(format!(
+                                        "FOREIGN KEY constraint violation: '{}' has reference to '{}' in '{}'",
+                                        ref_table, old_val, table_name
+                                    ));
+                                }
                             }
                         }
                     }
+                    // Apply CASCADE after immutable block (see note after block close)
+                }
+            }
+        }
+    }
+
+    // Apply PK CASCADE updates to child rows (after immutable borrow is dropped)
+    for (ref_table, ref_col_idx, old_val, new_val) in &pk_cascade_queue {
+        if let Ok(child) = db.get_table_mut(ref_table) {
+            for row in &mut child.rows {
+                let child_val = row[*ref_col_idx].to_string().to_lowercase();
+                if child_val == *old_val {
+                    row[*ref_col_idx] = new_val.clone();
                 }
             }
         }
@@ -2415,20 +2453,70 @@ fn exec_delete(del: &sqlparser::ast::Delete, db: &mut Database) -> Result<String
         }
     };
 
-    // Validate FK before deleting
+    // Validate FK before deleting — CASCADE, SET NULL, or RESTRICT
     for (ref_table, ref_col_idx) in &fk_refs {
-        let t = db.get_table(ref_table)?;
-        let ref_pk_set: HashSet<String> = t
-            .rows
-            .iter()
-            .map(|row| row[*ref_col_idx].to_string().to_lowercase())
-            .collect();
-        for (_, pk_val) in &deleted_pks {
-            if ref_pk_set.contains(pk_val) {
-                return Err(format!(
-                    "FOREIGN KEY constraint violation: '{}' references '{}'",
-                    ref_table, pk_val
-                ));
+        let fk_info = {
+            let t = db.get_table(ref_table)?;
+            t.foreign_keys
+                .iter()
+                .find(|fk| fk.foreign_table == table_name && t.col_index.get(&fk.local_column) == Some(ref_col_idx))
+                .cloned()
+        };
+        let on_delete = fk_info.as_ref().and_then(|f| f.on_delete);
+
+        match on_delete {
+            Some(ReferentialAction::Cascade) => {
+                // Delete child rows referencing the deleted PKs
+                let child_pks_to_delete: Vec<String> = {
+                    let t = db.get_table(ref_table)?;
+                    let pk_idx = t.columns.iter().position(|c| c.primary_key);
+                    t.rows
+                        .iter()
+                        .filter(|row| {
+                            let child_val = row[*ref_col_idx].to_string().to_lowercase();
+                            deleted_pks.iter().any(|(_, pk)| *pk == child_val)
+                        })
+                        .map(|row| pk_idx.map(|pi| row[pi].to_string().to_lowercase()).unwrap_or_default())
+                        .collect()
+                };
+                for child_pk in &child_pks_to_delete {
+                    if child_pk.is_empty() {
+                        continue;
+                    }
+                    let child_table = db.get_table_mut(ref_table)?;
+                    let pk_idx = child_table.columns.iter().position(|c| c.primary_key);
+                    if let Some(pi) = pk_idx {
+                        child_table.delete(|row| row[pi].to_string().to_lowercase() == *child_pk);
+                    }
+                }
+            }
+            Some(ReferentialAction::SetNull) => {
+                // Set FK column to NULL in child rows
+                if let Ok(child_table) = db.get_table_mut(ref_table) {
+                    for row in &mut child_table.rows {
+                        let child_val = row[*ref_col_idx].to_string().to_lowercase();
+                        if deleted_pks.iter().any(|(_, pk)| *pk == child_val) {
+                            row[*ref_col_idx] = DbValue::Null;
+                        }
+                    }
+                }
+            }
+            _ => {
+                // RESTRICT / NO ACTION / None — reject
+                let t = db.get_table(ref_table)?;
+                let ref_pk_set: HashSet<String> = t
+                    .rows
+                    .iter()
+                    .map(|row| row[*ref_col_idx].to_string().to_lowercase())
+                    .collect();
+                for (_, pk_val) in &deleted_pks {
+                    if ref_pk_set.contains(pk_val) {
+                        return Err(format!(
+                            "FOREIGN KEY constraint violation: '{}' references '{}'",
+                            ref_table, pk_val
+                        ));
+                    }
+                }
             }
         }
     }
@@ -4923,5 +5011,61 @@ mod tests {
             "fts_score should be a float: {}",
             r
         );
+    }
+
+    #[test]
+    fn fk_delete_cascade() {
+        let mut db = Database::new();
+        parse_and_exec("CREATE TABLE parent (id STRING PRIMARY KEY)", &mut db).unwrap();
+        parse_and_exec("INSERT INTO parent VALUES ('p1')", &mut db).unwrap();
+        parse_and_exec("INSERT INTO parent VALUES ('p2')", &mut db).unwrap();
+        parse_and_exec(
+            "CREATE TABLE child (id STRING PRIMARY KEY, pid STRING REFERENCES parent(id) ON DELETE CASCADE)",
+            &mut db,
+        )
+        .unwrap();
+        parse_and_exec("INSERT INTO child VALUES ('c1', 'p1')", &mut db).unwrap();
+        parse_and_exec("INSERT INTO child VALUES ('c2', 'p1')", &mut db).unwrap();
+        parse_and_exec("INSERT INTO child VALUES ('c3', 'p2')", &mut db).unwrap();
+        assert_eq!(db.get_table("child").unwrap().row_count(), 3);
+        // DELETE p1 should cascade-delete c1 and c2
+        parse_and_exec("DELETE FROM parent WHERE id = 'p1'", &mut db).unwrap();
+        assert_eq!(db.get_table("child").unwrap().row_count(), 1, "c3 should remain");
+        let child_rows = &db.get_table("child").unwrap().rows;
+        assert_eq!(child_rows[0][0].to_string(), "'c3'", "only c3 remains");
+    }
+
+    #[test]
+    fn fk_delete_set_null() {
+        let mut db = Database::new();
+        parse_and_exec("CREATE TABLE parent (id STRING PRIMARY KEY)", &mut db).unwrap();
+        parse_and_exec("INSERT INTO parent VALUES ('p1')", &mut db).unwrap();
+        parse_and_exec(
+            "CREATE TABLE child (id STRING PRIMARY KEY, pid STRING REFERENCES parent(id) ON DELETE SET NULL)",
+            &mut db,
+        )
+        .unwrap();
+        parse_and_exec("INSERT INTO child VALUES ('c1', 'p1')", &mut db).unwrap();
+        parse_and_exec("DELETE FROM parent WHERE id = 'p1'", &mut db).unwrap();
+        let child = db.get_table("child").unwrap();
+        assert_eq!(child.row_count(), 1, "child row should remain");
+        assert_eq!(child.rows[0][1], DbValue::Null, "pid should be NULL");
+    }
+
+    #[test]
+    fn fk_update_cascade() {
+        let mut db = Database::new();
+        parse_and_exec("CREATE TABLE parent (id STRING PRIMARY KEY)", &mut db).unwrap();
+        parse_and_exec("INSERT INTO parent VALUES ('old_pk')", &mut db).unwrap();
+        parse_and_exec(
+            "CREATE TABLE child (id STRING PRIMARY KEY, pid STRING REFERENCES parent(id) ON UPDATE CASCADE)",
+            &mut db,
+        )
+        .unwrap();
+        parse_and_exec("INSERT INTO child VALUES ('c1', 'old_pk')", &mut db).unwrap();
+        // Update parent PK
+        parse_and_exec("UPDATE parent SET id = 'new_pk' WHERE id = 'old_pk'", &mut db).unwrap();
+        let child = db.get_table("child").unwrap();
+        assert_eq!(child.rows[0][1].to_string(), "'new_pk'", "child FK should be updated");
     }
 }
