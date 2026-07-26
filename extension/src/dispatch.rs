@@ -190,11 +190,6 @@ pub fn dispatch(input: &str, args: &[&str]) -> String {
             let cursor = db.cursors.get(cur_name).cloned();
             match cursor {
                 Some(mut c) => {
-                    let _sql = if c.offset == 0 {
-                        format!("{} LIMIT {} OFFSET {}", c.sql, limit, c.offset)
-                    } else {
-                        format!("{} LIMIT {} OFFSET {}", c.sql, limit, c.offset)
-                    };
                     c.offset += limit;
                     db.cursors.insert(cur_name.to_string(), c.clone());
                     (c.clone(), db)
