@@ -1,26 +1,32 @@
 // JOIN-related functions for SELECT execution
 
+//! JOIN execution — INNER, LEFT, RIGHT, FULL, CROSS JOINs.
+//! Also handles table resolution and multi-table FROM clauses.
+
 use std::collections::HashMap;
 
-use sqlparser::ast::{Expr, FunctionArguments, LimitClause, OrderByKind, Query, Select};
+use sqlparser::ast::{Expr, FunctionArguments, LimitClause, OrderByKind, Query, Select, TableFactor, TableWithJoins};
 
-use super::super::super::database::Database;
-use super::super::super::execute::{db_value_cmp, parse_expr_as_usize};
-use super::super::super::functions::builtin::{
-    curdate_value, exec_std_function, get_func_arg_unnamed, now_value, resolve_table_factor, simple_like,
-    sql_val_to_db, value_to_string, values_equal,
-};
-use super::super::super::functions::eval::{apply_binary_op, is_truthy};
-use super::super::super::table::Table;
-use super::super::super::value::DbValue;
+use super::super::super::functions::builtin::{curdate_value, exec_std_function, now_value, simple_like, values_equal};
+use super::sort::parse_expr_as_usize;
+use crate::engine::error::EngineError;
+use crate::engine::prelude::*;
+
+/// Resolve a `TableWithJoins` reference to a simple table name.
+pub(crate) fn resolve_table_from_joins(tj: &TableWithJoins) -> Result<String, EngineError> {
+    match &tj.relation {
+        TableFactor::Table { name, .. } => Ok(object_name_str(name)),
+        _ => Err(EngineError::Exec("Only simple table references supported".into())),
+    }
+}
 
 /// Check if the FROM clause has multiple tables or JOINs.
-pub(super) fn has_multiple_tables(select: &Select) -> bool {
+pub(crate) fn has_multiple_tables(select: &Select) -> bool {
     select.from.len() > 1 || select.from.iter().any(|t| !t.joins.is_empty())
 }
 
 /// Execute a SELECT with JOINs. Uses a flat-row column map with absolute positions.
-pub(super) fn exec_select_joins(query: &Query, select: &Select, db: &mut Database) -> Result<String, String> {
+pub(crate) fn exec_select_joins(query: &Query, select: &Select, db: &mut Database) -> Result<String, EngineError> {
     use sqlparser::ast::{JoinConstraint, JoinOperator};
 
     // ── Resolve all tables in FROM + JOINs ──────────────────────────
@@ -70,7 +76,10 @@ pub(super) fn exec_select_joins(query: &Query, select: &Select, db: &mut Databas
     let mut col_map: HashMap<String, usize> = HashMap::new();
     let mut header: Vec<String> = Vec::new();
     for tbl in &tbls {
-        let tn = db.get_table(&tbl.name).map_err(|e| format!("JOIN: {}", e))?.clone();
+        let tn = db
+            .get_table(&tbl.name)
+            .map_err(|_| EngineError::TableNotFound(tbl.name.clone()))?
+            .clone();
         for (ci, col) in tn.columns.iter().enumerate() {
             let p = tbl.start + ci;
             col_map.insert(format!("{}.{}", tbl.name, col.name), p);
@@ -94,7 +103,7 @@ pub(super) fn exec_select_joins(query: &Query, select: &Select, db: &mut Databas
         v
     };
 
-    let ef = |e: &Expr, r: &[DbValue]| -> Result<DbValue, String> { eval_expr_on_flat_row(e, r, &col_map) };
+    let ef = |e: &Expr, r: &[DbValue]| -> Result<DbValue, EngineError> { eval_expr_on_flat_row(e, r, &col_map) };
 
     // ── Generate combined rows ──────────────────────────────────────
     let mut cidx: Vec<Vec<usize>> = (0..tbls[0].rows.len()).map(|i| vec![i]).collect();
@@ -112,6 +121,9 @@ pub(super) fn exec_select_joins(query: &Query, select: &Select, db: &mut Databas
                     | JoinOperator::LeftOuter(JoinConstraint::Natural)
                     | JoinOperator::RightOuter(JoinConstraint::Natural)
                     | JoinOperator::FullOuter(JoinConstraint::Natural)
+                    | JoinOperator::Join(JoinConstraint::Natural)
+                    | JoinOperator::Left(JoinConstraint::Natural)
+                    | JoinOperator::Right(JoinConstraint::Natural)
             ) {
                 // Right table is at tbls index i+1 (left accumulated = tbls[0..=i])
                 let right_ti = i + 1;
@@ -161,12 +173,14 @@ pub(super) fn exec_select_joins(query: &Query, select: &Select, db: &mut Databas
                 | JoinOperator::RightOuter(c)
                 | JoinOperator::FullOuter(c)
                 | JoinOperator::Join(c)
-                | JoinOperator::CrossJoin(c),
+                | JoinOperator::CrossJoin(c)
+                | JoinOperator::Left(c)
+                | JoinOperator::Right(c),
             ) => c,
             _ => &no_constraint,
         };
-        let is_left = matches!(join_info, Some(JoinOperator::LeftOuter(_)));
-        let is_right = matches!(join_info, Some(JoinOperator::RightOuter(_)));
+        let is_left = matches!(join_info, Some(JoinOperator::LeftOuter(_) | JoinOperator::Left(_)));
+        let is_right = matches!(join_info, Some(JoinOperator::RightOuter(_) | JoinOperator::Right(_)));
         let is_full = matches!(join_info, Some(JoinOperator::FullOuter(_)));
         let preserve_left = is_left || is_full;
         let preserve_right = is_right || is_full;
@@ -271,7 +285,7 @@ pub(super) fn exec_select_joins(query: &Query, select: &Select, db: &mut Databas
     if let Some(ob) = &query.order_by {
         let exs = match &ob.kind {
             OrderByKind::Expressions(e) => e,
-            _ => return Err("ORDER BY ALL not supported".into()),
+            _ => return Err(EngineError::Exec("ORDER BY ALL not supported".into())),
         };
         if !exs.is_empty() {
             rows.sort_by(|a, b| {
@@ -327,7 +341,11 @@ pub(super) fn exec_select_joins(query: &Query, select: &Select, db: &mut Databas
     Ok(format!("[[{}],{}]", h, rj.join(",")))
 }
 
-fn eval_expr_on_flat_row(expr: &Expr, row: &[DbValue], col_map: &HashMap<String, usize>) -> Result<DbValue, String> {
+fn eval_expr_on_flat_row(
+    expr: &Expr,
+    row: &[DbValue],
+    col_map: &HashMap<String, usize>,
+) -> Result<DbValue, EngineError> {
     match expr {
         Expr::Identifier(ident) => {
             let name = ident.value.to_lowercase();
@@ -339,7 +357,7 @@ fn eval_expr_on_flat_row(expr: &Expr, row: &[DbValue], col_map: &HashMap<String,
             }
             match col_map.get(&name) {
                 Some(&pos) => Ok(row[pos].clone()),
-                None => Err(format!("Unknown column '{}'", name)),
+                None => Err(EngineError::ColumnNotFound(name.clone())),
             }
         }
         Expr::CompoundIdentifier(parts) => {
@@ -356,7 +374,7 @@ fn eval_expr_on_flat_row(expr: &Expr, row: &[DbValue], col_map: &HashMap<String,
                     let last = parts.last().unwrap().value.to_lowercase();
                     match col_map.get(&last) {
                         Some(&pos) => Ok(row[pos].clone()),
-                        None => Err(format!("Unknown column '{}'", name)),
+                        None => Err(EngineError::ColumnNotFound(name.clone())),
                     }
                 }
             }
@@ -373,10 +391,10 @@ fn eval_expr_on_flat_row(expr: &Expr, row: &[DbValue], col_map: &HashMap<String,
             if name == "fuzzy_match" {
                 let args = match &func.args {
                     FunctionArguments::List(list) => &list.args,
-                    _ => return Err("fuzzy_match requires args".into()),
+                    _ => return Err(EngineError::Exec("fuzzy_match requires args".into())),
                 };
                 if args.len() < 2 {
-                    return Err("fuzzy_match requires 2 args".into());
+                    return Err(EngineError::Exec("fuzzy_match requires 2 args".into()));
                 }
                 let a1 = eval_expr_on_flat_row(get_func_arg_unnamed(&args[0])?, row, col_map)?;
                 let a2 = eval_expr_on_flat_row(get_func_arg_unnamed(&args[1])?, row, col_map)?;
@@ -440,6 +458,6 @@ fn eval_expr_on_flat_row(expr: &Expr, row: &[DbValue], col_map: &HashMap<String,
             let le = db_value_cmp(&val, &h) != Ordering::Greater;
             Ok(DbValue::Bool(if *negated { !(ge && le) } else { ge && le }))
         }
-        _ => Err(format!("Unsupported expression in JOIN: {:?}", expr)),
+        _ => Err(EngineError::Exec(format!("Unsupported expression in JOIN: {:?}", expr))),
     }
 }

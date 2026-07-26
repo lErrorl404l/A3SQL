@@ -1,10 +1,14 @@
 // Transaction and runtime config statements
 
+//! Transaction and SET statement execution.
+//! Handles BEGIN, COMMIT, ROLLBACK, SAVEPOINT, RELEASE SAVEPOINT.
+
 use super::super::database::Database;
+use crate::engine::error::EngineError;
 use sqlparser::ast::Set;
 
 /// Execute SET statement — store runtime config.
-pub(crate) fn exec_set(set: &Set, db: &mut Database) -> Result<String, String> {
+pub(crate) fn exec_set(set: &Set, db: &mut Database) -> Result<String, EngineError> {
     match set {
         Set::SingleAssignment { variable, values, .. } => {
             let key = variable.to_string().to_lowercase();

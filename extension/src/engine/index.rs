@@ -1,5 +1,8 @@
 // a3sql indices — BTREE (sorted lookups) and TRIGRAM (fuzzy GIN)
 
+//! Index implementations — BTree and Trigram indices for fast lookups.
+//! Used by CREATE INDEX and automatically by WHERE clauses with equality or fuzzy matches.
+
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use super::table::trigrams;
@@ -7,7 +10,7 @@ use super::value::DbValue;
 
 /// Available index types.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum IndexType {
+pub(crate) enum IndexType {
     BTree,
     Trigram,
 }
@@ -23,7 +26,7 @@ impl std::fmt::Display for IndexType {
 
 /// Metadata for a created index.
 #[derive(Debug, Clone)]
-pub struct IndexMeta {
+pub(crate) struct IndexMeta {
     pub name: String,
     pub table: String,
     pub column: String,
@@ -35,7 +38,7 @@ pub struct IndexMeta {
 /// Simple BTREE index — maps encoded column values to row indices.
 /// Uses BTreeMap for range query support (sorted iteration).
 #[derive(Debug, Clone)]
-pub struct BTreeIndex {
+pub(crate) struct BTreeIndex {
     column: String,
     entries: BTreeMap<String, Vec<usize>>,
 }
@@ -102,7 +105,7 @@ impl BTreeIndex {
 /// that contain that trigram. At query time, the trigrams of the pattern
 /// are intersected to find candidate rows.
 #[derive(Debug, Clone)]
-pub struct TrigramIndex {
+pub(crate) struct TrigramIndex {
     column: String,
     /// trigram → set of row indices containing that trigram
     trigram_map: HashMap<String, HashSet<usize>>,

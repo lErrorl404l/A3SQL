@@ -1,11 +1,13 @@
 // a3sql serialization — JSON format
 
+//! JSON serialization — structured JSON for external tool interoperability.
+
 use super::super::database::Database;
 use super::super::table::Table;
 use super::super::value::{Column, ColumnType, DbValue};
 
 /// Export a table as JSON.
-pub fn export_json(table: &Table) -> String {
+pub(crate) fn export_json(table: &Table) -> String {
     let cols_json: Vec<String> = table
         .columns
         .iter()
@@ -35,7 +37,7 @@ pub fn export_json(table: &Table) -> String {
 }
 
 /// Export full database as JSON.
-pub fn export_json_db(db: &Database) -> String {
+pub(crate) fn export_json_db(db: &Database) -> String {
     let tables: Vec<String> = db
         .table_names()
         .iter()
@@ -46,7 +48,7 @@ pub fn export_json_db(db: &Database) -> String {
 }
 
 /// Import a table from JSON data.
-pub fn import_json(table_name: &str, json_str: &str, db: &mut Database) -> Result<(), String> {
+pub(crate) fn import_json(table_name: &str, json_str: &str, db: &mut Database) -> Result<(), String> {
     let parsed: serde_json::Value = serde_json::from_str(json_str).map_err(|e| format!("Invalid JSON: {}", e))?;
 
     let obj = parsed.as_object().ok_or("Expected JSON object")?;

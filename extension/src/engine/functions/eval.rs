@@ -2,17 +2,23 @@
 // ── eval_expr / eval_literal_expr evaluate AST expressions ──
 // ── exec_function dispatches to exec_std_function (in builtin.rs) or plugin fns ──
 
+//! Expression evaluator — resolves `Expr` AST nodes against a row context.
+//! Handles binary ops, unary ops, CAST, BETWEEN, IN, EXISTS, subqueries,
+//! and dispatches function calls to `builtin` or plugin registry.
+
 use std::collections::HashMap;
 
 use sqlparser::ast::{BinaryOperator, DataType, Expr, Function, FunctionArguments, UnaryOperator};
 
-use super::super::execute::{db_value_cmp, exec_subquery};
+use super::super::execute::select::exec_subquery;
 use super::super::table::Table;
+use super::super::value::db_value_cmp;
 use super::super::value::DbValue;
 use super::builtin::{
     curdate_value, exec_std_function, extract_func_args, get_func_arg_unnamed, now_value, simple_like, sql_val_to_db,
     value_to_string,
 };
+use crate::engine::error::EngineError;
 
 // ── Numeric helpers ────────────────────────────────────────────────────
 
@@ -25,7 +31,7 @@ pub(crate) fn to_float(v: &DbValue) -> Option<f64> {
     }
 }
 
-fn arith_op<F, G>(a: &DbValue, b: &DbValue, int_op: F, float_op: G) -> Result<DbValue, String>
+fn arith_op<F, G>(a: &DbValue, b: &DbValue, int_op: F, float_op: G) -> Result<DbValue, EngineError>
 where
     F: Fn(i64, i64) -> i64,
     G: Fn(f64, f64) -> f64,
@@ -38,12 +44,15 @@ where
         (DbValue::Int(x), DbValue::Int(y)) => Ok(DbValue::Int(int_op(*x, *y))),
         _ => match (to_float(a), to_float(b)) {
             (Some(x), Some(y)) => Ok(DbValue::Float(float_op(x, y))),
-            _ => Err(format!("Type mismatch: {} vs {}", a, b)),
+            _ => Err(EngineError::TypeError {
+                expected: "numeric type".into(),
+                actual: format!("{} vs {}", a, b),
+            }),
         },
     }
 }
 
-fn cmp_values<F>(a: &DbValue, b: &DbValue, cmp: F) -> Result<DbValue, String>
+fn cmp_values<F>(a: &DbValue, b: &DbValue, cmp: F) -> Result<DbValue, EngineError>
 where
     F: Fn(std::cmp::Ordering) -> bool,
 {
@@ -83,7 +92,7 @@ fn wildcard_match(val: &[char], pat: &[char], vi: usize, pi: usize) -> bool {
 
 // ── Binary operators ───────────────────────────────────────────────────
 
-pub(crate) fn apply_binary_op(left: &DbValue, op: &BinaryOperator, right: &DbValue) -> Result<DbValue, String> {
+pub(crate) fn apply_binary_op(left: &DbValue, op: &BinaryOperator, right: &DbValue) -> Result<DbValue, EngineError> {
     match op {
         BinaryOperator::Eq => Ok(DbValue::Bool(values_equal_builtin(left, right))),
         BinaryOperator::NotEq => Ok(DbValue::Bool(!values_equal_builtin(left, right))),
@@ -97,7 +106,10 @@ pub(crate) fn apply_binary_op(left: &DbValue, op: &BinaryOperator, right: &DbVal
         BinaryOperator::Divide => arith_op(left, right, |a, b| a / b, |a, b| a / b),
         BinaryOperator::Modulo => match (to_float(left), to_float(right)) {
             (Some(a), Some(b)) if b != 0.0 => Ok(DbValue::Float(a % b)),
-            _ => Err("Modulo requires numeric operands".into()),
+            _ => Err(EngineError::TypeError {
+                expected: "numeric operands".into(),
+                actual: format!("{:?} and {:?}", left, right),
+            }),
         },
         BinaryOperator::And => Ok(DbValue::Bool(is_truthy(left) && is_truthy(right))),
         BinaryOperator::Or => Ok(DbValue::Bool(is_truthy(left) || is_truthy(right))),
@@ -118,7 +130,7 @@ pub(crate) fn apply_binary_op(left: &DbValue, op: &BinaryOperator, right: &DbVal
             let pat = value_to_string(right);
             Ok(DbValue::Bool(s.to_lowercase().contains(&pat.to_lowercase())))
         }
-        _ => Err(format!("Unsupported operator: {:?}", op)),
+        _ => Err(EngineError::Exec(format!("Unsupported operator: {:?}", op))),
     }
 }
 
@@ -142,16 +154,19 @@ fn values_equal_builtin(a: &DbValue, b: &DbValue) -> bool {
 
 // ── Unary operators ────────────────────────────────────────────────────
 
-fn apply_unary_op(op: &UnaryOperator, val: &DbValue) -> Result<DbValue, String> {
+fn apply_unary_op(op: &UnaryOperator, val: &DbValue) -> Result<DbValue, EngineError> {
     match op {
         UnaryOperator::Not => Ok(DbValue::Bool(!is_truthy(val))),
         UnaryOperator::Plus => Ok(val.clone()),
         UnaryOperator::Minus => match val {
             DbValue::Int(n) => Ok(DbValue::Int(-n)),
             DbValue::Float(f) => Ok(DbValue::Float(-f)),
-            _ => Err(format!("Cannot negate {}", val)),
+            _ => Err(EngineError::TypeError {
+                expected: "numeric".into(),
+                actual: format!("{}", val),
+            }),
         },
-        _ => Err(format!("Unsupported unary operator: {:?}", op)),
+        _ => Err(EngineError::Exec(format!("Unsupported unary operator: {:?}", op))),
     }
 }
 
@@ -172,7 +187,7 @@ pub(crate) fn is_truthy(v: &DbValue) -> bool {
 // ── CAST helper ────────────────────────────────────────────────────────
 
 /// CAST a DbValue to the target sqlparser DataType.
-fn cast_db_value(val: DbValue, target: &DataType) -> Result<DbValue, String> {
+fn cast_db_value(val: DbValue, target: &DataType) -> Result<DbValue, EngineError> {
     use sqlparser::ast::DataType as DT;
     match target {
         DT::Bool | DT::Boolean => match val {
@@ -184,11 +199,17 @@ fn cast_db_value(val: DbValue, target: &DataType) -> Result<DbValue, String> {
                 match lower.as_str() {
                     "true" | "1" | "yes" => Ok(DbValue::Bool(true)),
                     "false" | "0" | "no" => Ok(DbValue::Bool(false)),
-                    _ => Err(format!("Cannot cast '{}' to BOOL", s)),
+                    _ => Err(EngineError::TypeError {
+                        expected: "BOOL".into(),
+                        actual: format!("string '{}'", s),
+                    }),
                 }
             }
             DbValue::Null => Ok(DbValue::Null),
-            _ => Err(format!("Cannot cast {:?} to BOOL", val)),
+            _ => Err(EngineError::TypeError {
+                expected: "BOOL".into(),
+                actual: format!("{:?}", val),
+            }),
         },
         DT::Int(_) | DT::BigInt(_) | DT::SmallInt(_) | DT::TinyInt(_) => match val {
             DbValue::Int(i) => Ok(DbValue::Int(i)),
@@ -201,12 +222,18 @@ fn cast_db_value(val: DbValue, target: &DataType) -> Result<DbValue, String> {
                     trimmed
                         .parse::<i64>()
                         .map(DbValue::Int)
-                        .map_err(|_| format!("Cannot cast '{}' to INT", s))
+                        .map_err(|_| EngineError::TypeError {
+                            expected: "INT".into(),
+                            actual: format!("string '{}'", s),
+                        })
                 }
             }
             DbValue::Bool(b) => Ok(DbValue::Int(if b { 1 } else { 0 })),
             DbValue::Null => Ok(DbValue::Null),
-            _ => Err(format!("Cannot cast {:?} to INT", val)),
+            _ => Err(EngineError::TypeError {
+                expected: "INT".into(),
+                actual: format!("{:?}", val),
+            }),
         },
         DT::Float(_) | DT::Double(_) | DT::Real | DT::Decimal(_) | DT::Numeric(_) => match val {
             DbValue::Int(i) => Ok(DbValue::Float(i as f64)),
@@ -219,12 +246,18 @@ fn cast_db_value(val: DbValue, target: &DataType) -> Result<DbValue, String> {
                     trimmed
                         .parse::<f64>()
                         .map(DbValue::Float)
-                        .map_err(|_| format!("Cannot cast '{}' to FLOAT", s))
+                        .map_err(|_| EngineError::TypeError {
+                            expected: "FLOAT".into(),
+                            actual: format!("string '{}'", s),
+                        })
                 }
             }
             DbValue::Bool(b) => Ok(DbValue::Float(if b { 1.0 } else { 0.0 })),
             DbValue::Null => Ok(DbValue::Null),
-            _ => Err(format!("Cannot cast {:?} to FLOAT", val)),
+            _ => Err(EngineError::TypeError {
+                expected: "FLOAT".into(),
+                actual: format!("{:?}", val),
+            }),
         },
         DT::Varchar(_) | DT::Char(_) | DT::Text | DT::String(_) | DT::Uuid => Ok(DbValue::String(val.to_string())),
         _ => Ok(DbValue::String(val.to_string())),
@@ -233,14 +266,18 @@ fn cast_db_value(val: DbValue, target: &DataType) -> Result<DbValue, String> {
 
 // ── Fuzzy-match / FTS helpers ──────────────────────────────────────────
 
-fn exec_fuzzy_match(func: &Function, row: &[DbValue], col_map: &HashMap<String, usize>) -> Result<DbValue, String> {
+fn exec_fuzzy_match(
+    func: &Function,
+    row: &[DbValue],
+    col_map: &HashMap<String, usize>,
+) -> Result<DbValue, EngineError> {
     let args = match &func.args {
         FunctionArguments::List(list) => &list.args,
-        _ => return Err("fuzzy_match requires argument list".into()),
+        _ => return Err(EngineError::Exec("fuzzy_match requires argument list".into())),
     };
 
     if args.len() < 2 {
-        return Err("fuzzy_match requires at least 2 arguments".into());
+        return Err(EngineError::Exec("fuzzy_match requires at least 2 arguments".into()));
     }
 
     let col_val = eval_expr(get_func_arg_unnamed(&args[0])?, row, col_map)?;
@@ -263,13 +300,13 @@ fn exec_fuzzy_match(func: &Function, row: &[DbValue], col_map: &HashMap<String, 
 
 /// Return the trigram similarity score between two strings (for ranked FTS).
 /// Called as `fts_score(col, pattern)` in SQL.
-fn exec_fts_score(func: &Function, row: &[DbValue], col_map: &HashMap<String, usize>) -> Result<DbValue, String> {
+fn exec_fts_score(func: &Function, row: &[DbValue], col_map: &HashMap<String, usize>) -> Result<DbValue, EngineError> {
     let args = match &func.args {
         FunctionArguments::List(list) => &list.args,
-        _ => return Err("fts_score requires argument list".into()),
+        _ => return Err(EngineError::Exec("fts_score requires argument list".into())),
     };
     if args.len() < 2 {
-        return Err("fts_score requires at least 2 arguments".into());
+        return Err(EngineError::Exec("fts_score requires at least 2 arguments".into()));
     }
     let col_val = eval_expr(get_func_arg_unnamed(&args[0])?, row, col_map)?;
     let pat_val = eval_expr(get_func_arg_unnamed(&args[1])?, row, col_map)?;
@@ -279,7 +316,11 @@ fn exec_fts_score(func: &Function, row: &[DbValue], col_map: &HashMap<String, us
 
 // ── Expression evaluator ────────────────────────────────────────────────
 
-pub(crate) fn eval_expr(expr: &Expr, row: &[DbValue], col_map: &HashMap<String, usize>) -> Result<DbValue, String> {
+pub(crate) fn eval_expr(
+    expr: &Expr,
+    row: &[DbValue],
+    col_map: &HashMap<String, usize>,
+) -> Result<DbValue, EngineError> {
     match expr {
         Expr::Identifier(ident) => {
             let name = ident.value.to_lowercase();
@@ -289,8 +330,27 @@ pub(crate) fn eval_expr(expr: &Expr, row: &[DbValue], col_map: &HashMap<String, 
             if name == "current_date" {
                 return Ok(curdate_value());
             }
-            let idx = col_map.get(&name).ok_or_else(|| format!("Unknown column '{}'", name))?;
+            let idx = col_map.get(&name).ok_or(EngineError::ColumnNotFound(name))?;
             Ok(row[*idx].clone())
+        }
+        Expr::CompoundIdentifier(parts) => {
+            // e.g. EXCLUDED.v → "excluded.v", table.col → "table.col"
+            let name = parts
+                .iter()
+                .map(|p| p.value.to_lowercase())
+                .collect::<Vec<_>>()
+                .join(".");
+            match col_map.get(&name) {
+                Some(&pos) => Ok(row[pos].clone()),
+                None => {
+                    // Fallback: try just the last (column) part
+                    let last = parts.last().unwrap().value.to_lowercase();
+                    match col_map.get(&last) {
+                        Some(&pos) => Ok(row[pos].clone()),
+                        None => Err(EngineError::ColumnNotFound(name)),
+                    }
+                }
+            }
         }
         Expr::Value(v) => Ok(sql_val_to_db(v)),
         Expr::BinaryOp { left, op, right } => {
@@ -394,11 +454,80 @@ pub(crate) fn eval_expr(expr: &Expr, row: &[DbValue], col_map: &HashMap<String, 
             let val = eval_expr(expr, row, col_map)?;
             cast_db_value(val, data_type)
         }
-        _ => Err(format!("Unsupported expression: {:?}", expr)),
+        Expr::Trim {
+            expr,
+            trim_where,
+            trim_characters,
+            ..
+        } => {
+            let val = eval_expr(expr, row, col_map)?;
+            let s = value_to_string(&val);
+            let trimmed = match (trim_where, trim_characters) {
+                (_, Some(chars_exprs)) => {
+                    if let Some(chars_expr) = chars_exprs.first() {
+                        let chars_val = eval_expr(chars_expr, row, col_map)?;
+                        let chars = value_to_string(&chars_val);
+                        let c = chars.chars().next().unwrap_or(' ');
+                        match trim_where {
+                            Some(sqlparser::ast::TrimWhereField::Leading) => s.trim_start_matches(c).to_string(),
+                            Some(sqlparser::ast::TrimWhereField::Trailing) => s.trim_end_matches(c).to_string(),
+                            _ => s.trim_matches(c).to_string(),
+                        }
+                    } else {
+                        s.trim().to_string()
+                    }
+                }
+                (Some(sqlparser::ast::TrimWhereField::Leading), _) => s.trim_start().to_string(),
+                (Some(sqlparser::ast::TrimWhereField::Trailing), _) => s.trim_end().to_string(),
+                _ => s.trim().to_string(),
+            };
+            Ok(DbValue::String(trimmed))
+        }
+        Expr::Substring {
+            expr,
+            substring_from,
+            substring_for,
+            ..
+        } => {
+            let val = eval_expr(expr, row, col_map)?;
+            let s = value_to_string(&val);
+            let start: usize = match substring_from {
+                Some(from) => {
+                    let from_val = eval_expr(from, row, col_map)?;
+                    match from_val {
+                        DbValue::Int(i) => i.max(1) as usize - 1,
+                        _ => {
+                            return Err(EngineError::TypeError {
+                                expected: "integer start".into(),
+                                actual: format!("{:?}", from_val),
+                            })
+                        }
+                    }
+                }
+                None => 0,
+            };
+            let result = match substring_for {
+                Some(len_expr) => {
+                    let len_val = eval_expr(len_expr, row, col_map)?;
+                    match len_val {
+                        DbValue::Int(i) => s.chars().skip(start).take(i as usize).collect(),
+                        _ => {
+                            return Err(EngineError::TypeError {
+                                expected: "integer length".into(),
+                                actual: format!("{:?}", len_val),
+                            })
+                        }
+                    }
+                }
+                None => s.chars().skip(start).collect(),
+            };
+            Ok(DbValue::String(result))
+        }
+        _ => Err(EngineError::Exec(format!("Unsupported expression: {:?}", expr))),
     }
 }
 
-pub(crate) fn eval_literal_expr(expr: &Expr) -> Result<DbValue, String> {
+pub(crate) fn eval_literal_expr(expr: &Expr) -> Result<DbValue, EngineError> {
     match expr {
         Expr::Value(v) => Ok(sql_val_to_db(&v.value)),
         Expr::Nested(inner) => eval_literal_expr(inner),
@@ -406,7 +535,10 @@ pub(crate) fn eval_literal_expr(expr: &Expr) -> Result<DbValue, String> {
             let val = eval_literal_expr(expr)?;
             apply_unary_op(op, &val)
         }
-        _ => Err(format!("Complex expressions not supported in values: {:?}", expr)),
+        _ => Err(EngineError::Exec(format!(
+            "Complex expressions not supported in values: {:?}",
+            expr
+        ))),
     }
 }
 
@@ -418,7 +550,7 @@ pub(crate) fn exec_function(
     func: &Function,
     row: &[DbValue],
     col_map: &HashMap<String, usize>,
-) -> Result<DbValue, String> {
+) -> Result<DbValue, EngineError> {
     let name = func.name.to_string().to_lowercase();
     match name.as_str() {
         "fuzzy_match" => exec_fuzzy_match(func, row, col_map),
@@ -429,16 +561,16 @@ pub(crate) fn exec_function(
                 if let Some((pfunc, _plugin)) = crate::engine::plugin::lookup_function(fn_name) {
                     let args = extract_func_args(func);
                     if args.len() < pfunc.min_args {
-                        return Err(format!(
+                        return Err(EngineError::Exec(format!(
                             "{}: expected {} args, got {}",
                             fn_name,
                             pfunc.min_args,
                             args.len()
-                        ));
+                        )));
                     }
                     return (pfunc.func)(&args);
                 }
-                return Err(format!("Unknown plugin function '{}'", fn_name));
+                return Err(EngineError::Exec(format!("Unknown plugin function '{}'", fn_name)));
             }
             exec_std_function(func, name, row, col_map)
         }

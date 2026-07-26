@@ -1,23 +1,24 @@
 // Miscellaneous DDL/DML statements: MERGE, VACUUM, COPY, COMMENT, CALL, ANALYZE, SHOW COLUMNS, SHOW CREATE, DROP TRIGGER
 
+//! Miscellaneous DDL/DML — VACUUM, COPY (TO/FROM stdin), COMMENT ON, CALL, ANALYZE.
+
 use super::object_name_str;
 use crate::engine::database::Database;
-use crate::engine::value::DbValue;
+use crate::engine::error::EngineError;
 use sqlparser::ast::{
-    Analyze, CopySource, CopyTarget, Function, Merge, MergeAction, MergeClauseKind, MergeUpdateExpr, ObjectName,
-    ShowCreateObject, ShowStatementOptions, VacuumStatement,
+    Analyze, CopySource, CopyTarget, Function, ObjectName, ShowCreateObject, ShowStatementOptions, VacuumStatement,
 };
 
 // ── SHOW COLUMNS ────────────────────────────────────────────────────────
 
-pub(crate) fn exec_show_columns(so: &ShowStatementOptions, db: &Database) -> Result<String, String> {
+pub(crate) fn exec_show_columns(so: &ShowStatementOptions, db: &Database) -> Result<String, EngineError> {
     let tn = so
         .show_in
         .as_ref()
         .and_then(|si| si.parent_name.as_ref())
         .map(object_name_str)
-        .ok_or_else(|| "SHOW COLUMNS requires FROM".to_string())?;
-    let t = db.get_table(&tn)?;
+        .ok_or_else(|| EngineError::Exec("SHOW COLUMNS requires FROM".to_string()))?;
+    let t = db.get_table(&tn).map_err(|_| EngineError::TableNotFound(tn.clone()))?;
     let cols: Vec<String> = t
         .columns
         .iter()
@@ -32,11 +33,13 @@ pub(crate) fn exec_show_columns(so: &ShowStatementOptions, db: &Database) -> Res
 
 // ── SHOW CREATE ─────────────────────────────────────────────────────────
 
-pub(crate) fn exec_show_create(ot: &ShowCreateObject, on: &ObjectName, db: &Database) -> Result<String, String> {
+pub(crate) fn exec_show_create(ot: &ShowCreateObject, on: &ObjectName, db: &Database) -> Result<String, EngineError> {
     let name = object_name_str(on);
     match ot {
         ShowCreateObject::Table => {
-            let t = db.get_table(&name)?;
+            let t = db
+                .get_table(&name)
+                .map_err(|_| EngineError::TableNotFound(name.clone()))?;
             let cols: Vec<String> = t
                 .columns
                 .iter()
@@ -48,7 +51,7 @@ pub(crate) fn exec_show_create(ot: &ShowCreateObject, on: &ObjectName, db: &Data
                 .collect();
             Ok(format!("\"CREATE TABLE {} ( {} )\"", name, cols.join(", ")))
         }
-        _ => Err("SHOW CREATE only supports TABLE".into()),
+        _ => Err(EngineError::Exec("SHOW CREATE only supports TABLE".into())),
     }
 }
 
@@ -58,7 +61,7 @@ pub(crate) fn exec_drop_trigger(
     tn: &ObjectName,
     table: Option<&ObjectName>,
     db: &mut Database,
-) -> Result<String, String> {
+) -> Result<String, EngineError> {
     let name = object_name_str(tn);
     let names: Vec<String> = db.table_names().iter().map(|s| s.to_string()).collect();
     let target_names = if let Some(t) = table {
@@ -74,99 +77,12 @@ pub(crate) fn exec_drop_trigger(
             }
         }
     }
-    Err(format!("Trigger '{}' not found", name))
-}
-
-// ── MERGE ───────────────────────────────────────────────────────────────
-
-pub(crate) fn exec_merge(merge: &Merge, db: &mut Database) -> Result<String, String> {
-    let target = match &merge.table {
-        sqlparser::ast::TableFactor::Table { name, .. } => Some(object_name_str(name)),
-        _ => None,
-    }
-    .ok_or_else(|| "MERGE: no target".to_string())?;
-    let source = match &merge.source {
-        sqlparser::ast::TableFactor::Table { name, .. } => Some(object_name_str(name)),
-        _ => None,
-    }
-    .ok_or_else(|| "MERGE: no source".to_string())?;
-    let src = db.get_table(&source)?;
-    let src_rows = src.rows.clone();
-    let src_cols: Vec<String> = src.columns.iter().map(|c| c.name.clone()).collect();
-    let _ = src;
-    let mut matched = 0u64;
-    let mut inserted = 0u64;
-    let tgt = db.get_table_mut(&target)?;
-    let tgt_cols: Vec<String> = tgt.columns.iter().map(|c| c.name.clone()).collect();
-    for sr in &src_rows {
-        let mut is_matched = false;
-        for ri in 0..tgt.rows.len() {
-            let combined: Vec<DbValue> = sr.iter().chain(tgt.rows[ri].iter()).cloned().collect();
-            let cmap: std::collections::HashMap<String, usize> = src_cols
-                .iter()
-                .chain(tgt_cols.iter())
-                .enumerate()
-                .map(|(i, n)| (n.clone(), i))
-                .collect();
-            if let Ok(DbValue::Bool(true)) = crate::engine::functions::eval::eval_expr(&merge.on, &combined, &cmap) {
-                is_matched = true;
-                for cl in &merge.clauses {
-                    if matches!(cl.clause_kind, MergeClauseKind::Matched) {
-                        match &cl.action {
-                            MergeAction::Update(MergeUpdateExpr { assignments, .. }) => {
-                                for a in assignments {
-                                    if let sqlparser::ast::AssignmentTarget::ColumnName(n) = &a.target {
-                                        let cn = n.to_string().to_lowercase();
-                                        if let Some(&ci) = tgt.col_index.get(&cn) {
-                                            if let Ok(v) = crate::engine::functions::eval::eval_expr(
-                                                &a.value,
-                                                &tgt.rows[ri],
-                                                &tgt.col_index,
-                                            ) {
-                                                tgt.rows[ri][ci] = v;
-                                            }
-                                        }
-                                    }
-                                }
-                                matched += 1;
-                            }
-                            MergeAction::Delete { .. } => {
-                                let rd = tgt.rows[ri].clone();
-                                tgt.delete(|r| *r == rd);
-                                matched += 1;
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-                break;
-            }
-        }
-        if !is_matched {
-            for cl in &merge.clauses {
-                if matches!(cl.clause_kind, MergeClauseKind::NotMatched) {
-                    if let MergeAction::Insert(_) = &cl.action {
-                        let mut row = Vec::new();
-                        for tc in &tgt_cols {
-                            if let Some(si) = src_cols.iter().position(|s| s == tc) {
-                                row.push(sr[si].clone());
-                            } else {
-                                row.push(DbValue::Null);
-                            }
-                        }
-                        let _ = tgt.insert(row);
-                        inserted += 1;
-                    }
-                }
-            }
-        }
-    }
-    Ok(format!("\"MERGE: {} matched, {} inserted\"", matched, inserted))
+    Err(EngineError::Exec(format!("Trigger '{}' not found", name)))
 }
 
 // ── VACUUM ──────────────────────────────────────────────────────────────
 
-pub(crate) fn exec_vacuum(v: &VacuumStatement, db: &mut Database) -> Result<String, String> {
+pub(crate) fn exec_vacuum(v: &VacuumStatement, db: &mut Database) -> Result<String, EngineError> {
     let tables: Vec<String> = db.table_names().iter().map(|s| s.to_string()).collect();
     for tn in tables {
         if let Ok(t) = db.get_table_mut(&tn) {
@@ -185,18 +101,97 @@ pub(crate) fn exec_vacuum(v: &VacuumStatement, db: &mut Database) -> Result<Stri
 pub(crate) fn exec_copy(
     source: &CopySource,
     to: bool,
-    _target: &CopyTarget,
+    target: &CopyTarget,
     db: &mut Database,
-) -> Result<String, String> {
-    if !to {
-        return Err("COPY FROM not supported".into());
-    }
-    match source {
-        CopySource::Table { table_name, .. } => {
-            let t = db.get_table(&object_name_str(table_name))?;
-            Ok(format!("\"COPY: {} rows\"", t.row_count()))
+) -> Result<String, EngineError> {
+    let table_name = match source {
+        CopySource::Table { table_name, .. } => object_name_str(table_name),
+        _ => return Err(EngineError::Exec("COPY only supports table source".into())),
+    };
+
+    if to {
+        let t = db
+            .get_table(&table_name)
+            .map_err(|_| EngineError::TableNotFound(table_name.clone()))?;
+        Ok(format!("\"COPY: {} rows\"", t.row_count()))
+    } else if matches!(target, CopyTarget::Stdin) {
+        let data = crate::engine::execute::COPY_STDIN
+            .with(|s| s.borrow_mut().take())
+            .unwrap_or_default();
+        if data.is_empty() {
+            return Err(EngineError::Exec("COPY FROM stdin: no data provided".into()));
         }
-        _ => Err("COPY only supports table source".into()),
+        let table = db
+            .get_table_mut(&table_name)
+            .map_err(|_| EngineError::TableNotFound(table_name.clone()))?;
+        let mut count = 0usize;
+        for line in data.lines() {
+            let trimmed = line.trim();
+            if trimmed.is_empty() || trimmed.starts_with('#') {
+                continue;
+            }
+            let values: Vec<String> = if trimmed.starts_with('{') || trimmed.starts_with('[') {
+                // JSON array row
+                return Err(EngineError::Exec(
+                    "COPY FROM stdin: JSON format not yet supported".into(),
+                ));
+            } else {
+                // CSV-like: comma-separated values (with optional quoting)
+                let mut fields = Vec::new();
+                let mut current = String::new();
+                let mut in_quote = false;
+                for c in trimmed.chars() {
+                    match c {
+                        '"' => in_quote = !in_quote,
+                        ',' if !in_quote => {
+                            fields.push(std::mem::take(&mut current));
+                        }
+                        _ => current.push(c),
+                    }
+                }
+                fields.push(current);
+                fields
+            };
+            if values.len() != table.col_count() {
+                return Err(EngineError::Exec(format!(
+                    "COPY FROM stdin: expected {} columns, got {}",
+                    table.col_count(),
+                    values.len()
+                )));
+            }
+            let row: Vec<crate::engine::value::DbValue> = values
+                .iter()
+                .zip(table.columns.iter())
+                .map(|(v, col)| {
+                    let trimmed = v.trim();
+                    if trimmed.is_empty() || trimmed == "NULL" || trimmed == "null" {
+                        return crate::engine::value::DbValue::Null;
+                    }
+                    match col.dtype {
+                        crate::engine::value::ColumnType::Int => trimmed
+                            .parse::<i64>()
+                            .map(crate::engine::value::DbValue::Int)
+                            .unwrap_or(crate::engine::value::DbValue::Null),
+                        crate::engine::value::ColumnType::Float => trimmed
+                            .parse::<f64>()
+                            .map(crate::engine::value::DbValue::Float)
+                            .unwrap_or(crate::engine::value::DbValue::Null),
+                        crate::engine::value::ColumnType::Bool => match trimmed.to_lowercase().as_str() {
+                            "true" | "1" => crate::engine::value::DbValue::Bool(true),
+                            _ => crate::engine::value::DbValue::Bool(false),
+                        },
+                        _ => crate::engine::value::DbValue::String(trimmed.to_string()),
+                    }
+                })
+                .collect();
+            table
+                .insert(row)
+                .map_err(|e| EngineError::Exec(format!("COPY FROM stdin: {}", e)))?;
+            count += 1;
+        }
+        Ok(format!("\"COPY FROM: {} rows inserted\"", count))
+    } else {
+        Err(EngineError::Exec("COPY only supports TO or FROM stdin".into()))
     }
 }
 
@@ -207,25 +202,25 @@ pub(crate) fn exec_comment_on(
     on: &ObjectName,
     comment: Option<&str>,
     db: &mut Database,
-) -> Result<String, String> {
+) -> Result<String, EngineError> {
     db.set_config(&format!("comment_{}", object_name_str(on)), comment.unwrap_or(""));
     Ok("\"COMMENT (stored)\"".into())
 }
 
 // ── CALL ────────────────────────────────────────────────────────────────
 
-pub(crate) fn exec_call(func: &Function, _db: &mut Database) -> Result<String, String> {
+pub(crate) fn exec_call(func: &Function, _db: &mut Database) -> Result<String, EngineError> {
     let empty = Vec::new();
     let empty_map = std::collections::HashMap::new();
     match crate::engine::functions::eval::exec_function(func, &empty, &empty_map) {
         Ok(val) => Ok(format!("\"CALL returned: {}\"", val)),
-        Err(e) => Err(format!("CALL error: {}", e)),
+        Err(e) => Err(EngineError::Exec(format!("CALL error: {}", e))),
     }
 }
 
 // ── ANALYZE ─────────────────────────────────────────────────────────────
 
-pub(crate) fn exec_analyze(a: &Analyze, db: &mut Database) -> Result<String, String> {
+pub(crate) fn exec_analyze(a: &Analyze, db: &mut Database) -> Result<String, EngineError> {
     let names: Vec<String> = if let Some(tn) = &a.table_name {
         vec![object_name_str(tn)]
     } else {

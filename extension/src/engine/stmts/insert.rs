@@ -1,15 +1,21 @@
 // Insert statement handler
 
+//! INSERT execution — single row, multi-row, INSERT FROM SELECT,
+//! INSERT OR REPLACE, INSERT OR ROLLBACK, INSERT OR IGNORE,
+//! RETURNING clause support.
+
 use super::super::database::Database;
-use super::super::execute::{format_projected_result, object_name_str, LAST_CHANGES, LAST_INSERT_ROWID};
+use super::super::error::EngineError;
+use super::super::execute::{format_projected_result, LAST_CHANGES, LAST_INSERT_ROWID};
 use super::super::functions::eval::{eval_expr, eval_literal_expr, is_truthy};
 use super::super::stmts::select::exec_select;
 use super::super::value::DbValue;
-use crate::engine::trigger::fire_triggers;
+use super::ddl::object_name_str;
+use crate::engine::trigger::{fire_triggers, fire_triggers_before};
 use sqlparser::ast::{Expr, Insert, OnInsert, Query, SetExpr, SqliteOnConflict, Value, Values};
 use std::collections::HashSet;
 
-pub(crate) fn exec_insert(ins: &Insert, db: &mut Database) -> Result<String, String> {
+pub(crate) fn exec_insert(ins: &Insert, db: &mut Database) -> Result<String, EngineError> {
     let table_name = ins.table.to_string().to_lowercase();
     let returning = ins.returning.clone();
 
@@ -35,7 +41,7 @@ pub(crate) fn exec_insert(ins: &Insert, db: &mut Database) -> Result<String, Str
                 };
                 let json = exec_select(&sq, db)?;
                 let parsed: Vec<Vec<serde_json::Value>> =
-                    serde_json::from_str(&json).map_err(|e| format!("SELECT parse: {}", e))?;
+                    serde_json::from_str(&json).map_err(|e| EngineError::Exec(format!("SELECT parse: {}", e)))?;
                 let to_val = |v: &serde_json::Value| -> Expr {
                     Expr::Value(
                         match v {
@@ -58,14 +64,16 @@ pub(crate) fn exec_insert(ins: &Insert, db: &mut Database) -> Result<String, Str
                     .map(|row| row.iter().map(to_val).collect())
                     .collect()
             }
-            _ => return Err("INSERT source must be VALUES or SELECT".into()),
+            _ => return Err(EngineError::Exec("INSERT source must be VALUES or SELECT".into())),
         },
-        None => return Err("INSERT must have a source".into()),
+        None => return Err(EngineError::Exec("INSERT must have a source".into())),
     };
 
     // Pre-collect FOREIGN KEY lookup data (foreign table pk_sets) before mutable table borrow
     let fk_lookups: Vec<(String, HashSet<String>)> = {
-        let self_table = db.get_table(&table_name)?;
+        let self_table = db
+            .get_table(&table_name)
+            .map_err(|_| EngineError::TableNotFound(table_name.clone()))?;
         self_table
             .foreign_keys
             .iter()
@@ -77,8 +85,15 @@ pub(crate) fn exec_insert(ins: &Insert, db: &mut Database) -> Result<String, Str
             .collect()
     };
 
+    // Fire BEFORE INSERT triggers (aborts if trigger raises error)
+    if let Err(e) = fire_triggers_before(&table_name, "INSERT", db) {
+        return Err(EngineError::Exec(e));
+    }
+
     // Now we have the rows; borrow table for column mapping and insertion
-    let table = db.get_table_mut(&table_name)?;
+    let table = db
+        .get_table_mut(&table_name)
+        .map_err(|_| EngineError::TableNotFound(table_name.clone()))?;
 
     // Pre-collect auto_increment indices before the row loop (avoids borrow conflicts)
     let auto_inc_cols: Vec<usize> = table
@@ -95,11 +110,12 @@ pub(crate) fn exec_insert(ins: &Insert, db: &mut Database) -> Result<String, Str
                 .iter()
                 .map(|col_name| {
                     let name = object_name_str(col_name);
-                    table
-                        .col_idx(&name)
-                        .ok_or_else(|| format!("Unknown column '{}' in table '{}'", name, table_name))
+                    table.col_idx(&name).ok_or_else(|| EngineError::ColumnNotFoundInTable {
+                        name: name.clone(),
+                        table: table_name.clone(),
+                    })
                 })
-                .collect::<Result<Vec<usize>, String>>()?,
+                .collect::<Result<Vec<usize>, EngineError>>()?,
         )
     } else {
         None
@@ -114,11 +130,11 @@ pub(crate) fn exec_insert(ins: &Insert, db: &mut Database) -> Result<String, Str
         };
 
         if row_exprs.len() != col_indices.len() {
-            return Err(format!(
+            return Err(EngineError::Exec(format!(
                 "Expected {} values, got {}",
                 col_indices.len(),
                 row_exprs.len()
-            ));
+            )));
         }
 
         let mut full_row: Vec<DbValue> = (0..table.col_count()).map(|_| DbValue::Null).collect();
@@ -138,9 +154,9 @@ pub(crate) fn exec_insert(ins: &Insert, db: &mut Database) -> Result<String, Str
         // Evaluate CHECK constraints
         for check_expr in &table.check_constraints {
             let check_val = eval_expr(check_expr, &full_row, &table.col_index)
-                .map_err(|e| format!("CHECK constraint error: {}", e))?;
+                .map_err(|e| EngineError::Exec(format!("CHECK constraint error: {}", e)))?;
             if !is_truthy(&check_val) {
-                return Err("CHECK constraint failed for row".to_string());
+                return Err(EngineError::Exec("CHECK constraint failed for row".to_string()));
             }
         }
 
@@ -151,10 +167,10 @@ pub(crate) fn exec_insert(ins: &Insert, db: &mut Database) -> Result<String, Str
                 if !matches!(val, DbValue::Null) {
                     let pk_str = val.to_string().to_lowercase();
                     if !ref_pks.contains(&pk_str) {
-                        return Err(format!(
+                        return Err(EngineError::Exec(format!(
                             "FOREIGN KEY constraint: '{}' value '{}' not found in referenced table",
                             local_col, pk_str
-                        ));
+                        )));
                     }
                 }
             }
@@ -168,21 +184,22 @@ pub(crate) fn exec_insert(ins: &Insert, db: &mut Database) -> Result<String, Str
             }
             // INSERT OR IGNORE: skip conflicting row silently
             // INSERT OR IGNORE / INSERT IGNORE: skip conflicting row silently
-            Err(e)
+            Err(ref e)
                 if (matches!(on_conflict, Some(SqliteOnConflict::Ignore)) || ins.ignore)
-                    && e.contains("Duplicate primary key") =>
+                    && matches!(e, EngineError::DuplicateKey(_)) =>
             {
                 // ponytail: silently skip — row already exists
             }
             // INSERT OR ROLLBACK: rollback transaction on conflict
             Err(e)
-                if matches!(on_conflict, Some(SqliteOnConflict::Rollback)) && e.contains("Duplicate primary key") =>
+                if matches!(on_conflict, Some(SqliteOnConflict::Rollback))
+                    && matches!(e, EngineError::DuplicateKey(_)) =>
             {
                 let _ = db.rollback();
                 return Err(e);
             }
             // INSERT OR REPLACE / INSERT OR REPLACE: delete and re-insert
-            Err(e) if is_replace && e.contains("Duplicate primary key") => {
+            Err(ref e) if is_replace && matches!(e, EngineError::DuplicateKey(_)) => {
                 // REPLACE: find the old row by PK and replace it
                 if let Some(pk_col) = table.columns.iter().position(|c| c.primary_key) {
                     let pk_val = &full_row[pk_col];
@@ -191,10 +208,10 @@ pub(crate) fn exec_insert(ins: &Insert, db: &mut Database) -> Result<String, Str
                     table.insert(full_row)?;
                     inserted += 1;
                 } else {
-                    return Err(e);
+                    return Err(EngineError::DuplicateKey(e.to_string()));
                 }
             }
-            Err(e) if e.contains("Duplicate primary key") && ins.on.is_some() => {
+            Err(ref e) if matches!(e, EngineError::DuplicateKey(_)) && ins.on.is_some() => {
                 // UPSERT: ON CONFLICT DO UPDATE or ON CONFLICT DO NOTHING
                 match &ins.on {
                     Some(OnInsert::OnConflict(oc)) => {
@@ -220,7 +237,10 @@ pub(crate) fn exec_insert(ins: &Insert, db: &mut Database) -> Result<String, Str
                                                     let upsert_row = &full_row;
                                                     let new_val = eval_expr(&assign.value, upsert_row, &upsert_map)
                                                         .map_err(|_| {
-                                                            format!("UPSERT: invalid expr for '{}'", col_name)
+                                                            EngineError::Exec(format!(
+                                                                "UPSERT: invalid expr for '{}'",
+                                                                col_name
+                                                            ))
                                                         })?;
                                                     table.rows[row_idx][ci] = new_val;
                                                 }
@@ -233,10 +253,10 @@ pub(crate) fn exec_insert(ins: &Insert, db: &mut Database) -> Result<String, Str
                             }
                         }
                     }
-                    _ => return Err(e),
+                    _ => return Err(EngineError::DuplicateKey(e.to_string())),
                 }
             }
-            Err(e) => return Err(e),
+            Err(e) => return Err(EngineError::Exec(e.to_string())),
         }
     }
 
@@ -254,7 +274,9 @@ pub(crate) fn exec_insert(ins: &Insert, db: &mut Database) -> Result<String, Str
     LAST_CHANGES.with(|c| *c.borrow_mut() = inserted);
 
     if let Some(returning) = &returning {
-        let table = db.get_table(&table_name)?;
+        let table = db
+            .get_table(&table_name)
+            .map_err(|_| EngineError::TableNotFound(table_name.clone()))?;
         let ref_rows: Vec<&[DbValue]> = inserted_rows.iter().map(|r| r.as_slice()).collect();
         return Ok(format_projected_result(ref_rows, returning, &table.col_index, table));
     }

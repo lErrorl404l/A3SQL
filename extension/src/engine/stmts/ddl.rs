@@ -1,13 +1,26 @@
 // DDL statements — split into create.rs and misc.rs
 // Helpers shared by both sub-modules live here.
 
+//! DDL statement handlers — CREATE, DROP, ALTER, and inspection commands.
+//! Sub-modules: `create` (TABLE, VIEW, INDEX, TRIGGER), `inspect` (DESCRIBE, SHOW),
+//! `misc` (VACUUM, COPY, COMMENT, CALL, ANALYZE).
+
 mod create;
+mod inspect;
 mod misc;
 
-pub(crate) use create::*;
-pub(crate) use misc::*;
+pub(crate) use create::{
+    exec_create_index, exec_create_sequence, exec_create_table, exec_create_trigger, exec_create_view,
+    exec_create_virtual_table,
+};
+pub(crate) use inspect::{describe_table, show_create_table};
+pub(crate) use misc::{
+    exec_analyze, exec_call, exec_comment_on, exec_copy, exec_drop_trigger, exec_show_columns, exec_show_create,
+    exec_vacuum,
+};
 
-use crate::engine::value::{ColumnType, DbValue};
+use crate::engine::error::EngineError;
+use crate::engine::value::{json_val_to_dbvalue, ColumnType, DbValue};
 use sqlparser::ast::{DataType, ObjectName, ObjectNamePart};
 
 /// Convert an `ObjectName` (qualified or simple) to a dot-separated lowercase string.
@@ -22,23 +35,8 @@ pub(crate) fn object_name_str(name: &ObjectName) -> String {
         .join(".")
 }
 
-/// Convert a `serde_json::Value` to the engine's `DbValue`.
-pub(crate) fn json_val_to_dbvalue(v: &serde_json::Value) -> DbValue {
-    match v {
-        serde_json::Value::Null => DbValue::Null,
-        serde_json::Value::Bool(b) => DbValue::Bool(*b),
-        serde_json::Value::Number(n) => n
-            .as_i64()
-            .map(DbValue::Int)
-            .or_else(|| n.as_f64().map(DbValue::Float))
-            .unwrap_or(DbValue::Null),
-        serde_json::Value::String(s) => DbValue::String(s.clone()),
-        _ => DbValue::String(v.to_string()),
-    }
-}
-
 /// Parse a SQL data type into the engine's `ColumnType`.
-pub(crate) fn parse_data_type(dt: &DataType) -> Result<ColumnType, String> {
+pub(crate) fn parse_data_type(dt: &DataType) -> Result<ColumnType, EngineError> {
     match dt {
         DataType::Int(_)
         | DataType::Integer(_)
@@ -69,7 +67,7 @@ pub(crate) fn parse_data_type(dt: &DataType) -> Result<ColumnType, String> {
                 }
                 DataType::Float(_) | DataType::Double(_) | DataType::Real => Ok(ColumnType::Floats),
                 _ if inner.to_string().to_lowercase() == "string" => Ok(ColumnType::Strings),
-                _ => Err(format!("Unsupported array element type: {}", inner)),
+                _ => Err(EngineError::Parse(format!("Unsupported array element type: {}", inner))),
             }
         }
         DataType::Custom(name, _) => {
@@ -81,10 +79,10 @@ pub(crate) fn parse_data_type(dt: &DataType) -> Result<ColumnType, String> {
                 "INT" | "INTEGER" | "BIGINT" | "TINYINT" | "SMALLINT" => Ok(ColumnType::Int),
                 "FLOAT" | "DOUBLE" => Ok(ColumnType::Float),
                 "BOOL" | "BOOLEAN" => Ok(ColumnType::Bool),
-                _ => Err(format!("Unknown custom type '{}'", s)),
+                _ => Err(EngineError::Parse(format!("Unknown custom type '{}'", s))),
             }
         }
-        _ => Err(format!("Unsupported data type: {:?}", dt)),
+        _ => Err(EngineError::Parse(format!("Unsupported data type: {:?}", dt))),
     }
 }
 
