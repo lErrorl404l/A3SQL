@@ -83,7 +83,7 @@ s.close()
 ```bash
 cargo build --release -p a3sql   # extension
 hemtt build                      # addon PBOs
-cargo test --lib -p a3sql         # 213+ tests
+cargo test --lib -p a3sql         # 230+ tests
 ```
 
 See the [Building page](https://github.com/lErrorl404l/a3sql/wiki/Building) for cross-compilation, code signing, and CI details.
@@ -96,23 +96,31 @@ a3sql/
 │   ├── Cargo.toml
 │   ├── .cargo/config.toml   # Cross-compilation linkers
 │   └── src/
-│       ├── lib.rs            # C ABI entry point
+│       ├── lib.rs            # C ABI entry point (~80 lines)
+│       ├── dispatch.rs       # Command routing + SQL execution
+│       ├── server.rs         # TCP server (start_server, serve_client)
+│       ├── ffi/              # C ABI extern functions + statics
 │       ├── parser/           # SQL parser + dialect + preprocessor
 │       ├── engine/           # Core database engine
-│       │   ├── database/     # Database struct, persistence, snapshots
-│       │   ├── execute.rs    # Statement dispatch + CTE + tests
+│       │   ├── prelude.rs    # Common imports
+│       │   ├── execute.rs    # Statement dispatcher + format helpers
+│       │   ├── execute/      # select.rs (exec_select, exec_subquery)
+│       │   ├── database/     # Database struct, persistence
+│       │   ├── error.rs      # thiserror EngineError enum
 │       │   ├── functions/    # SQL functions + expression eval
 │       │   ├── index.rs      # BTree + Trigram indices
+│       │   ├── optimizer/    # OptimizerRule trait + passes
 │       │   ├── plugin.rs     # Rust/C ABI/SQF plugin system
 │       │   ├── serialize/    # JSON/CSV/Binary/SQL export/import
 │       │   ├── stmts/        # Statement executors (ddl/, select/, etc.)
 │       │   ├── table/        # Table struct, row ops, schema
-│       │   ├── trigger.rs    # Trigger execution
-│       │   ├── value.rs      # Column types, DbValue enum
-│       │   └── error.rs      # Structured error codes
-│       └── bin/              # Standalone a3sql-server binary
+│       │   ├── test.rs       # Test helpers with fresh DB state
+│       │   ├── trigger.rs    # Trigger execution + recursion guard
+│       │   └── value.rs      # Column types, DbValue enum
+│       ├── bin/              # Standalone a3sql-server binary
+│       └── tests/            # Integration tests (abi, audit, bugs, gaps, plugins)
 ├── addons/{main,sql}/   # Arma 3 addon PBOs (SQF API + CBA settings)
-├── include/             # CBA build-time headers
+├── include/             # CBA build-time headers + plugin.h
 ├── tools/               # Python dev tools (UV-managed)
 ├── .hemtt/              # HEMTT config + hooks
 ├── .github/workflows/   # CI: test, lint, build, release, wiki-sync
