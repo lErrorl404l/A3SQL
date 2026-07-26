@@ -8,7 +8,7 @@
 use crate::engine::database::Database;
 use crate::engine::execute::execute;
 use crate::engine::table::Table;
-use crate::engine::value::{Column, ColumnType, DbValue};
+use crate::engine::value::{Column, ColumnType};
 
 /// Parse and execute SQL statements against a fresh Database.
 /// Returns the database for further inspection.

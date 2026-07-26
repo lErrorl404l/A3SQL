@@ -401,7 +401,7 @@ pub(crate) fn parse_and_exec(sql: &str, db: &mut Database) -> Result<String, Eng
     Ok(results.join("\n"))
 }
 
-/// Execute CREATE TRIGGER.
+// Execute CREATE TRIGGER.
 // ── CREATE VIRTUAL TABLE ─────────────────────────────────────────────────
 
 // ── EXPLAIN ─────────────────────────────────────────────────────────────

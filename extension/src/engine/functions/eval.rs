@@ -330,7 +330,7 @@ pub(crate) fn eval_expr(
             if name == "current_date" {
                 return Ok(curdate_value());
             }
-            let idx = col_map.get(&name).ok_or_else(|| EngineError::ColumnNotFound(name))?;
+            let idx = col_map.get(&name).ok_or(EngineError::ColumnNotFound(name))?;
             Ok(row[*idx].clone())
         }
         Expr::CompoundIdentifier(parts) => {

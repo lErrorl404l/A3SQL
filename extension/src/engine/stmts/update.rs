@@ -213,7 +213,7 @@ pub(crate) fn exec_update(upd: &Update, db: &mut Database) -> Result<String, Eng
         Vec::new()
     };
 
-    let _t = {
+    {
         let _t = db
             .get_table_mut(&table_name)
             .map_err(|_| EngineError::TableNotFound(table_name.clone()))?;

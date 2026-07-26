@@ -12,7 +12,6 @@
 ///
 /// Finds each `%%` operator outside string literals and rewrites
 /// `left %% right` → `fuzzy_match(left,right)`.
-
 pub fn preprocess(sql: &str) -> String {
     // Replace pseudo-array type syntax before passing to sqlparser-rs.
     // The engine stores arrays as JSON strings, so the base type is sufficient.

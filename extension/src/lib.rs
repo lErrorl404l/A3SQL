@@ -27,7 +27,6 @@ pub use server::start_server;
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     #[test]
     fn dispatch_split_sql() {

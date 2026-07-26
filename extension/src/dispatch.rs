@@ -372,7 +372,7 @@ fn exec_sql_statements(statements: &[String], args: &[&str]) -> String {
             Ok(stmts) => {
                 for stmt in &stmts {
                     // Set COPY STDIN data from callExtension args before execution
-                    if args.len() > 0 && matches!(stmt, sqlparser::ast::Statement::Copy { to: false, .. }) {
+                    if !args.is_empty() && matches!(stmt, sqlparser::ast::Statement::Copy { to: false, .. }) {
                         execute::COPY_STDIN.with(|s| {
                             *s.borrow_mut() = Some(args[0].to_string());
                         });
