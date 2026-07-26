@@ -91,12 +91,22 @@ pub(crate) fn init_builtin_plugins() {
     );
 }
 
-/// Register a function from SQF.
-pub(crate) fn register_sqf_function(name: &str, arg_count: usize) {
+/// Register a function from SQF with an optional SQF body.
+/// When `body` is non-empty, the engine will call the SQF callback
+/// on function invocation instead of returning an error.
+pub(crate) fn register_sqf_function(name: &str, arg_count: usize, body: &str) {
     let mut reg = PLUGIN_REGISTRY.lock().unwrap();
-    reg.sqf_functions.insert(name.to_string(), (String::new(), arg_count));
-    // ponytail: SQF functions are evaluated by the caller (fn_execute.sqf),
-    // so we just track the name here for dispatch.
+    reg.sqf_functions
+        .insert(name.to_string(), (body.to_string(), arg_count));
+}
+
+/// Get the SQF body for a registered SQF function, if one exists.
+pub(crate) fn get_sqf_function_body(name: &str) -> Option<String> {
+    let reg = PLUGIN_REGISTRY.lock().unwrap();
+    reg.sqf_functions
+        .get(name)
+        .map(|(body, _)| body.clone())
+        .filter(|b| !b.is_empty())
 }
 
 /// Look up a plugin function by name. Returns (function, plugin_name).
