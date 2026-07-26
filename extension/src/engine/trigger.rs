@@ -28,7 +28,7 @@ pub fn fire_triggers(_table_name: &str, event: &str, db: &mut Database) {
                 .filter(|tr| tr.event == event && tr.timing == "AFTER")
                 .cloned()
                 .collect();
-            drop(t);
+            let _ = t;
             for tr in triggers {
                 let body = tr.body.replace("OLD.", "").replace("NEW.", "");
                 if let Err(e) = crate::engine::execute::parse_and_exec(&body, db) {

@@ -285,6 +285,18 @@ pub fn dispatch(input: &str, args: &[&str]) -> String {
     }
 
     // ── Remote forwarding — if connected to a remote server, forward ──
+    // Rewrite standalone REINDEX to VACUUM REINDEX (sqlparser only parses VACUUM REINDEX)
+    if lowered == "reindex" || lowered.starts_with("reindex ") {
+        let reindex_sql = if lowered == "reindex" {
+            "VACUUM REINDEX".to_string()
+        } else {
+            format!("VACUUM REINDEX {}", &trimmed[8..])
+        };
+        let statements = split_sql(&reindex_sql);
+        let result = exec_sql_statements(&statements, args);
+        return result;
+    }
+
     {
         let remote = REMOTE.lock().unwrap();
         if let Some(stream) = remote.as_ref() {
@@ -598,14 +610,14 @@ fn handle_create_trigger(sql: &str, db: &mut crate::engine::database::Database) 
         if bytes[i..].starts_with(b"begin")
             && bytes
                 .get(i + 5)
-                .map_or(true, |c| !c.is_ascii_alphanumeric() && *c != b'_')
+                .is_none_or(|c| !c.is_ascii_alphanumeric() && *c != b'_')
         {
             depth += 1;
             i += 5;
         } else if bytes[i..].starts_with(b"end")
             && bytes
                 .get(i + 3)
-                .map_or(true, |c| !c.is_ascii_alphanumeric() && *c != b'_')
+                .is_none_or(|c| !c.is_ascii_alphanumeric() && *c != b'_')
         {
             depth -= 1;
             if depth == 0 {

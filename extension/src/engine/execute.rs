@@ -1,19 +1,23 @@
 // a3sql statement executor — interprets sqlparser AST against Database
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
-use super::table::ForeignKeyInfo;
-use super::table::IndexImpl;
-use sqlparser::ast::table_constraints::TableConstraint;
 use sqlparser::ast::{
-    BinaryOperator, ColumnOption, DataType, Expr, Function, FunctionArg, FunctionArgExpr, FunctionArguments, Ident,
-    LimitClause, Merge, MergeAction, MergeClauseKind, MergeInsertKind, ObjectName, ObjectType, OrderByKind, Query,
-    ReferentialAction, Select, SelectItem, SetExpr, SqliteOnConflict, Statement, TableFactor, TableWithJoins,
-    UnaryOperator, Values, WindowFrame, WindowFrameBound, WindowFrameUnits, WindowType,
+    DataType, Distinct, Expr, FunctionArguments, LimitClause, Merge, MergeAction, MergeClauseKind, MergeInsertKind,
+    ObjectName, ObjectType, OrderByKind, Query, Select, SelectItem, SetExpr, Statement, TableFactor, TableWithJoins,
+    WindowFrame, WindowFrameBound, WindowFrameUnits, WindowType,
 };
 
 use super::database::Database;
-use super::index::IndexType as A3IndexType;
+use super::functions::aggregate::{
+    compute_aggregates, has_aggregate, has_group_by, partition_by_group, projection_expr_name,
+};
+use super::functions::builtin::{
+    curdate_value, exec_std_function, extract_func_arg, get_func_arg_unnamed, materialize_view, now_value,
+    resolve_single_table, resolve_table_factor, simple_like, sql_val_to_db, try_btree_index, try_trigram_index,
+    value_to_string, values_equal,
+};
+use super::functions::eval::{apply_binary_op, eval_expr, eval_literal_expr, is_truthy, to_float};
 use super::stmts;
 use super::table::Table;
 use super::value::{Column, ColumnType, DbValue};
@@ -27,9 +31,9 @@ thread_local! {
 
 // ponytail: global tracking for last_insert_rowid / changes (no db ref in eval path)
 thread_local! {
-    static LAST_INSERT_ROWID: std::cell::RefCell<Option<String>> =
+    pub(crate) static LAST_INSERT_ROWID: std::cell::RefCell<Option<String>> =
         const { std::cell::RefCell::new(None) };
-    static LAST_CHANGES: std::cell::RefCell<usize> =
+    pub(crate) static LAST_CHANGES: std::cell::RefCell<usize> =
         const { std::cell::RefCell::new(0) };
 }
 
@@ -37,15 +41,9 @@ thread_local! {
 
 pub fn execute(stmt: &Statement, db: &mut Database) -> Result<String, String> {
     match stmt {
-        Statement::CreateView(cv) => exec_create_view(cv, db),
-        Statement::CreateTable(def) => {
-            if def.query.is_some() {
-                exec_create_table_as(def, db)
-            } else {
-                exec_create_table(def, db)
-            }
-        }
-        Statement::Insert(ins) => exec_insert(ins, db),
+        Statement::CreateView(cv) => stmts::ddl::exec_create_view(cv, db),
+        Statement::CreateTable(def) => stmts::ddl::exec_create_table(def, db),
+        Statement::Insert(ins) => stmts::insert::exec_insert(ins, db),
         Statement::Query(q) => {
             // Process WITH / CTE clauses before executing the main query body
             let mut cte_tables: Vec<String> = Vec::new();
@@ -180,12 +178,63 @@ pub fn execute(stmt: &Statement, db: &mut Database) -> Result<String, String> {
                 let _ = db.drop_table(name);
             }
 
+            // SELECT INTO TABLE — create table from query results
+            if let Ok(ref json) = result {
+                if let SetExpr::Select(select) = &*q.body {
+                    if let Some(ref into) = select.into {
+                        let target_name = into.name.to_string().to_lowercase();
+                        if !into.table {
+                            // non-table INTO (e.g. INTO OUTFILE) not supported
+                        } else if let Ok(rows) = serde_json::from_str::<Vec<Vec<serde_json::Value>>>(json) {
+                            if rows.len() >= 2 {
+                                let header = &rows[0];
+                                let cols: Vec<Column> = header
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(i, h)| {
+                                        let dtype = rows[1]
+                                            .get(i)
+                                            .map(|v| match v {
+                                                serde_json::Value::Number(n) => {
+                                                    if n.is_f64() {
+                                                        ColumnType::Float
+                                                    } else {
+                                                        ColumnType::Int
+                                                    }
+                                                }
+                                                serde_json::Value::Bool(_) => ColumnType::Bool,
+                                                _ => ColumnType::String,
+                                            })
+                                            .unwrap_or(ColumnType::String);
+                                        Column {
+                                            name: h.as_str().unwrap_or(&format!("col{}", i)).to_lowercase(),
+                                            dtype,
+                                            primary_key: false,
+                                            not_null: false,
+                                            default: None,
+                                            auto_increment: false,
+                                        }
+                                    })
+                                    .collect();
+                                if let Ok(mut table) = Table::new(target_name.clone(), cols) {
+                                    for row_data in &rows[1..] {
+                                        let db_row: Vec<DbValue> = row_data.iter().map(json_val_to_dbvalue).collect();
+                                        let _ = table.insert(db_row);
+                                    }
+                                    db.add_table(target_name.clone(), table);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             result
         }
-        Statement::Update(upd) => exec_update(upd, db),
-        Statement::Delete(del) => exec_delete(del, db),
-        Statement::CreateTrigger(ct) => exec_create_trigger(ct, db),
-        Statement::CreateIndex(idx) => exec_create_index(idx, db),
+        Statement::Update(upd) => stmts::update::exec_update(upd, db),
+        Statement::Delete(del) => stmts::delete::exec_delete(del, db),
+        Statement::CreateTrigger(ct) => stmts::ddl::exec_create_trigger(ct, db),
+        Statement::CreateIndex(idx) => stmts::ddl::exec_create_index(idx, db),
         Statement::Drop {
             names,
             object_type,
@@ -277,6 +326,14 @@ pub fn execute(stmt: &Statement, db: &mut Database) -> Result<String, String> {
             let inner: Vec<String> = names.iter().map(|n| format!("\"{}\"", n)).collect();
             Ok(format!("[{}]", inner.join(",")))
         }
+        Statement::ShowVariables { .. } | Statement::ShowStatus { .. } => {
+            let vars: Vec<String> = db
+                .config
+                .keys()
+                .map(|k| format!("\"{} = {}\"", k, db.config.get(k).unwrap_or(&String::new())))
+                .collect();
+            Ok(format!("[{}]", vars.join(",")))
+        }
         Statement::StartTransaction { .. } => {
             db.begin();
             Ok("\"Transaction started\"".into())
@@ -349,12 +406,7 @@ pub fn execute(stmt: &Statement, db: &mut Database) -> Result<String, String> {
             if *analyze {
                 return Err("EXPLAIN ANALYZE is not supported".into());
             }
-            explain_statement(inner, db)
-        }
-        Statement::Merge(merge) => exec_merge(merge, db),
-        Statement::AttachDatabase { schema_name, .. } => {
-            let name = schema_name.to_string();
-            Ok(format!("\"Attached database '{}'\"", name))
+            stmts::explain::explain_statement(inner, db)
         }
         Statement::Vacuum(v) => stmts::ddl::exec_vacuum(v, db),
         Statement::Copy { source, to, target, .. } => stmts::ddl::exec_copy(source, *to, target, db),
@@ -394,464 +446,12 @@ pub(crate) fn object_name_str(name: &ObjectName) -> String {
 
 // ── CREATE TABLE ────────────────────────────────────────────────────────
 
-fn exec_create_table(def: &sqlparser::ast::CreateTable, db: &mut Database) -> Result<String, String> {
-    let table_name = object_name_str(&def.name);
-
-    if def.if_not_exists && db.has_table(&table_name) {
-        return Ok(format!("\"Table '{}' already exists\"", table_name));
-    }
-
-    let mut columns: Vec<Column> = Vec::new();
-    let mut has_pk = false;
-    let mut check_exprs: Vec<Expr> = Vec::new();
-
-    for col_def in &def.columns {
-        let col_name = col_def.name.value.to_lowercase();
-        let dtype = parse_data_type(&col_def.data_type)?;
-
-        let mut is_pk = false;
-        let mut is_not_null = false;
-        let mut default_val: Option<DbValue> = None;
-        let mut auto_inc = false;
-        for opt_def in &col_def.options {
-            match &opt_def.option {
-                ColumnOption::PrimaryKey(_) | ColumnOption::Unique { .. } => is_pk = true,
-                ColumnOption::NotNull => is_not_null = true,
-                ColumnOption::DialectSpecific(tokens) => {
-                    let has_auto = tokens.iter().any(|t| {
-                        let s = t.to_string().to_lowercase().replace('"', "");
-                        s == "auto_increment" || s == "autoincrement"
-                    });
-                    if has_auto {
-                        is_pk = true;
-                        auto_inc = true;
-                    }
-                }
-                ColumnOption::Default(expression) => {
-                    // Evaluate default expression (literal only)
-                    match expression {
-                        Expr::Value(v) => default_val = Some(sql_val_to_db(&v.value)),
-                        _ => return Err("DEFAULT only supports literal values".into()),
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        if is_pk {
-            if has_pk {
-                return Err("Only one primary key column supported".into());
-            }
-            has_pk = true;
-        }
-
-        columns.push(Column {
-            name: col_name,
-            dtype,
-            primary_key: is_pk,
-            not_null: is_not_null,
-            default: default_val,
-            auto_increment: auto_inc,
-        });
-    }
-
-    // Table-level PRIMARY KEY constraints — Display-based detection
-    // Collect CHECK constraints from column-level options
-    for col_def in &def.columns {
-        for opt_def in &col_def.options {
-            if let ColumnOption::Check(check) = &opt_def.option {
-                check_exprs.push(*check.expr.clone());
-            }
-        }
-    }
-
-    // Collect FOREIGN KEY constraints from both column and table level
-    let mut foreign_keys: Vec<ForeignKeyInfo> = Vec::new();
-    for col_def in &def.columns {
-        let col_name = col_def.name.value.to_lowercase();
-        for opt_def in &col_def.options {
-            if let ColumnOption::ForeignKey(fk) = &opt_def.option {
-                let local_col = fk
-                    .columns
-                    .first()
-                    .map(|c| c.value.to_lowercase())
-                    .unwrap_or_else(|| col_name.clone());
-                foreign_keys.push(ForeignKeyInfo {
-                    local_column: local_col,
-                    foreign_table: fk.foreign_table.to_string().to_lowercase(),
-                    foreign_column: fk
-                        .referred_columns
-                        .first()
-                        .map(|c| c.value.to_lowercase())
-                        .unwrap_or_default(),
-                    on_delete: fk.on_delete,
-                    on_update: fk.on_update,
-                });
-            }
-        }
-    }
-    for constraint in &def.constraints {
-        match constraint {
-            TableConstraint::ForeignKey(fk) => {
-                foreign_keys.push(ForeignKeyInfo {
-                    local_column: fk.columns.first().map(|c| c.value.to_lowercase()).unwrap_or_default(),
-                    foreign_table: fk.foreign_table.to_string().to_lowercase(),
-                    foreign_column: fk
-                        .referred_columns
-                        .first()
-                        .map(|c| c.value.to_lowercase())
-                        .unwrap_or_default(),
-                    on_delete: fk.on_delete,
-                    on_update: fk.on_update,
-                });
-            }
-            TableConstraint::Check(ck) => {
-                check_exprs.push(*ck.expr.clone());
-            }
-            _ => {}
-        }
-        let text = format!("{}", constraint).to_uppercase();
-        if text.contains("PRIMARY KEY (") {
-            // Extract column name from display text: "PRIMARY KEY (col)"
-            if let Some(start) = text.find('(') {
-                if let Some(end) = text.find(')') {
-                    let cname = text[start + 1..end].trim().to_lowercase();
-                    if let Some(col) = columns.iter_mut().find(|col| col.name == cname) {
-                        if has_pk {
-                            return Err("Only one primary key supported".into());
-                        }
-                        col.primary_key = true;
-                        has_pk = true;
-                    }
-                }
-            }
-        }
-    }
-
-    let mut table = Table::new(table_name.clone(), columns)?;
-    table.check_constraints = check_exprs;
-    table.foreign_keys = foreign_keys;
-    db.create_table(&table_name, table)?;
-    Ok(format!("\"Table '{}' created\"", table_name))
-}
-
 // ── CREATE VIEW ─────────────────────────────────────────────────────────
-
-fn exec_create_view(cv: &sqlparser::ast::CreateView, db: &mut Database) -> Result<String, String> {
-    // ponytail: non-materialized views only (re-executed each reference)
-    if cv.materialized {
-        return Err("Materialized views are not supported".into());
-    }
-    let name = object_name_str(&cv.name);
-    if db.has_table(&name) {
-        return Err(format!("Table '{}' already exists — cannot create view", name));
-    }
-    if cv.if_not_exists && db.has_view(&name) {
-        return Ok(format!("\"View '{}' already exists\"", name));
-    }
-    // Reconstruct the defining query as SQL text for storage
-    let view_sql = cv.query.to_string();
-    db.create_view(&name, &view_sql)?;
-    Ok(format!("\"View '{}' created\"", name))
-}
 
 // ── CREATE TABLE AS SELECT (CTAS) ──────────────────────────────────────
 
-fn exec_create_table_as(def: &sqlparser::ast::CreateTable, db: &mut Database) -> Result<String, String> {
-    let table_name = object_name_str(&def.name);
-
-    if def.if_not_exists && db.has_table(&table_name) {
-        return Ok(format!("\"Table '{}' already exists\"", table_name));
-    }
-
-    let query = def.query.as_ref().unwrap();
-    let json = exec_select(query, db)?;
-
-    let rows: Vec<Vec<serde_json::Value>> =
-        serde_json::from_str(&json).map_err(|e| format!("CTAS JSON parse: {}", e))?;
-
-    if rows.len() < 2 {
-        return Err("CTAS: SELECT returned no columns".into());
-    }
-
-    let header = &rows[0];
-    let mut columns: Vec<Column> = Vec::new();
-    for h in header {
-        let name = h.as_str().unwrap_or("col").to_lowercase();
-        columns.push(Column {
-            name,
-            dtype: ColumnType::String,
-            primary_key: false,
-            not_null: false,
-            default: None,
-            auto_increment: false,
-        });
-    }
-
-    let mut table = Table::new(table_name.clone(), columns)?;
-    for row_data in &rows[1..] {
-        let db_row: Vec<DbValue> = row_data.iter().map(json_val_to_dbvalue).collect();
-        table.insert(db_row).map_err(|e| format!("CTAS insert: {}", e))?;
-    }
-
-    db.create_table(&table_name, table)?;
-    Ok(format!(
-        "\"Table '{}' created with {} row(s)\"",
-        table_name,
-        rows.len() - 1
-    ))
-}
-
 // ── INSERT ──────────────────────────────────────────────────────────────
 
-fn exec_insert(ins: &sqlparser::ast::Insert, db: &mut Database) -> Result<String, String> {
-    let table_name = ins.table.to_string().to_lowercase();
-    let returning = ins.returning.clone();
-
-    // Parse source into expression rows — do this BEFORE borrowing table mutably
-    // since SetExpr::Select needs a mutable db reference via exec_select.
-    let on_conflict = ins.or;
-    let is_replace = matches!(on_conflict, Some(SqliteOnConflict::Replace)) || ins.replace_into;
-    let rows: Vec<Vec<Expr>> = match &ins.source {
-        Some(q) => match &*q.as_ref().body {
-            SetExpr::Values(Values { rows, .. }) => rows.iter().map(|parens| parens.content.clone()).collect(),
-            SetExpr::Select(s) => {
-                let sq = Query {
-                    with: None,
-                    body: Box::new(SetExpr::Select(s.clone())),
-                    order_by: None,
-                    limit_clause: None,
-                    fetch: None,
-                    locks: vec![],
-                    for_clause: None,
-                    settings: None,
-                    format_clause: None,
-                    pipe_operators: vec![],
-                };
-                let json = exec_select(&sq, db)?;
-                let parsed: Vec<Vec<serde_json::Value>> =
-                    serde_json::from_str(&json).map_err(|e| format!("SELECT parse: {}", e))?;
-                let to_val = |v: &serde_json::Value| -> Expr {
-                    use sqlparser::ast::Value as V;
-                    Expr::Value(
-                        match v {
-                            serde_json::Value::String(s) => V::SingleQuotedString(s.clone()),
-                            serde_json::Value::Number(n) => V::Number(
-                                n.as_i64()
-                                    .map_or_else(|| format!("{}", n.as_f64().unwrap_or(0.0)), |i| format!("{}", i)),
-                                false,
-                            ),
-                            serde_json::Value::Bool(b) => V::Boolean(*b),
-                            serde_json::Value::Null => V::Null,
-                            other => V::SingleQuotedString(format!("{}", other)),
-                        }
-                        .into(),
-                    )
-                };
-                parsed
-                    .iter()
-                    .skip(1)
-                    .map(|row| row.iter().map(to_val).collect())
-                    .collect()
-            }
-            _ => return Err("INSERT source must be VALUES or SELECT".into()),
-        },
-        None => return Err("INSERT must have a source".into()),
-    };
-
-    // Pre-collect FOREIGN KEY lookup data (foreign table pk_sets) before mutable table borrow
-    let fk_lookups: Vec<(String, HashSet<String>)> = {
-        let self_table = db.get_table(&table_name)?;
-        self_table
-            .foreign_keys
-            .iter()
-            .filter_map(|fk| {
-                db.get_table(&fk.foreign_table)
-                    .ok()
-                    .map(|t| (fk.local_column.clone(), t.pk_set.clone()))
-            })
-            .collect()
-    };
-
-    // Now we have the rows; borrow table for column mapping and insertion
-    let table = db.get_table_mut(&table_name)?;
-
-    // Pre-collect auto_increment indices before the row loop (avoids borrow conflicts)
-    let auto_inc_cols: Vec<usize> = table
-        .columns
-        .iter()
-        .enumerate()
-        .filter(|(_, c)| c.auto_increment)
-        .map(|(i, _)| i)
-        .collect();
-
-    let explicit_cols: Option<Vec<usize>> = if !ins.columns.is_empty() {
-        Some(
-            ins.columns
-                .iter()
-                .map(|col_name| {
-                    let name = object_name_str(col_name);
-                    table
-                        .col_idx(&name)
-                        .ok_or_else(|| format!("Unknown column '{}' in table '{}'", name, table_name))
-                })
-                .collect::<Result<Vec<usize>, String>>()?,
-        )
-    } else {
-        None
-    };
-
-    let mut inserted = 0usize;
-    let mut inserted_rows: Vec<Vec<DbValue>> = Vec::new();
-    for row_exprs in &rows {
-        let col_indices: &[usize] = match &explicit_cols {
-            Some(indices) => indices.as_slice(),
-            None => &(0..table.col_count()).collect::<Vec<_>>(),
-        };
-
-        if row_exprs.len() != col_indices.len() {
-            return Err(format!(
-                "Expected {} values, got {}",
-                col_indices.len(),
-                row_exprs.len()
-            ));
-        }
-
-        let mut full_row: Vec<DbValue> = (0..table.col_count()).map(|_| DbValue::Null).collect();
-        for (j, expr) in row_exprs.iter().enumerate() {
-            let col_idx = col_indices[j];
-            full_row[col_idx] = eval_literal_expr(expr)?;
-        }
-
-        // Apply AUTO_INCREMENT: fill NULL auto-inc columns with next sequence value
-        for ci in &auto_inc_cols {
-            if matches!(full_row[*ci], DbValue::Null) {
-                full_row[*ci] = DbValue::Int(table.next_auto_inc);
-                table.next_auto_inc += 1;
-            }
-        }
-
-        // Evaluate CHECK constraints
-        for check_expr in &table.check_constraints {
-            let check_val = eval_expr(check_expr, &full_row, &table.col_index)
-                .map_err(|e| format!("CHECK constraint error: {}", e))?;
-            if !is_truthy(&check_val) {
-                return Err("CHECK constraint failed for row".to_string());
-            }
-        }
-
-        // Validate FOREIGN KEY constraints using pre-collected pk_sets
-        for (local_col, ref_pks) in &fk_lookups {
-            if let Some(&col_idx) = table.col_index.get(local_col) {
-                let val = &full_row[col_idx];
-                if !matches!(val, DbValue::Null) {
-                    let pk_str = val.to_string().to_lowercase();
-                    if !ref_pks.contains(&pk_str) {
-                        return Err(format!(
-                            "FOREIGN KEY constraint: '{}' value '{}' not found in referenced table",
-                            local_col, pk_str
-                        ));
-                    }
-                }
-            }
-        }
-
-        let result = table.insert(full_row.clone());
-        match result {
-            Ok(()) => {
-                inserted += 1;
-                inserted_rows.push(full_row);
-            }
-            // INSERT OR IGNORE: skip conflicting row silently
-            Err(e) if matches!(on_conflict, Some(SqliteOnConflict::Ignore)) && e.contains("Duplicate primary key") => {
-                // ponytail: silently skip — row already exists
-            }
-            // INSERT OR ROLLBACK: rollback transaction on conflict
-            Err(e)
-                if matches!(on_conflict, Some(SqliteOnConflict::Rollback)) && e.contains("Duplicate primary key") =>
-            {
-                db.rollback();
-                return Err(e);
-            }
-            // INSERT OR REPLACE / INSERT OR REPLACE: delete and re-insert
-            Err(e) if is_replace && e.contains("Duplicate primary key") => {
-                // REPLACE: find the old row by PK and replace it
-                if let Some(pk_col) = table.columns.iter().position(|c| c.primary_key) {
-                    let pk_val = &full_row[pk_col];
-                    table.delete_by_pk(pk_val);
-                    inserted_rows.push(full_row.clone());
-                    table.insert(full_row)?;
-                    inserted += 1;
-                } else {
-                    return Err(e);
-                }
-            }
-            Err(e) if e.contains("Duplicate primary key") && ins.on.is_some() => {
-                // UPSERT: ON CONFLICT DO UPDATE or ON CONFLICT DO NOTHING
-                use sqlparser::ast::OnInsert;
-                match &ins.on {
-                    Some(OnInsert::OnConflict(oc)) => {
-                        match &oc.action {
-                            sqlparser::ast::OnConflictAction::DoNothing => {
-                                // Skip conflicting row silently
-                            }
-                            sqlparser::ast::OnConflictAction::DoUpdate(du) => {
-                                // Apply SET assignments to the existing row
-                                if let Some(pk_col) = table.columns.iter().position(|c| c.primary_key) {
-                                    let pk_val = &full_row[pk_col];
-                                    if let Some(row_idx) = table.rows.iter().position(|r| &r[pk_col] == pk_val) {
-                                        for assign in &du.assignments {
-                                            if let sqlparser::ast::AssignmentTarget::ColumnName(name) = &assign.target {
-                                                let col_name = name.to_string().to_lowercase();
-                                                if let Some(&ci) = table.col_index.get(&col_name) {
-                                                    let new_val = eval_expr(
-                                                        &assign.value,
-                                                        &table.rows[row_idx],
-                                                        &table.col_index,
-                                                    )
-                                                    .map_err(|_| format!("UPSERT: invalid expr for '{}'", col_name))?;
-                                                    table.rows[row_idx][ci] = new_val;
-                                                }
-                                            }
-                                        }
-                                        table.rebuild_index();
-                                        inserted += 1;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    _ => return Err(e),
-                }
-            }
-            Err(e) => return Err(e),
-        }
-    }
-
-    // Track last_insert_rowid and changes
-    let last_pk = db.get_table(&table_name).ok().and_then(|t| {
-        let pk_idx = t.columns.iter().position(|c| c.primary_key)?;
-        inserted_rows
-            .last()
-            .and_then(|row| row.get(pk_idx))
-            .map(|v| v.to_string())
-    });
-    db.last_insert_rowid = last_pk;
-    db.last_changes = inserted;
-    LAST_INSERT_ROWID.with(|r| *r.borrow_mut() = db.last_insert_rowid.clone());
-    LAST_CHANGES.with(|c| *c.borrow_mut() = inserted);
-
-    if let Some(returning) = &returning {
-        let table = db.get_table(&table_name)?;
-        let ref_rows: Vec<&[DbValue]> = inserted_rows.iter().map(|r| r.as_slice()).collect();
-        return Ok(format_projected_result(ref_rows, returning, &table.col_index, table));
-    }
-
-    fire_triggers(&table_name, "INSERT", db);
-    Ok(format!("\"Inserted {} row(s)\"", inserted))
-}
-
-/// Check if a SELECT projection contains any window function (OVER clause).
 fn has_window_function(projection: &[SelectItem]) -> bool {
     for item in projection {
         let func = match item {
@@ -1325,24 +925,35 @@ fn exec_select(query: &Query, db: &mut Database) -> Result<String, String> {
         filtered_rows
     };
 
-    // 3.5 DISTINCT — dedup by comparing projected values
+    // 3.5 DISTINCT — dedup by comparing projected values (or DISTINCT ON expressions)
     let deduped_rows: Vec<&[DbValue]> = if select.distinct.is_some() {
         let mut seen: Vec<Vec<DbValue>> = Vec::new();
+        let distinct_on_exprs: Option<Vec<Expr>> = match &select.distinct {
+            Some(Distinct::On(exprs)) => Some(exprs.clone()),
+            _ => None,
+        };
         grouped_rows
             .into_iter()
             .filter(|row| {
-                // For DISTINCT, compare the projected (selected) column values
-                let proj: Vec<DbValue> = select
-                    .projection
-                    .iter()
-                    .filter_map(|item| {
-                        if let SelectItem::UnnamedExpr(e) = item {
-                            eval_expr(e, row, &table.col_index).ok()
-                        } else {
-                            None
-                        }
-                    })
-                    .collect();
+                let proj: Vec<DbValue> = if let Some(on_exprs) = &distinct_on_exprs {
+                    // DISTINCT ON (expr1, expr2) — only compare these expressions
+                    on_exprs
+                        .iter()
+                        .filter_map(|e| eval_expr(e, row, &table.col_index).ok())
+                        .collect()
+                } else {
+                    select
+                        .projection
+                        .iter()
+                        .filter_map(|item| {
+                            if let SelectItem::UnnamedExpr(e) = item {
+                                eval_expr(e, row, &table.col_index).ok()
+                            } else {
+                                None
+                            }
+                        })
+                        .collect()
+                };
                 if seen.contains(&proj) {
                     false
                 } else {
@@ -1389,7 +1000,7 @@ fn exec_select(query: &Query, db: &mut Database) -> Result<String, String> {
 }
 
 /// Format SELECT results, projecting to only the requested columns.
-fn format_projected_result(
+pub(crate) fn format_projected_result(
     rows: Vec<&[DbValue]>,
     projection: &[SelectItem],
     col_map: &HashMap<String, usize>,
@@ -1911,379 +1522,18 @@ fn eval_expr_on_flat_row(expr: &Expr, row: &[DbValue], col_map: &HashMap<String,
 }
 
 /// Check if SELECT has a GROUP BY clause.
-fn has_group_by(select: &Select) -> bool {
-    use sqlparser::ast::GroupByExpr;
-    match &select.group_by {
-        GroupByExpr::Expressions(exprs, _) => !exprs.is_empty(),
-        GroupByExpr::All(_) => true,
-    }
-}
-
-/// Check if SELECT projection contains aggregate functions.
-fn has_aggregate(projection: &[SelectItem]) -> bool {
-    for item in projection {
-        let expr = match item {
-            SelectItem::UnnamedExpr(e) => e,
-            SelectItem::ExprWithAlias { expr, .. } => expr,
-            _ => continue,
-        };
-        if contains_aggregate(expr) {
-            return true;
-        }
-    }
-    false
-}
-
-fn contains_aggregate(expr: &Expr) -> bool {
-    match expr {
-        Expr::Function(f) => {
-            let name = f.name.to_string().to_lowercase();
-            matches!(name.as_str(), "count" | "sum" | "avg" | "min" | "max" | "group_concat")
-        }
-        Expr::Nested(inner) => contains_aggregate(inner),
-        _ => false,
-    }
-}
-
-/// Resolve GROUP BY identifiers against SELECT aliases.
-/// `SELECT qty > 50 AS high_qty ... GROUP BY high_qty` → replaces `high_qty` with `qty > 50`.
-fn resolve_group_by_aliases(select: &Select) -> Vec<Expr> {
-    let exprs = group_by_exprs(select).unwrap_or(&[]);
-    let mut alias_map: HashMap<String, Expr> = HashMap::new();
-    for item in &select.projection {
-        if let SelectItem::ExprWithAlias { expr, alias } = item {
-            alias_map.insert(alias.value.clone(), expr.clone());
-        }
-    }
-    if alias_map.is_empty() {
-        return exprs.to_vec();
-    }
-    exprs
-        .iter()
-        .map(|e| {
-            if let Expr::Identifier(ident) = e {
-                if let Some(resolved) = alias_map.get(ident.value.as_str()) {
-                    resolved.clone()
-                } else {
-                    e.clone()
-                }
-            } else {
-                e.clone()
-            }
-        })
-        .collect()
-}
-
-/// Partition filtered rows into groups by GROUP BY columns.
-/// Returns a Vec of groups, where each group is a Vec of row references.
-fn partition_by_group<'a>(
-    rows: &[&'a [DbValue]],
-    select: &Select,
-    col_map: &HashMap<String, usize>,
-) -> Result<Vec<Vec<&'a [DbValue]>>, String> {
-    let exprs = resolve_group_by_aliases(select);
-    let mut groups: Vec<Vec<&[DbValue]>> = Vec::new();
-    let mut keys: Vec<Vec<DbValue>> = Vec::new();
-
-    'rows: for row in rows {
-        let key: Result<Vec<DbValue>, String> = exprs.iter().map(|e| eval_expr(e, row, col_map)).collect();
-        let key = key?;
-
-        for (i, existing_key) in keys.iter().enumerate() {
-            if keys_equal(&key, existing_key) {
-                groups[i].push(row);
-                continue 'rows;
-            }
-        }
-        keys.push(key);
-        groups.push(vec![row]);
-    }
-
-    Ok(groups)
-}
-
-fn group_by_exprs(select: &Select) -> Result<&[Expr], String> {
-    use sqlparser::ast::GroupByExpr;
-    match &select.group_by {
-        GroupByExpr::Expressions(exprs, _) => Ok(exprs.as_slice()),
-        GroupByExpr::All(_) => Err("GROUP BY ALL not supported".into()),
-    }
-}
-
-fn keys_equal(a: &[DbValue], b: &[DbValue]) -> bool {
-    a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x == y)
-}
-
-/// Compute aggregate functions over partitions (groups) of rows.
-fn compute_aggregates(
-    partitions: &[Vec<&[DbValue]>],
-    projection: &[SelectItem],
-    col_map: &HashMap<String, usize>,
-) -> Result<String, String> {
-    if partitions.is_empty() {
-        return Ok("[]".to_string());
-    }
-
-    // Build header from projection
-    let mut header = Vec::new();
-    for item in projection {
-        match item {
-            SelectItem::UnnamedExpr(expr) => header.push(projection_expr_name(expr)),
-            SelectItem::ExprWithAlias { alias, .. } => header.push(alias.value.to_string()),
-            _ => return Err("Unsupported SELECT item in aggregate query".into()),
-        }
-    }
-
-    // Compute one row per partition
-    let rows_json: Vec<String> = partitions
-        .iter()
-        .map(|group| {
-            let cells: Vec<String> = projection
-                .iter()
-                .map(|item| {
-                    let expr = match item {
-                        SelectItem::UnnamedExpr(e) => e,
-                        SelectItem::ExprWithAlias { expr, .. } => expr,
-                        _ => return "null".to_string(),
-                    };
-                    eval_projection_expr(expr, group, col_map)
-                        .map(|(_, v)| v.to_json_string())
-                        .unwrap_or_else(|_| "null".to_string())
-                })
-                .collect();
-            format!("[{}]", cells.join(","))
-        })
-        .collect();
-
-    let header_json: String = header
-        .iter()
-        .map(|h| format!("\"{}\"", h))
-        .collect::<Vec<_>>()
-        .join(",");
-    Ok(format!("[[{}],{}]", header_json, rows_json.join(",")))
-}
-
-fn projection_expr_name(expr: &Expr) -> String {
-    match expr {
-        Expr::Function(f) => f.name.to_string().to_uppercase(),
-        Expr::Identifier(ident) => ident.value.to_lowercase(),
-        _ => "EXPR".to_string(),
-    }
-}
-
-/// Evaluate a projection expression (handles aggregates vs regular expressions).
-fn eval_projection_expr(
-    expr: &Expr,
-    rows: &[&[DbValue]],
-    col_map: &HashMap<String, usize>,
-) -> Result<(String, DbValue), String> {
-    // DBG
-    match expr {
-        Expr::Function(f) => {
-            let name = f.name.to_string().to_lowercase();
-            match name.as_str() {
-                "group_concat" => {
-                    let arg = extract_func_arg(f)?;
-                    let separator = {
-                        // Check for second argument (separator)
-                        let sep = match &f.args {
-                            sqlparser::ast::FunctionArguments::List(list) if list.args.len() >= 2 => list
-                                .args
-                                .get(1)
-                                .and_then(|a| get_func_arg_unnamed(a).ok())
-                                .and_then(|e| eval_literal_expr(e).ok())
-                                .map(|v| value_to_string(&v)),
-                            _ => None,
-                        };
-                        sep.unwrap_or_else(|| ",".to_string())
-                    };
-                    let mut vals: Vec<String> = Vec::new();
-                    for r in rows {
-                        if let Ok(val) = eval_expr(arg, r, col_map) {
-                            if !matches!(val, DbValue::Null) {
-                                vals.push(value_to_string(&val));
-                            }
-                        }
-                    }
-                    Ok(("GROUP_CONCAT".to_string(), DbValue::String(vals.join(&separator))))
-                }
-                "count" => {
-                    let is_distinct = matches!(
-                        f.args,
-                        sqlparser::ast::FunctionArguments::List(ref list)
-                            if list.duplicate_treatment == Some(sqlparser::ast::DuplicateTreatment::Distinct)
-                    );
-                    let count = if is_distinct {
-                        let mut seen: Vec<DbValue> = Vec::new();
-                        for r in rows {
-                            if let Ok(arg) = extract_func_arg(f) {
-                                if let Ok(val) = eval_expr(arg, r, col_map) {
-                                    if !seen.contains(&val) {
-                                        seen.push(val);
-                                    }
-                                }
-                            }
-                        }
-                        DbValue::Int(seen.len() as i64)
-                    } else {
-                        DbValue::Int(rows.len() as i64)
-                    };
-                    Ok(("COUNT".to_string(), count))
-                }
-                "sum" => {
-                    let val = aggregate_sum(f, rows, col_map)?;
-                    Ok(("SUM".to_string(), val))
-                }
-                "avg" => {
-                    let val = aggregate_avg(f, rows, col_map)?;
-                    Ok(("AVG".to_string(), val))
-                }
-                "min" => {
-                    let val = aggregate_min(f, rows, col_map)?;
-                    Ok(("MIN".to_string(), val))
-                }
-                "max" => {
-                    let val = aggregate_max(f, rows, col_map)?;
-                    Ok(("MAX".to_string(), val))
-                }
-                _ => {
-                    // ponytail: unknown function, evaluate as expression on group
-                    let val = eval_expr_on_group(expr, rows, col_map)?;
-                    Ok((format!("{}", f.name), val))
-                }
-            }
-        }
-        Expr::Identifier(ident) => {
-            // Regular column — use first row's value
-            let val = if rows.is_empty() {
-                DbValue::Null
-            } else {
-                let idx = col_map
-                    .get(&ident.value.to_lowercase())
-                    .ok_or_else(|| format!("Unknown column '{}'", ident.value))?;
-                rows[0][*idx].clone()
-            };
-            Ok((ident.value.to_lowercase(), val))
-        }
-        _ => {
-            let val = eval_expr_on_group(expr, rows, col_map)?;
-            Ok(("expr".to_string(), val))
-        }
-    }
-}
-
-/// Evaluate an expression on a group of rows. For non-aggregate columns, uses first row.
-fn eval_expr_on_group(expr: &Expr, rows: &[&[DbValue]], col_map: &HashMap<String, usize>) -> Result<DbValue, String> {
-    // For aggregate queries, non-aggregate columns use the first row's value
-    if rows.is_empty() {
-        return Ok(DbValue::Null);
-    }
-    eval_expr(expr, rows[0], col_map)
-}
-
-fn aggregate_sum(func: &Function, rows: &[&[DbValue]], col_map: &HashMap<String, usize>) -> Result<DbValue, String> {
-    let arg = extract_func_arg(func)?;
-    if rows.is_empty() {
-        return Ok(DbValue::Null);
-    }
-    let first = eval_expr_on_group(arg, rows, col_map)?;
-    match first {
-        DbValue::Int(..) => {
-            let sum: i64 = rows
-                .iter()
-                .filter_map(|r| {
-                    eval_expr(arg, r, col_map).ok().and_then(|v| match v {
-                        DbValue::Int(n) => Some(n),
-                        _ => None,
-                    })
-                })
-                .sum();
-            Ok(DbValue::Int(sum))
-        }
-        DbValue::Float(..) => {
-            let sum: f64 = rows
-                .iter()
-                .filter_map(|r| {
-                    eval_expr(arg, r, col_map).ok().and_then(|v| match v {
-                        DbValue::Float(f) => Some(f),
-                        DbValue::Int(n) => Some(n as f64),
-                        _ => None,
-                    })
-                })
-                .sum();
-            Ok(DbValue::Float(sum))
-        }
-        _ => Err("SUM requires numeric column".into()),
-    }
-}
-
-fn aggregate_avg(func: &Function, rows: &[&[DbValue]], col_map: &HashMap<String, usize>) -> Result<DbValue, String> {
-    let arg = extract_func_arg(func)?;
-    if rows.is_empty() {
-        return Ok(DbValue::Null);
-    }
-    let mut sum = 0.0f64;
-    let mut count = 0usize;
-    for r in rows {
-        if let Ok(v) = eval_expr(arg, r, col_map) {
-            match v {
-                DbValue::Int(n) => {
-                    sum += n as f64;
-                    count += 1;
-                }
-                DbValue::Float(f) => {
-                    sum += f;
-                    count += 1;
-                }
-                _ => {}
-            }
-        }
-    }
-    if count == 0 {
-        Ok(DbValue::Null)
-    } else {
-        Ok(DbValue::Float(sum / count as f64))
-    }
-}
-
-fn aggregate_min(func: &Function, rows: &[&[DbValue]], col_map: &HashMap<String, usize>) -> Result<DbValue, String> {
-    let arg = extract_func_arg(func)?;
-    rows.iter()
-        .filter_map(|r| eval_expr(arg, r, col_map).ok())
-        .min_by(db_value_cmp)
-        .ok_or_else(|| "MIN on empty set".into())
-}
-
-fn aggregate_max(func: &Function, rows: &[&[DbValue]], col_map: &HashMap<String, usize>) -> Result<DbValue, String> {
-    let arg = extract_func_arg(func)?;
-    rows.iter()
-        .filter_map(|r| eval_expr(arg, r, col_map).ok())
-        .max_by(db_value_cmp)
-        .ok_or_else(|| "MAX on empty set".into())
-}
-
 /// Compare DbValues: numeric comparison when both are numbers, string comparison otherwise.
-fn db_value_cmp(a: &DbValue, b: &DbValue) -> std::cmp::Ordering {
+pub(crate) fn db_value_cmp(a: &DbValue, b: &DbValue) -> std::cmp::Ordering {
     match (to_float(a), to_float(b)) {
         (Some(x), Some(y)) => x.partial_cmp(&y).unwrap_or(std::cmp::Ordering::Equal),
         _ => value_to_string(a).cmp(&value_to_string(b)),
     }
 }
 
-/// Extract the first argument expression from a function.
-fn extract_func_arg(func: &Function) -> Result<&Expr, String> {
-    let args = match &func.args {
-        FunctionArguments::List(list) => &list.args,
-        _ => return Err("Function requires argument list".into()),
-    };
-    if args.is_empty() {
-        return Err("Function requires argument".into());
-    }
-    get_func_arg_unnamed(&args[0])
-}
+// Moved to functions/eval.rs: extract_func_arg
 
 /// ORDER BY sorting
-fn sort_rows<'a>(
+pub(crate) fn sort_rows<'a>(
     mut rows: Vec<&'a [DbValue]>,
     order_by: &[sqlparser::ast::OrderByExpr],
     col_map: &HashMap<String, usize>,
@@ -2310,7 +1560,7 @@ fn sort_rows<'a>(
 }
 
 /// Apply LIMIT and OFFSET.
-fn apply_limit_offset<'a>(
+pub(crate) fn apply_limit_offset<'a>(
     rows: Vec<&'a [DbValue]>,
     limit_clause: &Option<LimitClause>,
 ) -> Result<Vec<&'a [DbValue]>, String> {
@@ -2337,7 +1587,7 @@ fn apply_limit_offset<'a>(
     Ok(rows[start..end].to_vec())
 }
 
-fn parse_expr_as_usize(expr: Option<&Expr>) -> Option<usize> {
+pub(crate) fn parse_expr_as_usize(expr: Option<&Expr>) -> Option<usize> {
     let expr = expr?;
     if let Expr::Value(v) = expr {
         if let sqlparser::ast::Value::Number(s, _) = &v.value {
@@ -2349,497 +1599,13 @@ fn parse_expr_as_usize(expr: Option<&Expr>) -> Option<usize> {
 
 // ── UPDATE ──────────────────────────────────────────────────────────────
 
-fn exec_update(upd: &sqlparser::ast::Update, db: &mut Database) -> Result<String, String> {
-    let table_name = resolve_table_from_joins(&upd.table)?;
-    let returning = upd.returning.clone();
-    let table = db.get_table_mut(&table_name)?;
-
-    let where_expr = upd.selection.as_ref();
-
-    // Collect row indices to update
-    let indices: Vec<usize> = {
-        let mut idxs = Vec::new();
-        for (i, row) in table.rows.iter().enumerate() {
-            let matches = match where_expr {
-                Some(expr) => is_truthy(&eval_expr(expr, row, &table.col_index)?),
-                None => true,
-            };
-            if matches {
-                idxs.push(i);
-            }
-        }
-        idxs
-    };
-
-    // Pre-resolve column indices to avoid borrow conflict
-    let assign_indices: Vec<(usize, &Expr)> = upd
-        .assignments
-        .iter()
-        .map(|assign| {
-            let col_name = assign.target.to_string().to_lowercase();
-            let idx = table
-                .col_idx(&col_name)
-                .ok_or_else(|| format!("Unknown column '{}'", col_name))?;
-            Ok((idx, &assign.value))
-        })
-        .collect::<Result<Vec<_>, String>>()?;
-
-    // Collect all assignments and validate CHECK constraints upfront
-    let mut updates: Vec<(usize, usize, DbValue)> = Vec::new();
-
-    for i in &indices {
-        for (col_ci, val_expr) in &assign_indices {
-            let new_val = eval_literal_expr(val_expr)?;
-            updates.push((*i, *col_ci, new_val));
-        }
-    }
-
-    // Validate CHECK constraints for each updated row (drop table borrow first)
-    let validated_updates = {
-        let t = db.get_table(&table_name)?;
-        updates
-            .iter()
-            .filter_map(|(row_i, col_ci, val)| {
-                let mut row = t.rows[*row_i].clone();
-                row[*col_ci] = val.clone();
-                for expr in &t.check_constraints {
-                    let v = eval_expr(expr, &row, &t.col_index).ok()?;
-                    if !is_truthy(&v) {
-                        return Some(Err("CHECK constraint failed"));
-                    }
-                }
-                Some(Ok((*row_i, *col_ci, val.clone())))
-            })
-            .collect::<Result<Vec<(usize, usize, DbValue)>, &str>>()
-    }?;
-
-    // Validate FOREIGN KEY constraints for each update
-    // Pre-collect PK update cascade data (must outlive the immutable borrow block)
-    let mut pk_cascade_queue: Vec<(String, usize, String, DbValue)> = Vec::new();
-    {
-        let t = db.get_table(&table_name)?;
-        // Pre-collect FK lookup data: local_column → (foreign_table, pk_set)
-        let fk_lookups: Vec<(String, HashSet<String>)> = t
-            .foreign_keys
-            .iter()
-            .filter_map(|fk| {
-                db.get_table(&fk.foreign_table)
-                    .ok()
-                    .map(|ref_t| (fk.local_column.clone(), ref_t.pk_set.clone()))
-            })
-            .collect();
-        // Pre-collect referencing tables for PK updates (RESTRICT)
-        let pk_col_idx = t.columns.iter().position(|c| c.primary_key);
-        let fk_refs: Vec<(String, usize)> = if pk_col_idx.is_some() {
-            let names: Vec<String> = db.table_names().iter().map(|s| s.to_string()).collect();
-            let mut refs = Vec::new();
-            for tn in &names {
-                if tn == &table_name {
-                    continue;
-                }
-                if let Ok(child) = db.get_table(tn) {
-                    for fk in &child.foreign_keys {
-                        if fk.foreign_table == table_name {
-                            if let Some(&ci) = child.col_index.get(&fk.local_column) {
-                                refs.push((tn.to_string(), ci));
-                            }
-                        }
-                    }
-                }
-            }
-            refs
-        } else {
-            Vec::new()
-        };
-
-        for (row_i, col_ci, val) in &validated_updates {
-            // (a) FK local column update: new value must exist in referenced table
-            for (local_col, ref_pks) in &fk_lookups {
-                if let Some(&local_ci) = t.col_index.get(local_col) {
-                    if *col_ci == local_ci && !matches!(val, DbValue::Null) {
-                        let val_str = val.to_string().to_lowercase();
-                        if !ref_pks.contains(&val_str) {
-                            return Err(format!(
-                                "FOREIGN KEY constraint: '{}' value '{}' not found in referenced table",
-                                local_col, val_str
-                            ));
-                        }
-                    }
-                }
-            }
-            // (b) PK column update: collect CASCADE info during immutable phase
-            if let Some(pk_ci) = pk_col_idx {
-                if *col_ci == pk_ci {
-                    let old_val = t.rows[*row_i][pk_ci].to_string().to_lowercase();
-                    let new_val_cascade = val.clone();
-                    // (use outer pk_cascade_queue)
-                    for (ref_table, ref_col_idx) in &fk_refs {
-                        let child = db.get_table(ref_table)?;
-                        let on_update = child
-                            .foreign_keys
-                            .iter()
-                            .find(|fk| {
-                                fk.foreign_table == table_name
-                                    && child.col_index.get(&fk.local_column) == Some(ref_col_idx)
-                            })
-                            .and_then(|fk| fk.on_update);
-                        let has_ref = child
-                            .rows
-                            .iter()
-                            .any(|r| r[*ref_col_idx].to_string().to_lowercase() == old_val);
-                        if has_ref {
-                            match on_update {
-                                Some(ReferentialAction::Cascade) => {
-                                    pk_cascade_queue.push((
-                                        ref_table.clone(),
-                                        *ref_col_idx,
-                                        old_val.clone(),
-                                        new_val_cascade.clone(),
-                                    ));
-                                }
-                                _ => {
-                                    return Err(format!(
-                                        "FOREIGN KEY constraint violation: '{}' has reference to '{}' in '{}'",
-                                        ref_table, old_val, table_name
-                                    ));
-                                }
-                            }
-                        }
-                    }
-                    // Apply CASCADE after immutable block (see note after block close)
-                }
-            }
-        }
-    }
-
-    // Apply PK CASCADE updates to child rows (after immutable borrow is dropped)
-    for (ref_table, ref_col_idx, old_val, new_val) in &pk_cascade_queue {
-        if let Ok(child) = db.get_table_mut(ref_table) {
-            for row in &mut child.rows {
-                let child_val = row[*ref_col_idx].to_string().to_lowercase();
-                if child_val == *old_val {
-                    row[*ref_col_idx] = new_val.clone();
-                }
-            }
-        }
-    }
-
-    // Capture old rows for RETURNING (before applying updates)
-    let old_rows: Vec<Vec<DbValue>> = if returning.is_some() {
-        let t = db.get_table(&table_name)?;
-        let mut seen = HashSet::new();
-        validated_updates
-            .iter()
-            .filter(|(row_i, _, _)| seen.insert(*row_i))
-            .map(|(row_i, _, _)| t.rows[*row_i].clone())
-            .collect()
-    } else {
-        Vec::new()
-    };
-
-    let t = db.get_table_mut(&table_name)?;
-    for (row_i, col_ci, val) in &validated_updates {
-        t.update_cell(*row_i, *col_ci, val.clone());
-    }
-    drop(t);
-    db.last_changes = validated_updates.len();
-    LAST_CHANGES.with(|c| *c.borrow_mut() = validated_updates.len());
-
-    if let Some(returning) = &returning {
-        let table = db.get_table(&table_name)?;
-        let ref_rows: Vec<&[DbValue]> = old_rows.iter().map(|r| r.as_slice()).collect();
-        return Ok(format_projected_result(ref_rows, returning, &table.col_index, table));
-    }
-
-    fire_triggers(&table_name, "UPDATE", db);
-    Ok(format!("\"Updated {} row(s)\"", validated_updates.len()))
-}
-
 // ── DELETE ──────────────────────────────────────────────────────────────
 
-fn exec_delete(del: &sqlparser::ast::Delete, db: &mut Database) -> Result<String, String> {
-    // Table name is in `from` (FromTable), not `tables` (MySQL multi-table)
-    use sqlparser::ast::FromTable;
-    let table_name = match &del.from {
-        FromTable::WithFromKeyword(tables) | FromTable::WithoutKeyword(tables) => match tables.first() {
-            Some(tj) => match &tj.relation {
-                TableFactor::Table { name, .. } => object_name_str(name),
-                _ => return Err("DELETE: only simple table references supported".into()),
-            },
-            None => return Err("DELETE must specify a table".into()),
-        },
-    };
-
-    let returning = del.returning.clone();
-
-    // Clone col_index to avoid borrow conflict with table.delete()
-    let col_idx = db.get_table(&table_name)?.col_index.clone();
-    let pred = del.selection.clone();
-
-    // Collect referencing tables with FK pointing to this table
-    let fk_refs: Vec<(String, usize)> = {
-        let names: Vec<&str> = db.table_names();
-        let mut refs = Vec::new();
-        for tn in names {
-            if let Ok(t) = db.get_table(tn) {
-                if tn == table_name {
-                    continue;
-                }
-                for fk in &t.foreign_keys {
-                    if fk.foreign_table == table_name {
-                        if let Some(&ci) = t.col_index.get(&fk.local_column) {
-                            refs.push((tn.to_string(), ci));
-                        }
-                    }
-                }
-            }
-        }
-        refs
-    };
-
-    // Collect PK values of rows matched for deletion (needed for FK validation)
-    let deleted_pks: Vec<(usize, String)> = {
-        let pk_idx = db.get_table(&table_name)?.columns.iter().position(|c| c.primary_key);
-        match pk_idx {
-            Some(pi) => {
-                let t = db.get_table(&table_name)?;
-                match &pred {
-                    Some(expr) => t
-                        .rows
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, row)| eval_expr(expr, row, &col_idx).map(|v| is_truthy(&v)).unwrap_or(false))
-                        .map(|(i, row)| (i, row[pi].to_string().to_lowercase()))
-                        .collect(),
-                    None => t
-                        .rows
-                        .iter()
-                        .enumerate()
-                        .map(|(i, row)| (i, row[pi].to_string().to_lowercase()))
-                        .collect(),
-                }
-            }
-            None => Vec::new(),
-        }
-    };
-
-    // Validate FK before deleting — CASCADE, SET NULL, or RESTRICT
-    for (ref_table, ref_col_idx) in &fk_refs {
-        let fk_info = {
-            let t = db.get_table(ref_table)?;
-            t.foreign_keys
-                .iter()
-                .find(|fk| fk.foreign_table == table_name && t.col_index.get(&fk.local_column) == Some(ref_col_idx))
-                .cloned()
-        };
-        let on_delete = fk_info.as_ref().and_then(|f| f.on_delete);
-
-        match on_delete {
-            Some(ReferentialAction::Cascade) => {
-                // Delete child rows referencing the deleted PKs
-                let child_pks_to_delete: Vec<String> = {
-                    let t = db.get_table(ref_table)?;
-                    let pk_idx = t.columns.iter().position(|c| c.primary_key);
-                    t.rows
-                        .iter()
-                        .filter(|row| {
-                            let child_val = row[*ref_col_idx].to_string().to_lowercase();
-                            deleted_pks.iter().any(|(_, pk)| *pk == child_val)
-                        })
-                        .map(|row| pk_idx.map(|pi| row[pi].to_string().to_lowercase()).unwrap_or_default())
-                        .collect()
-                };
-                for child_pk in &child_pks_to_delete {
-                    if child_pk.is_empty() {
-                        continue;
-                    }
-                    let child_table = db.get_table_mut(ref_table)?;
-                    let pk_idx = child_table.columns.iter().position(|c| c.primary_key);
-                    if let Some(pi) = pk_idx {
-                        child_table.delete(|row| row[pi].to_string().to_lowercase() == *child_pk);
-                    }
-                }
-            }
-            Some(ReferentialAction::SetNull) => {
-                // Set FK column to NULL in child rows
-                if let Ok(child_table) = db.get_table_mut(ref_table) {
-                    for row in &mut child_table.rows {
-                        let child_val = row[*ref_col_idx].to_string().to_lowercase();
-                        if deleted_pks.iter().any(|(_, pk)| *pk == child_val) {
-                            row[*ref_col_idx] = DbValue::Null;
-                        }
-                    }
-                }
-            }
-            _ => {
-                // RESTRICT / NO ACTION / None — reject
-                let t = db.get_table(ref_table)?;
-                let ref_pk_set: HashSet<String> = t
-                    .rows
-                    .iter()
-                    .map(|row| row[*ref_col_idx].to_string().to_lowercase())
-                    .collect();
-                for (_, pk_val) in &deleted_pks {
-                    if ref_pk_set.contains(pk_val) {
-                        return Err(format!(
-                            "FOREIGN KEY constraint violation: '{}' references '{}'",
-                            ref_table, pk_val
-                        ));
-                    }
-                }
-            }
-        }
-    }
-
-    // Capture old rows for RETURNING (before deletion)
-    let old_rows: Vec<Vec<DbValue>> = if returning.is_some() {
-        let t = db.get_table(&table_name)?;
-        match &pred {
-            Some(expr) => t
-                .rows
-                .iter()
-                .filter(|row| eval_expr(expr, row, &col_idx).map(|v| is_truthy(&v)).unwrap_or(false))
-                .cloned()
-                .collect(),
-            None => t.rows.to_vec(),
-        }
-    } else {
-        Vec::new()
-    };
-
-    let table = db.get_table_mut(&table_name)?;
-    let count = match pred {
-        Some(expr) => table.delete(|row| eval_expr(&expr, row, &col_idx).map(|v| is_truthy(&v)).unwrap_or(false)),
-        None => table.delete(|_| true),
-    };
-    drop(table);
-    db.last_changes = count;
-    LAST_CHANGES.with(|c| *c.borrow_mut() = count);
-
-    if let Some(returning) = &returning {
-        let table = db.get_table(&table_name)?;
-        let ref_rows: Vec<&[DbValue]> = old_rows.iter().map(|r| r.as_slice()).collect();
-        return Ok(format_projected_result(ref_rows, returning, &table.col_index, table));
-    }
-
-    fire_triggers(&table_name, "DELETE", db);
-    Ok(format!("\"Deleted {} row(s)\"", count))
-}
-
 // ── Expression evaluator ────────────────────────────────────────────────
-
-pub(crate) fn eval_expr(expr: &Expr, row: &[DbValue], col_map: &HashMap<String, usize>) -> Result<DbValue, String> {
-    match expr {
-        Expr::Identifier(ident) => {
-            let name = ident.value.to_lowercase();
-            if name == "current_timestamp" || name == "current_time" {
-                return Ok(now_value());
-            }
-            if name == "current_date" {
-                return Ok(curdate_value());
-            }
-            let idx = col_map.get(&name).ok_or_else(|| format!("Unknown column '{}'", name))?;
-            Ok(row[*idx].clone())
-        }
-        Expr::Value(v) => Ok(sql_val_to_db(v)),
-        Expr::BinaryOp { left, op, right } => {
-            let l = eval_expr(left, row, col_map)?;
-            let r = eval_expr(right, row, col_map)?;
-            apply_binary_op(&l, op, &r)
-        }
-        Expr::UnaryOp { op, expr } => {
-            let val = eval_expr(expr, row, col_map)?;
-            apply_unary_op(op, &val)
-        }
-        Expr::Nested(inner) => eval_expr(inner, row, col_map),
-        Expr::IsNull(expr) => {
-            let val = eval_expr(expr, row, col_map)?;
-            Ok(DbValue::Bool(matches!(val, DbValue::Null)))
-        }
-        Expr::IsNotNull(expr) => {
-            let val = eval_expr(expr, row, col_map)?;
-            Ok(DbValue::Bool(!matches!(val, DbValue::Null)))
-        }
-        Expr::Like {
-            negated, expr, pattern, ..
-        } => {
-            let val = eval_expr(expr, row, col_map)?;
-            let pat = eval_expr(pattern, row, col_map)?;
-            let matched = simple_like(&value_to_string(&val), &value_to_string(&pat));
-            Ok(DbValue::Bool(if *negated { !matched } else { matched }))
-        }
-        Expr::InList { expr, list, negated } => {
-            let val = eval_expr(expr, row, col_map)?;
-            let mut found = false;
-            for item in list {
-                let item_val = eval_expr(item, row, col_map)?;
-                if val == item_val {
-                    found = true;
-                    break;
-                }
-            }
-            Ok(DbValue::Bool(if *negated { !found } else { found }))
-        }
-        Expr::Function(func) => exec_function(func, row, col_map),
-        Expr::InSubquery {
-            expr,
-            subquery,
-            negated,
-        } => {
-            let val = eval_expr(expr, row, col_map)?;
-            let subq_result = exec_subquery(subquery)?;
-            let found = subq_result.contains(&val);
-            Ok(DbValue::Bool(if *negated { !found } else { found }))
-        }
-        Expr::Case {
-            operand,
-            conditions,
-            else_result,
-            ..
-        } => {
-            let operand_val = operand.as_ref().map(|o| eval_expr(o, row, col_map)).transpose()?;
-            for cw in conditions.iter() {
-                let matched = match &operand_val {
-                    Some(ref op_val) => *op_val == eval_expr(&cw.condition, row, col_map)?,
-                    None => is_truthy(&eval_expr(&cw.condition, row, col_map)?),
-                };
-                if matched {
-                    return eval_expr(&cw.result, row, col_map);
-                }
-            }
-            match else_result {
-                Some(expr) => eval_expr(expr, row, col_map),
-                None => Ok(DbValue::Null),
-            }
-        }
-        Expr::Between {
-            expr,
-            low,
-            high,
-            negated,
-        } => {
-            let val = eval_expr(expr, row, col_map)?;
-            let l = eval_expr(low, row, col_map)?;
-            let h = eval_expr(high, row, col_map)?;
-            use std::cmp::Ordering;
-            let ge = db_value_cmp(&val, &l) != Ordering::Less;
-            let le = db_value_cmp(&val, &h) != Ordering::Greater;
-            Ok(DbValue::Bool(if *negated { !(ge && le) } else { ge && le }))
-        }
-        Expr::Exists { subquery, negated } => {
-            let vals = exec_subquery(subquery)?;
-            Ok(DbValue::Bool(if *negated { vals.is_empty() } else { !vals.is_empty() }))
-        }
-        Expr::Cast { expr, data_type, .. } => {
-            let val = eval_expr(expr, row, col_map)?;
-            cast_db_value(val, data_type)
-        }
-        _ => Err(format!("Unsupported expression: {:?}", expr)),
-    }
-}
+// Moved to functions/eval.rs: eval_expr
 
 /// Convert a serde_json::Value to DbValue for CTE row processing.
-fn json_val_to_dbvalue(v: &serde_json::Value) -> DbValue {
+pub(crate) fn json_val_to_dbvalue(v: &serde_json::Value) -> DbValue {
     match v {
         serde_json::Value::Null => DbValue::Null,
         serde_json::Value::Bool(b) => DbValue::Bool(*b),
@@ -2870,589 +1636,10 @@ fn json_type_to_column(v: &serde_json::Value) -> ColumnType {
     }
 }
 
-/// CAST a DbValue to the target sqlparser DataType.
-fn cast_db_value(val: DbValue, target: &DataType) -> Result<DbValue, String> {
-    use sqlparser::ast::DataType as DT;
-    match target {
-        DT::Bool | DT::Boolean => match val {
-            DbValue::Bool(b) => Ok(DbValue::Bool(b)),
-            DbValue::Int(i) => Ok(DbValue::Bool(i != 0)),
-            DbValue::Float(_) => Ok(DbValue::Bool(true)),
-            DbValue::String(s) => {
-                let lower = s.to_lowercase();
-                match lower.as_str() {
-                    "true" | "1" | "yes" => Ok(DbValue::Bool(true)),
-                    "false" | "0" | "no" => Ok(DbValue::Bool(false)),
-                    _ => Err(format!("Cannot cast '{}' to BOOL", s)),
-                }
-            }
-            DbValue::Null => Ok(DbValue::Null),
-            _ => Err(format!("Cannot cast {:?} to BOOL", val)),
-        },
-        DT::Int(_) | DT::BigInt(_) | DT::SmallInt(_) | DT::TinyInt(_) => match val {
-            DbValue::Int(i) => Ok(DbValue::Int(i)),
-            DbValue::Float(f) => Ok(DbValue::Int(f as i64)),
-            DbValue::String(s) => {
-                let trimmed = s.trim();
-                if trimmed.is_empty() {
-                    Ok(DbValue::Int(0))
-                } else {
-                    trimmed
-                        .parse::<i64>()
-                        .map(DbValue::Int)
-                        .map_err(|_| format!("Cannot cast '{}' to INT", s))
-                }
-            }
-            DbValue::Bool(b) => Ok(DbValue::Int(if b { 1 } else { 0 })),
-            DbValue::Null => Ok(DbValue::Null),
-            _ => Err(format!("Cannot cast {:?} to INT", val)),
-        },
-        DT::Float(_) | DT::Double(_) | DT::Real | DT::Decimal(_) | DT::Numeric(_) => match val {
-            DbValue::Int(i) => Ok(DbValue::Float(i as f64)),
-            DbValue::Float(f) => Ok(DbValue::Float(f)),
-            DbValue::String(s) => {
-                let trimmed = s.trim();
-                if trimmed.is_empty() {
-                    Ok(DbValue::Float(0.0))
-                } else {
-                    trimmed
-                        .parse::<f64>()
-                        .map(DbValue::Float)
-                        .map_err(|_| format!("Cannot cast '{}' to FLOAT", s))
-                }
-            }
-            DbValue::Bool(b) => Ok(DbValue::Float(if b { 1.0 } else { 0.0 })),
-            DbValue::Null => Ok(DbValue::Null),
-            _ => Err(format!("Cannot cast {:?} to FLOAT", val)),
-        },
-        DT::Varchar(_) | DT::Char(_) | DT::Text | DT::String(_) | DT::Uuid => Ok(DbValue::String(val.to_string())),
-        _ => Ok(DbValue::String(val.to_string())),
-    }
-}
-
-fn eval_literal_expr(expr: &Expr) -> Result<DbValue, String> {
-    match expr {
-        Expr::Value(v) => Ok(sql_val_to_db(&v.value)),
-        Expr::Nested(inner) => eval_literal_expr(inner),
-        Expr::UnaryOp { op, expr } => {
-            let val = eval_literal_expr(expr)?;
-            apply_unary_op(op, &val)
-        }
-        _ => Err(format!("Complex expressions not supported in values: {:?}", expr)),
-    }
-}
-
-// ── Function execution ──────────────────────────────────────────────────
-
-pub(crate) fn exec_function(
-    func: &Function,
-    row: &[DbValue],
-    col_map: &HashMap<String, usize>,
-) -> Result<DbValue, String> {
-    let name = func.name.to_string().to_lowercase();
-    match name.as_str() {
-        "fuzzy_match" => exec_fuzzy_match(func, row, col_map),
-        "fts_score" => exec_fts_score(func, row, col_map),
-        _ => {
-            // Check plugin registry for fn_ prefixed functions
-            if let Some(fn_name) = name.strip_prefix("fn_") {
-                if let Some((pfunc, _plugin)) = crate::engine::plugin::lookup_function(fn_name) {
-                    let args = extract_func_args(func);
-                    if args.len() < pfunc.min_args {
-                        return Err(format!(
-                            "{}: expected {} args, got {}",
-                            fn_name,
-                            pfunc.min_args,
-                            args.len()
-                        ));
-                    }
-                    return (pfunc.func)(&args);
-                }
-                return Err(format!("Unknown plugin function '{}'", fn_name));
-            }
-            exec_std_function(func, name, row, col_map)
-        }
-    }
-}
-
-/// Extract function arguments as Vec<DbValue> for plugin dispatch.
-fn extract_func_args(func: &Function) -> Vec<DbValue> {
-    let mut args = Vec::new();
-    if let sqlparser::ast::FunctionArguments::List(list) = &func.args {
-        for arg in &list.args {
-            use sqlparser::ast::FunctionArg::*;
-            use sqlparser::ast::FunctionArgExpr;
-            match arg {
-                Unnamed(FunctionArgExpr::Expr(expr))
-                | Named {
-                    arg: FunctionArgExpr::Expr(expr),
-                    ..
-                } => {
-                    // ponytail: no eval context, pass raw SQL repr
-                    args.push(DbValue::String(format!("{:?}", expr)));
-                }
-                Unnamed(FunctionArgExpr::Wildcard) => {
-                    args.push(DbValue::String("*".into()));
-                }
-                _ => {}
-            }
-        }
-    }
-    args
-}
-
-/// Return current date as YYYY-MM-DD string.
-fn curdate_value() -> DbValue {
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64;
-    let z = secs / 86400 + 719468;
-    let era = z as i64 / 146097;
-    let doe = z as i64 - era * 146097;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    DbValue::String(format!("{y:04}-{m:02}-{d:02}"))
-}
-
-/// Parse an ISO 8601 date/datetime string into (year, month, day, hour, min, sec).
-fn parse_iso_date(s: &str) -> Option<(i64, i64, i64, i64, i64, i64)> {
-    let s = s.trim();
-    let (date_part, time_part) = if let Some(pos) = s.find('T').or_else(|| s.find(' ')) {
-        (&s[..pos], Some(&s[pos + 1..]))
-    } else {
-        (s, None)
-    };
-    let parts: Vec<&str> = date_part.split('-').collect();
-    if parts.len() != 3 {
-        return None;
-    }
-    let year = parts[0].parse::<i64>().ok()?;
-    let month = parts[1].parse::<i64>().ok()?;
-    let day = parts[2].parse::<i64>().ok()?;
-    let (hour, min, sec) = match time_part {
-        Some(tp) => {
-            let t: Vec<&str> = tp.split(':').collect();
-            let h = t.first().and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
-            let m = t.get(1).and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
-            let s = t
-                .get(2)
-                .and_then(|s| {
-                    let clean = s.split('.').next().unwrap_or(s);
-                    clean.parse::<i64>().ok()
-                })
-                .unwrap_or(0);
-            (h, m, s)
-        }
-        None => (0, 0, 0),
-    };
-    Some((year, month, day, hour, min, sec))
-}
-
-/// Compute days since epoch (1970-01-01) from date parts.
-fn date_to_days(y: i64, m: i64, d: i64) -> i64 {
-    let (adj_m, adj_y) = if m <= 2 { (m + 9, y - 1) } else { (m - 3, y) };
-    let era = if adj_y >= 0 { adj_y / 400 } else { (adj_y - 399) / 400 };
-    let yoe = adj_y - era * 400;
-    let doy = (153 * adj_m + 2) / 5 + d - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146097 + doe - 719468
-}
-
-/// Return the current timestamp as a DbValue (ISO 8601 format).
-fn now_value() -> DbValue {
-    let secs = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    let z = secs / 86400 + 719468;
-    let era = (z as i64 / 146097) as u64;
-    let doe = (z as i64 - era as i64 * 146097) as u64;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    let (h, min, s) = (secs / 3600 % 24, secs / 60 % 60, secs % 60);
-    DbValue::String(format!("{y:04}-{m:02}-{d:02}T{h:02}:{min:02}:{s:02}"))
-}
-
-/// Evaluate a standard SQL scalar function.
-fn exec_std_function(
-    func: &Function,
-    name: String,
-    row: &[DbValue],
-    col_map: &HashMap<String, usize>,
-) -> Result<DbValue, String> {
-    let args = match &func.args {
-        FunctionArguments::List(list) => &list.args,
-        _ => return Ok(now_value()), // e.g. CURRENT_TIMESTAMP without parens
-    };
-    let eval_args = |count: usize| -> Result<Vec<DbValue>, String> {
-        if args.len() < count {
-            return Err(format!("'{}' requires {} argument(s)", name, count));
-        }
-        args.iter()
-            .take(count)
-            .map(|a| eval_expr(get_func_arg_unnamed(a)?, row, col_map))
-            .collect()
-    };
-
-    match name.as_str() {
-        "upper" | "ucase" => {
-            let vals = eval_args(1)?;
-            let s = value_to_string(&vals[0]);
-            Ok(DbValue::String(s.to_uppercase()))
-        }
-        "lower" | "lcase" => {
-            let vals = eval_args(1)?;
-            let s = value_to_string(&vals[0]);
-            Ok(DbValue::String(s.to_lowercase()))
-        }
-        "length" | "len" => {
-            let vals = eval_args(1)?;
-            let s = value_to_string(&vals[0]);
-            Ok(DbValue::Int(s.len() as i64))
-        }
-        "substr" | "substring" => {
-            let vals = eval_args(3).or_else(|_| eval_args(2))?;
-            let s = value_to_string(&vals[0]);
-            let start = match vals[1] {
-                DbValue::Int(i) => i.max(1) as usize - 1, // SQL is 1-indexed
-                _ => return Err("SUBSTR start must be integer".into()),
-            };
-            if vals.len() >= 3 {
-                let length = match vals[2] {
-                    DbValue::Int(i) => i as usize,
-                    _ => return Err("SUBSTR length must be integer".into()),
-                };
-                Ok(DbValue::String(s.chars().skip(start).take(length).collect()))
-            } else {
-                Ok(DbValue::String(s.chars().skip(start).collect()))
-            }
-        }
-        "trim" => {
-            let vals = eval_args(1)?;
-            let s = value_to_string(&vals[0]);
-            Ok(DbValue::String(s.trim().to_string()))
-        }
-        "coalesce" | "ifnull" => {
-            for a in args {
-                let v = eval_expr(get_func_arg_unnamed(a)?, row, col_map)?;
-                if v != DbValue::Null {
-                    return Ok(v);
-                }
-            }
-            Ok(DbValue::Null)
-        }
-        "round" => {
-            let vals = eval_args(2).or_else(|_| eval_args(1))?;
-            let num = match vals[0] {
-                DbValue::Float(f) => f,
-                DbValue::Int(i) => i as f64,
-                _ => return Err("ROUND requires numeric argument".into()),
-            };
-            let decimals = if vals.len() >= 2 {
-                match vals[1] {
-                    DbValue::Int(i) => i as u32,
-                    _ => return Err("ROUND decimals must be integer".into()),
-                }
-            } else {
-                0
-            };
-            let multiplier = 10_f64.powi(decimals as i32);
-            Ok(DbValue::Float((num * multiplier).round() / multiplier))
-        }
-        "abs" => {
-            let v = eval_args(1)?.swap_remove(0);
-            match v {
-                DbValue::Int(i) => Ok(DbValue::Int(i.abs())),
-                DbValue::Float(f) => Ok(DbValue::Float(f.abs())),
-                _ => Err("ABS requires numeric argument".into()),
-            }
-        }
-        "now" | "current_timestamp" => Ok(now_value()),
-        "curdate" | "current_date" => Ok(curdate_value()),
-        "concat" => {
-            let mut result = String::new();
-            for a in args {
-                let v = eval_expr(get_func_arg_unnamed(a)?, row, col_map)?;
-                result.push_str(&value_to_string(&v));
-            }
-            Ok(DbValue::String(result))
-        }
-        "last_insert_rowid" => {
-            let rowid = LAST_INSERT_ROWID.with(|r| r.borrow().clone());
-            Ok(DbValue::String(rowid.unwrap_or_else(|| "0".to_string())))
-        }
-        "changes" => {
-            let n = LAST_CHANGES.with(|c| *c.borrow());
-            Ok(DbValue::Int(n as i64))
-        }
-        "unix_timestamp" => {
-            if args.is_empty() {
-                let secs = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs();
-                Ok(DbValue::Int(secs as i64))
-            } else {
-                let vals = eval_args(1)?;
-                let s = value_to_string(&vals[0]);
-                if let Some((y, m, d, h, mi, sec)) = parse_iso_date(&s) {
-                    let days = date_to_days(y, m, d);
-                    Ok(DbValue::Int(days * 86400 + h * 3600 + mi * 60 + sec))
-                } else {
-                    Err(format!("Cannot parse date: '{}'", s))
-                }
-            }
-        }
-        "date_format" => {
-            let vals = eval_args(2)?;
-            let s = value_to_string(&vals[0]);
-            let fmt = value_to_string(&vals[1]);
-            let (y, m, d, h, mi, sec) = parse_iso_date(&s).ok_or_else(|| format!("Cannot parse date: '{}'", s))?;
-            let mut result = String::new();
-            let mut chars = fmt.chars();
-            while let Some(c) = chars.next() {
-                if c == '%' {
-                    match chars.next() {
-                        Some('Y') => result.push_str(&format!("{:04}", y)),
-                        Some('m') => result.push_str(&format!("{:02}", m)),
-                        Some('d') => result.push_str(&format!("{:02}", d)),
-                        Some('H') => result.push_str(&format!("{:02}", h)),
-                        Some('M') => result.push_str(&format!("{:02}", mi)),
-                        Some('S') => result.push_str(&format!("{:02}", sec)),
-                        Some(o) => result.push(o),
-                        None => result.push('%'),
-                    }
-                } else {
-                    result.push(c);
-                }
-            }
-            Ok(DbValue::String(result))
-        }
-        "datediff" => {
-            let vals = eval_args(2)?;
-            let s1 = value_to_string(&vals[0]);
-            let s2 = value_to_string(&vals[1]);
-            let (y1, m1, d1, _, _, _) = parse_iso_date(&s1).ok_or_else(|| format!("Cannot parse date: '{}'", s1))?;
-            let (y2, m2, d2, _, _, _) = parse_iso_date(&s2).ok_or_else(|| format!("Cannot parse date: '{}'", s2))?;
-            let days1 = date_to_days(y1, m1, d1);
-            let days2 = date_to_days(y2, m2, d2);
-            Ok(DbValue::Int(days1 - days2))
-        }
-        _ => Err(format!("Unknown function '{}'", name)),
-    }
-}
-
-/// Get function argument as Expr, assuming Unnamed(FunctionArgExpr::Expr(e))
-fn get_func_arg_unnamed(arg: &FunctionArg) -> Result<&Expr, String> {
-    match arg {
-        FunctionArg::Unnamed(FunctionArgExpr::Expr(e)) => Ok(e),
-        FunctionArg::Unnamed(_) => Err("Expected expression argument".into()),
-        FunctionArg::Named { arg, .. } | FunctionArg::ExprNamed { arg, .. } => match arg {
-            FunctionArgExpr::Expr(e) => Ok(e),
-            _ => Err("Expected expression in named argument".into()),
-        },
-    }
-}
-
-fn exec_fuzzy_match(func: &Function, row: &[DbValue], col_map: &HashMap<String, usize>) -> Result<DbValue, String> {
-    let args = match &func.args {
-        FunctionArguments::List(list) => &list.args,
-        _ => return Err("fuzzy_match requires argument list".into()),
-    };
-
-    if args.len() < 2 {
-        return Err("fuzzy_match requires at least 2 arguments".into());
-    }
-
-    let col_val = eval_expr(get_func_arg_unnamed(&args[0])?, row, col_map)?;
-    let pat_val = eval_expr(get_func_arg_unnamed(&args[1])?, row, col_map)?;
-
-    let threshold = if args.len() >= 3 {
-        let t = eval_expr(get_func_arg_unnamed(&args[2])?, row, col_map)?;
-        match t {
-            DbValue::Float(f) => f,
-            DbValue::Int(i) => i as f64,
-            _ => 0.3,
-        }
-    } else {
-        0.3
-    };
-
-    let similarity = Table::trigram_similarity(&value_to_string(&col_val), &value_to_string(&pat_val));
-    Ok(DbValue::Bool(similarity >= threshold))
-}
-
-// ── Binary operators ───────────────────────────────────────────────────
-
-fn apply_binary_op(left: &DbValue, op: &BinaryOperator, right: &DbValue) -> Result<DbValue, String> {
-    match op {
-        BinaryOperator::Eq => Ok(DbValue::Bool(values_equal(left, right))),
-        BinaryOperator::NotEq => Ok(DbValue::Bool(!values_equal(left, right))),
-        BinaryOperator::Lt => cmp_values(left, right, |o| o.is_lt()),
-        BinaryOperator::LtEq => cmp_values(left, right, |o| o.is_le()),
-        BinaryOperator::Gt => cmp_values(left, right, |o| o.is_gt()),
-        BinaryOperator::GtEq => cmp_values(left, right, |o| o.is_ge()),
-        BinaryOperator::Plus => arith_op(left, right, |a, b| a + b, |a, b| a + b),
-        BinaryOperator::Minus => arith_op(left, right, |a, b| a - b, |a, b| a - b),
-        BinaryOperator::Multiply => arith_op(left, right, |a, b| a * b, |a, b| a * b),
-        BinaryOperator::Divide => arith_op(left, right, |a, b| a / b, |a, b| a / b),
-        BinaryOperator::Modulo => match (to_float(left), to_float(right)) {
-            (Some(a), Some(b)) if b != 0.0 => Ok(DbValue::Float(a % b)),
-            _ => Err("Modulo requires numeric operands".into()),
-        },
-        BinaryOperator::And => Ok(DbValue::Bool(is_truthy(left) && is_truthy(right))),
-        BinaryOperator::Or => Ok(DbValue::Bool(is_truthy(left) || is_truthy(right))),
-        BinaryOperator::StringConcat => Ok(DbValue::String(format!(
-            "{}{}",
-            value_to_string(left),
-            value_to_string(right)
-        ))),
-        BinaryOperator::Regexp => {
-            let s = value_to_string(left);
-            let pat = value_to_string(right);
-            let val: Vec<char> = s.chars().collect();
-            let p: Vec<char> = pat.chars().collect();
-            Ok(DbValue::Bool(wildcard_match(&val, &p, 0, 0)))
-        }
-        BinaryOperator::Match => {
-            let s = value_to_string(left);
-            let pat = value_to_string(right);
-            Ok(DbValue::Bool(s.to_lowercase().contains(&pat.to_lowercase())))
-        }
-        _ => Err(format!("Unsupported operator: {:?}", op)),
-    }
-}
-
-fn apply_unary_op(op: &UnaryOperator, val: &DbValue) -> Result<DbValue, String> {
-    match op {
-        UnaryOperator::Not => Ok(DbValue::Bool(!is_truthy(val))),
-        UnaryOperator::Plus => Ok(val.clone()),
-        UnaryOperator::Minus => match val {
-            DbValue::Int(n) => Ok(DbValue::Int(-n)),
-            DbValue::Float(f) => Ok(DbValue::Float(-f)),
-            _ => Err(format!("Cannot negate {}", val)),
-        },
-        _ => Err(format!("Unsupported unary operator: {:?}", op)),
-    }
-}
-
-// ── Comparison & coercion ──────────────────────────────────────────────
-
-fn values_equal(a: &DbValue, b: &DbValue) -> bool {
-    // NULL != anything (including NULL), per SQL standard
-    if matches!(a, DbValue::Null) || matches!(b, DbValue::Null) {
-        return false;
-    }
-    match (a, b) {
-        (DbValue::Null, DbValue::Null) => true,
-        (DbValue::Int(x), DbValue::Int(y)) => x == y,
-        (DbValue::Float(x), DbValue::Float(y)) => (x - y).abs() < f64::EPSILON,
-        (DbValue::Int(x), DbValue::Float(y)) => (*x as f64 - y).abs() < f64::EPSILON,
-        (DbValue::Float(x), DbValue::Int(y)) => (x - *y as f64).abs() < f64::EPSILON,
-        (DbValue::Bool(x), DbValue::Bool(y)) => x == y,
-        (DbValue::String(x), DbValue::String(y)) => x == y,
-        _ => value_to_string(a) == value_to_string(b),
-    }
-}
-
-fn cmp_values<F>(a: &DbValue, b: &DbValue, cmp: F) -> Result<DbValue, String>
-where
-    F: Fn(std::cmp::Ordering) -> bool,
-{
-    // SQL: NULL compared to anything is NULL (treated as false)
-    if matches!(a, DbValue::Null) || matches!(b, DbValue::Null) {
-        return Ok(DbValue::Bool(false));
-    }
-    let ord = match (to_float(a), to_float(b)) {
-        (Some(x), Some(y)) => x.partial_cmp(&y).unwrap_or(std::cmp::Ordering::Equal),
-        _ => value_to_string(a).cmp(&value_to_string(b)),
-    };
-    Ok(DbValue::Bool(cmp(ord)))
-}
-
-fn arith_op<F, G>(a: &DbValue, b: &DbValue, int_op: F, float_op: G) -> Result<DbValue, String>
-where
-    F: Fn(i64, i64) -> i64,
-    G: Fn(f64, f64) -> f64,
-{
-    // SQL: NULL in any arithmetic → NULL
-    if matches!(a, DbValue::Null) || matches!(b, DbValue::Null) {
-        return Ok(DbValue::Null);
-    }
-    match (a, b) {
-        (DbValue::Int(x), DbValue::Int(y)) => Ok(DbValue::Int(int_op(*x, *y))),
-        _ => match (to_float(a), to_float(b)) {
-            (Some(x), Some(y)) => Ok(DbValue::Float(float_op(x, y))),
-            _ => Err(format!("Type mismatch: {} vs {}", a, b)),
-        },
-    }
-}
-
-fn to_float(v: &DbValue) -> Option<f64> {
-    match v {
-        DbValue::Int(n) => Some(*n as f64),
-        DbValue::Float(f) => Some(*f),
-        DbValue::String(s) => s.parse::<f64>().ok(),
-        _ => None,
-    }
-}
-
-fn is_truthy(v: &DbValue) -> bool {
-    match v {
-        DbValue::Null => false,
-        DbValue::Bool(b) => *b,
-        DbValue::Int(n) => *n != 0,
-        DbValue::Float(f) => *f != 0.0,
-        DbValue::String(s) => !s.is_empty(),
-        DbValue::Strings(arr) => !arr.is_empty(),
-        DbValue::Floats(arr) => !arr.is_empty(),
-    }
-}
-
-fn value_to_string(v: &DbValue) -> String {
-    match v {
-        DbValue::Null => "NULL".into(),
-        DbValue::Bool(b) => b.to_string(),
-        DbValue::Int(n) => n.to_string(),
-        DbValue::Float(f) => f.to_string(),
-        DbValue::String(s) => s.clone(),
-        DbValue::Strings(arr) => arr.join(","),
-        DbValue::Floats(arr) => arr.iter().map(|f| f.to_string()).collect::<Vec<_>>().join(","),
-    }
-}
-
-// ── SQL value conversion ───────────────────────────────────────────────
-
-fn sql_val_to_db(v: &sqlparser::ast::Value) -> DbValue {
-    match v {
-        sqlparser::ast::Value::Null => DbValue::Null,
-        sqlparser::ast::Value::Boolean(b) => DbValue::Bool(*b),
-        sqlparser::ast::Value::Number(s, _) => {
-            if s.contains('.') {
-                s.parse::<f64>()
-                    .map(DbValue::Float)
-                    .unwrap_or(DbValue::String(s.clone()))
-            } else {
-                s.parse::<i64>().map(DbValue::Int).unwrap_or(DbValue::String(s.clone()))
-            }
-        }
-        sqlparser::ast::Value::SingleQuotedString(s) | sqlparser::ast::Value::DoubleQuotedString(s) => {
-            DbValue::String(s.clone())
-        }
-        _ => DbValue::String(format!("{:?}", v)),
-    }
-}
+// Moved to functions/eval.rs: cast_db_value, eval_literal_expr, apply_unary_op, is_truthy
+// Moved to functions/builtin.rs: curdate_value, now_value, parse_iso_date, date_to_days,
+//   exec_std_function, get_func_arg_unnamed, exec_fuzzy_match, values_equal, cmp_values,
+//   arith_op, to_float, value_to_string, sql_val_to_db
 
 // ── Data type parsing ──────────────────────────────────────────────────
 
@@ -3508,74 +1695,9 @@ fn parse_data_type(dt: &DataType) -> Result<ColumnType, String> {
 
 // ── Table resolution ───────────────────────────────────────────────────
 
-/// Materialize a view by executing its SQL and inserting the results as a temp table.
-fn materialize_view(name: &str, db: &mut Database) -> Result<(), String> {
-    let sql = db
-        .get_view(name)
-        .ok_or_else(|| format!("View '{}' not found", name))?
-        .clone();
+// Moved to functions/eval.rs: materialize_view, resolve_table_factor, resolve_single_table
 
-    let stmts = crate::parser::parse_sql(&sql).map_err(|e| format!("{}", e))?;
-    let stmt = stmts.into_iter().next().ok_or("View definition is empty")?;
-
-    let result = execute(&stmt, db)?;
-
-    let rows: Vec<Vec<serde_json::Value>> =
-        serde_json::from_str(&result).map_err(|e| format!("View result parse: {}", e))?;
-
-    if rows.len() >= 2 {
-        let header = &rows[0];
-        let cols: Vec<Column> = header
-            .iter()
-            .map(|h| Column {
-                name: h.as_str().unwrap_or("col").to_lowercase(),
-                dtype: ColumnType::String,
-                primary_key: false,
-                not_null: false,
-                default: None,
-                auto_increment: false,
-            })
-            .collect();
-
-        if let Ok(mut table) = Table::new(name.to_string(), cols) {
-            for row_data in &rows[1..] {
-                let db_row: Vec<DbValue> = row_data.iter().map(json_val_to_dbvalue).collect();
-                let _ = table.insert(db_row);
-            }
-            db.add_table(name.to_string(), table);
-        }
-    }
-
-    Ok(())
-}
-
-/// Resolve a table factor, materialising a view if the name is not a real table.
-fn resolve_table_factor(
-    factor: &TableFactor,
-    db: &mut Database,
-) -> Result<(String, crate::engine::table::Table), String> {
-    match factor {
-        TableFactor::Table { name, .. } => {
-            let tname = object_name_str(name);
-            if !db.has_table(&tname) && db.has_view(&tname) {
-                materialize_view(&tname, db)?;
-            }
-            let table = db.get_table(&tname)?.clone();
-            Ok((tname, table))
-        }
-        _ => Err("Only simple table references supported in FROM".into()),
-    }
-}
-
-fn resolve_single_table<'a>(from: &[TableWithJoins], db: &'a Database) -> Result<&'a Table, String> {
-    let tf = from.first().ok_or("No FROM clause")?;
-    match &tf.relation {
-        TableFactor::Table { name, .. } => db.get_table(&object_name_str(name)),
-        _ => Err("Only simple table references supported in FROM".into()),
-    }
-}
-
-fn resolve_table_from_joins(tj: &TableWithJoins) -> Result<String, String> {
+pub(crate) fn resolve_table_from_joins(tj: &TableWithJoins) -> Result<String, String> {
     match &tj.relation {
         TableFactor::Table { name, .. } => Ok(object_name_str(name)),
         _ => Err("Only simple table references supported".into()),
@@ -3745,102 +1867,13 @@ fn apply_order_limit(json_str: &str, query: &Query) -> Result<String, String> {
     Ok(json_str.to_string())
 }
 
-// ── Index-assisted lookup ─────────────────────────────────────────────
-
-/// Try to use a BTreeIndex for a simple `col = literal` WHERE clause.
-/// Returns `Some(rows)` if an index was used, `None` to fall back to full scan.
-fn try_btree_index<'a>(where_expr: Option<&Expr>, table: &'a Table) -> Option<Vec<&'a [DbValue]>> {
-    let expr = where_expr?;
-    let (col_name, value) = match expr {
-        Expr::BinaryOp {
-            left,
-            op: BinaryOperator::Eq,
-            right,
-        } => match (left.as_ref(), right.as_ref()) {
-            (Expr::Identifier(ident), Expr::Value(v)) | (Expr::Value(v), Expr::Identifier(ident)) => {
-                (ident.value.to_lowercase(), sql_val_to_db(&v.value))
-            }
-            _ => return None,
-        },
-        _ => return None,
-    };
-    let indices = table.btree_lookup(&col_name, &value)?;
-    Some(indices.into_iter().map(|i| table.rows[i].as_slice()).collect())
-}
-
-/// Try to use a TrigramIndex for a `fuzzy_match(col, pattern)` WHERE clause.
-/// Returns `Some(candidate_rows)` if a trigram index exists, `None` to fall back to full scan.
-fn try_trigram_index<'a>(where_expr: Option<&Expr>, table: &'a Table) -> Option<Vec<&'a [DbValue]>> {
-    let expr = where_expr?;
-    let (col_name, pattern_val) = match expr {
-        Expr::Function(f) if f.name.to_string().to_lowercase() == "fuzzy_match" => {
-            let args = match &f.args {
-                FunctionArguments::List(list) => &list.args,
-                _ => return None,
-            };
-            if args.len() < 2 {
-                return None;
-            }
-            let col_expr = get_func_arg_unnamed(&args[0]).ok()?;
-            let pat_expr = get_func_arg_unnamed(&args[1]).ok()?;
-            let col_name = match col_expr {
-                Expr::Identifier(ident) => ident.value.to_lowercase(),
-                Expr::CompoundIdentifier(parts) => parts
-                    .iter()
-                    .map(|p| p.value.to_lowercase())
-                    .collect::<Vec<_>>()
-                    .join("."),
-                _ => return None,
-            };
-            let pattern_val = match pat_expr {
-                Expr::Value(v) => match &v.value {
-                    sqlparser::ast::Value::SingleQuotedString(s) => s.clone(),
-                    sqlparser::ast::Value::DoubleQuotedString(s) => s.clone(),
-                    sqlparser::ast::Value::Null => return None,
-                    _ => return None,
-                },
-                _ => return None,
-            };
-            (col_name, pattern_val)
-        }
-        _ => return None,
-    };
-
-    // Check for trigram index on this column
-    let trigram = table.find_index(&col_name, A3IndexType::Trigram)?;
-    let IndexImpl::Trigram(ref idx) = trigram else {
-        unreachable!()
-    };
-
-    let candidates = idx.candidates(&pattern_val);
-    if candidates.is_empty() || candidates.len() >= table.rows.len() {
-        return None; // not worth it, full scan is similar cost
-    }
-
-    Some(candidates.into_iter().map(|i| table.rows[i].as_slice()).collect())
-}
-
-/// Return the trigram similarity score between two strings (for ranked FTS).
-/// Called as `fts_score(col, pattern)` in SQL.
-fn exec_fts_score(func: &Function, row: &[DbValue], col_map: &HashMap<String, usize>) -> Result<DbValue, String> {
-    let args = match &func.args {
-        FunctionArguments::List(list) => &list.args,
-        _ => return Err("fts_score requires argument list".into()),
-    };
-    if args.len() < 2 {
-        return Err("fts_score requires at least 2 arguments".into());
-    }
-    let col_val = eval_expr(get_func_arg_unnamed(&args[0])?, row, col_map)?;
-    let pat_val = eval_expr(get_func_arg_unnamed(&args[1])?, row, col_map)?;
-    let similarity = Table::trigram_similarity(&value_to_string(&col_val), &value_to_string(&pat_val));
-    Ok(DbValue::Float(similarity))
-}
+// Moved to functions/eval.rs: try_btree_index, try_trigram_index, exec_fts_score
 
 // ── Subquery execution ────────────────────────────────────────────────
 
 /// Execute a subquery (SELECT) and return the first column of each row.
 /// Uses the thread-local DB snapshot set by exec_select (avoids deadlock).
-fn exec_subquery(query: &Query) -> Result<Vec<DbValue>, String> {
+pub(crate) fn exec_subquery(query: &Query) -> Result<Vec<DbValue>, String> {
     let db_snapshot = SUBQ_DB.with(|snap| {
         snap.borrow()
             .as_ref()
@@ -3917,46 +1950,6 @@ fn json_value_to_dbvalue(v: &serde_json::Value) -> DbValue {
 
 // ── CREATE INDEX handling ──────────────────────────────────────────────
 
-fn exec_create_index(idx: &sqlparser::ast::CreateIndex, db: &mut Database) -> Result<String, String> {
-    let index_name = match &idx.name {
-        Some(name) => object_name_str(name),
-        None => return Err("CREATE INDEX requires a name".into()),
-    };
-    let table_name = object_name_str(&idx.table_name);
-
-    // IF NOT EXISTS — silently return if index already exists
-    if idx.if_not_exists {
-        let table = db.get_table(&table_name)?;
-        if table.has_index(&index_name) {
-            return Ok(format!("\"Index '{}' already exists\"", index_name));
-        }
-    }
-
-    // Determine index type from USING clause (default BTREE)
-    use sqlparser::ast::IndexType as SqlIdx;
-    let index_type = match &idx.using {
-        None | Some(SqlIdx::BTree) => A3IndexType::BTree,
-        Some(SqlIdx::GIN) => A3IndexType::Trigram,
-        Some(SqlIdx::Custom(id)) if id.value.to_uppercase() == "TRIGRAM" => A3IndexType::Trigram,
-        Some(other) => return Err(format!("Unsupported index type: {}", other)),
-    };
-
-    // Get the column name from the first index column
-    let column = match idx.columns.first() {
-        Some(col) => col.to_string().to_lowercase(),
-        None => return Err("CREATE INDEX requires at least one column".into()),
-    };
-
-    let table = db.get_table_mut(&table_name)?;
-    table.create_index(&index_name, &column, index_type)?;
-
-    Ok(format!(
-        "\"Created {} index '{}' on {}({})\"",
-        index_type, index_name, table_name, column
-    ))
-}
-
-/// Drop an index by name across all tables.
 fn drop_index_by_name(db: &mut Database, name: &str) -> bool {
     let table_names: Vec<String> = db.table_names().iter().map(|s| s.to_string()).collect();
     for tname in table_names {
@@ -3976,16 +1969,16 @@ pub(crate) fn parse_and_exec(sql: &str, db: &mut Database) -> Result<String, Str
     use sqlparser::dialect::SQLiteDialect;
     use sqlparser::parser::Parser;
     // Try SQLite dialect first (handles CREATE TRIGGER with BEGIN...END body)
-    let mut sqlite = SQLiteDialect {};
-    if let Ok(stmts) = Parser::parse_sql(&mut sqlite, sql) {
+    let sqlite = SQLiteDialect {};
+    if let Ok(stmts) = Parser::parse_sql(&sqlite, sql) {
         let mut results = Vec::new();
         for stmt in stmts {
             results.push(execute(&stmt, db)?);
         }
         return Ok(results.join("\n"));
     }
-    let mut meta = sqlparser::dialect::GenericDialect {};
-    let stmts = Parser::parse_sql(&mut meta, sql).map_err(|e| format!("Parse error in trigger body: {}", e))?;
+    let meta = sqlparser::dialect::GenericDialect {};
+    let stmts = Parser::parse_sql(&meta, sql).map_err(|e| format!("Parse error in trigger body: {}", e))?;
     let mut results = Vec::new();
     for stmt in stmts {
         results.push(execute(&stmt, db)?);
@@ -3994,44 +1987,7 @@ pub(crate) fn parse_and_exec(sql: &str, db: &mut Database) -> Result<String, Str
 }
 
 /// Execute CREATE TRIGGER.
-fn exec_create_trigger(ct: &sqlparser::ast::CreateTrigger, db: &mut Database) -> Result<String, String> {
-    let table_name = ct.table_name.to_string().to_lowercase();
-    let trigger_name = ct.name.to_string().to_lowercase();
-    let _timing = ct.period.as_ref().map(|p| format!("{:?}", p)).unwrap_or_default();
-    let _event = ct.events.first().map(|e| format!("{:?}", e)).unwrap_or_default();
-    // Use first event only and infer FROM/UPDATE/DELETE
-
-    let event_str = match ct.events.first() {
-        Some(sqlparser::ast::TriggerEvent::Insert) => "INSERT",
-        Some(sqlparser::ast::TriggerEvent::Update(_)) => "UPDATE",
-        Some(sqlparser::ast::TriggerEvent::Delete) => "DELETE",
-        _ => return Err("Unsupported trigger event".into()),
-    };
-    let timing_str = match ct.period.as_ref() {
-        Some(p) => match p {
-            sqlparser::ast::TriggerPeriod::Before => "BEFORE",
-            sqlparser::ast::TriggerPeriod::After => "AFTER",
-            _ => return Err("Only BEFORE/AFTER triggers supported".into()),
-        },
-        None => return Err("Trigger timing (BEFORE/AFTER) required".into()),
-    };
-    // Extract body SQL from the statements block
-    let body = ct.statements.as_ref().map(|s| format!("{}", s)).unwrap_or_default();
-    if body.is_empty() {
-        return Err("Trigger requires a body (SQL statement)".into());
-    }
-    let table = db.get_table_mut(&table_name)?;
-    table.triggers.push(crate::engine::trigger::TriggerInfo {
-        name: trigger_name.clone(),
-        timing: timing_str.to_string(),
-        event: event_str.to_string(),
-        body,
-    });
-    Ok(format!("\"Trigger '{}' created on '{}'\"", trigger_name, table_name))
-}
-
-/// Fire AFTER triggers for a given table and event.
-fn fire_triggers(table_name: &str, event: &str, db: &mut Database) {
+pub(crate) fn fire_triggers(table_name: &str, event: &str, db: &mut Database) {
     crate::engine::trigger::fire_triggers(table_name, event, db)
 }
 // ── MERGE ───────────────────────────────────────────────────────────────
@@ -4086,7 +2042,7 @@ fn exec_merge(merge: &Merge, db: &mut Database) -> Result<String, String> {
                 matched_indices.push(ti);
             }
         }
-        drop(t);
+        let _ = t;
 
         if !matched_indices.is_empty() {
             if let Some(clause) = matched_clause {
@@ -4100,7 +2056,7 @@ fn exec_merge(merge: &Merge, db: &mut Database) -> Result<String, String> {
                         c.extend(t.rows[ti].iter().cloned());
                         c
                     };
-                    drop(t);
+                    let _ = t;
                     if !is_truthy(&eval_expr(pred, &combined, &col_map)?) {
                         continue;
                     }
@@ -4232,301 +2188,8 @@ fn exec_merge(merge: &Merge, db: &mut Database) -> Result<String, String> {
 
 // ── EXPLAIN ─────────────────────────────────────────────────────────────
 
-/// Generate an EXPLAIN plan description as a JSON array of plan nodes.
-fn explain_statement(stmt: &Statement, db: &Database) -> Result<String, String> {
-    use serde_json::json;
-
-    match stmt {
-        Statement::Query(query) => {
-            let mut steps: Vec<serde_json::Value> = Vec::new();
-
-            if let SetExpr::Select(select) = &*query.body {
-                let select = select.as_ref();
-
-                // FROM clause — table scans and joins
-                for twj in &select.from {
-                    match &twj.relation {
-                        TableFactor::Table { name, .. } => {
-                            let tname = name.to_string().to_lowercase();
-                            let mut scan = json!({"type": "SeqScan", "table": tname});
-
-                            // Show available indexes on this table
-                            if let Ok(table) = db.get_table(&tname) {
-                                if !table.indices.is_empty() {
-                                    let idxs: Vec<&str> = table.indices.iter().map(|(m, _)| m.name.as_str()).collect();
-                                    scan["indexes"] = json!(idxs);
-                                }
-                            }
-                            steps.push(scan);
-                        }
-                        _ => {
-                            steps.push(json!({"type": "SubQuery"}));
-                        }
-                    }
-
-                    for join in &twj.joins {
-                        let rel = match &join.relation {
-                            TableFactor::Table { name, .. } => name.to_string(),
-                            _ => "<subquery>".into(),
-                        };
-                        steps.push(json!({"type": "Join", "relation": rel}));
-                    }
-                }
-
-                // Bare SELECT (no FROM)
-                if select.from.is_empty() {
-                    steps.push(json!({"type": "Projection"}));
-                }
-
-                // WHERE clause
-                if let Some(expr) = &select.selection {
-                    steps.push(json!({"type": "Filter", "condition": format!("{}", expr)}));
-                }
-
-                // GROUP BY
-                use sqlparser::ast::GroupByExpr;
-                if let GroupByExpr::Expressions(exprs, _) = &select.group_by {
-                    if !exprs.is_empty() {
-                        let gb: Vec<String> = exprs.iter().map(|e| format!("{}", e)).collect();
-                        steps.push(json!({"type": "GroupBy", "columns": gb}));
-                    }
-                }
-
-                // HAVING
-                if let Some(expr) = &select.having {
-                    steps.push(json!({"type": "Having", "condition": format!("{}", expr)}));
-                }
-
-                // ORDER BY
-                if let Some(order_by) = &query.order_by {
-                    if let OrderByKind::Expressions(exprs) = &order_by.kind {
-                        if !exprs.is_empty() {
-                            let ob: Vec<String> = exprs.iter().map(|e| format!("{}", e.expr)).collect();
-                            steps.push(json!({"type": "OrderBy", "columns": ob}));
-                        }
-                    }
-                }
-
-                // LIMIT / OFFSET
-                if let Some(lc) = &query.limit_clause {
-                    if let LimitClause::LimitOffset { limit, offset, .. } = lc {
-                        let mut l = serde_json::Map::new();
-                        l.insert("type".into(), json!("Limit"));
-                        if let Some(e) = limit {
-                            l.insert("limit".into(), json!(format!("{}", e)));
-                        }
-                        if let Some(o) = offset {
-                            l.insert("offset".into(), json!(format!("{}", o.value)));
-                        }
-                        steps.push(serde_json::Value::Object(l));
-                    } else if let LimitClause::OffsetCommaLimit { offset, limit } = lc {
-                        steps.push(json!({
-                            "type": "Limit",
-                            "limit": format!("{}", limit),
-                            "offset": format!("{}", offset),
-                        }));
-                    }
-                }
-            }
-
-            if steps.is_empty() {
-                steps.push(json!({"type": "Unknown"}));
-            }
-
-            serde_json::to_string(&steps).map_err(|e| e.to_string())
-        }
-
-        Statement::Insert(ins) => {
-            let tname = ins.table.to_string().to_lowercase();
-            let ncols = ins.columns.len();
-            let mut plan = json!({"type": "Insert", "table": tname});
-            if ncols > 0 {
-                let cols: Vec<String> = ins.columns.iter().map(|c| c.to_string().to_lowercase()).collect();
-                plan["columns"] = json!(cols);
-            }
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
-        }
-
-        Statement::CreateTable(def) => {
-            let tname = def.name.to_string().to_lowercase();
-            let ncols = def.columns.len();
-            let plan = json!({"type": "CreateTable", "table": tname, "columns": ncols});
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
-        }
-
-        Statement::CreateIndex(idx) => {
-            let iname = idx
-                .name
-                .as_ref()
-                .map(|n| n.to_string())
-                .unwrap_or_default()
-                .to_lowercase();
-            let tname = idx.table_name.to_string().to_lowercase();
-            let plan = json!({"type": "CreateIndex", "index": iname, "table": tname});
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
-        }
-
-        Statement::Update(upd) => {
-            let tname = resolve_table_from_joins(&upd.table).unwrap_or_default();
-            let plan = json!({"type": "Update", "table": tname});
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
-        }
-
-        Statement::Delete(del) => {
-            let tname = match &del.from {
-                sqlparser::ast::FromTable::WithFromKeyword(tables)
-                | sqlparser::ast::FromTable::WithoutKeyword(tables) => match tables.first() {
-                    Some(tj) => match &tj.relation {
-                        TableFactor::Table { name, .. } => name.to_string().to_lowercase(),
-                        _ => String::new(),
-                    },
-                    None => String::new(),
-                },
-            };
-            let plan = json!({"type": "Delete", "table": tname});
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
-        }
-
-        Statement::Drop { names, object_type, .. } => {
-            let oname = names.first().map(|n| n.to_string()).unwrap_or_default();
-            let otype = format!("{}", object_type).to_lowercase();
-            let plan = json!({"type": "Drop", "object_type": otype, "name": oname});
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
-        }
-
-        Statement::Truncate(trunc) => {
-            let tname = trunc
-                .table_names
-                .first()
-                .map(|t| t.name.to_string())
-                .unwrap_or_default();
-            let plan = json!({"type": "Truncate", "table": tname.to_lowercase()});
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
-        }
-
-        Statement::AlterTable(at) => {
-            let tname = at.name.to_string().to_lowercase();
-            let ops: Vec<String> = at.operations.iter().map(|o| format!("{}", o)).collect();
-            let plan = json!({"type": "AlterTable", "table": tname, "operations": ops});
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
-        }
-
-        Statement::RenameTable(rt) => {
-            let old = rt[0].old_name.to_string().to_lowercase();
-            let new = rt[0].new_name.to_string().to_lowercase();
-            let plan = json!({"type": "RenameTable", "old_name": old, "new_name": new});
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
-        }
-
-        Statement::ShowTables { .. } => {
-            let plan = json!({"type": "ShowTables"});
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
-        }
-
-        Statement::StartTransaction { .. } => {
-            let plan = json!({"type": "StartTransaction"});
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
-        }
-
-        Statement::Commit { .. } => {
-            let plan = json!({"type": "Commit"});
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
-        }
-
-        Statement::Rollback { .. } => {
-            let plan = json!({"type": "Rollback"});
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
-        }
-
-        Statement::Savepoint { name, .. } => {
-            let plan = json!({"type": "Savepoint", "name": name.to_string()});
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
-        }
-
-        Statement::ReleaseSavepoint { name, .. } => {
-            let plan = json!({"type": "ReleaseSavepoint", "name": name.to_string()});
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
-        }
-
-        Statement::Merge(merge) => {
-            let tname = format!("{}", merge.table);
-            let plan = json!({"type": "Merge", "target": tname, "clauses": merge.clauses.len()});
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
-        }
-
-        Statement::AttachDatabase { schema_name, .. } => {
-            let plan = json!({"type": "AttachDatabase", "schema": schema_name.to_string()});
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
-        }
-
-        Statement::CreateVirtualTable { name, module_name, .. } => {
-            let plan =
-                json!({"type": "CreateVirtualTable", "table": name.to_string(), "module": module_name.to_string()});
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
-        }
-
-        // Fallback for unsupported statement types — show the SQL text
-        other => {
-            let plan = json!({"type": format!("{}", other)});
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
-        }
-    }
-}
-
-// ── LIKE pattern matching ──────────────────────────────────────────────
-
-fn simple_like(value: &str, pattern: &str) -> bool {
-    let val_chars: Vec<char> = value.chars().collect();
-    let pat_chars: Vec<char> = pattern.chars().collect();
-    like_match(&val_chars, &pat_chars, 0, 0)
-}
-
-fn like_match(val: &[char], pat: &[char], vi: usize, pi: usize) -> bool {
-    if pi == pat.len() {
-        return vi == val.len();
-    }
-    match pat[pi] {
-        '%' => {
-            let mut vi2 = vi;
-            while vi2 <= val.len() {
-                if like_match(val, pat, vi2, pi + 1) {
-                    return true;
-                }
-                vi2 += 1;
-            }
-            false
-        }
-        '_' => vi < val.len() && like_match(val, pat, vi + 1, pi + 1),
-        c => vi < val.len() && val[vi] == c && like_match(val, pat, vi + 1, pi + 1),
-    }
-}
-
-/// Simple wildcard matching: `*` matches any sequence, `?` matches single char.
-fn wildcard_match(val: &[char], pat: &[char], vi: usize, pi: usize) -> bool {
-    if pi == pat.len() {
-        return vi == val.len();
-    }
-    match pat[pi] {
-        '*' => {
-            let mut vi2 = vi;
-            while vi2 <= val.len() {
-                if wildcard_match(val, pat, vi2, pi + 1) {
-                    return true;
-                }
-                vi2 += 1;
-            }
-            false
-        }
-        '?' => vi < val.len() && wildcard_match(val, pat, vi + 1, pi + 1),
-        c => vi < val.len() && val[vi] == c && wildcard_match(val, pat, vi + 1, pi + 1),
-    }
-}
-
-fn simple_wildcard(value: &str, pattern: &str) -> bool {
-    let val: Vec<char> = value.chars().collect();
-    let pat: Vec<char> = pattern.chars().collect();
-    wildcard_match(&val, &pat, 0, 0)
-}
+// Note: EXPLAIN, simple_like, like_match, wildcard_match moved to
+// functions/eval.rs. simple_wildcard was unused dead code, removed.
 
 // ── Tests ──────────────────────────────────────────────────────────────
 
