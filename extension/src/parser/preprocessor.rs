@@ -13,7 +13,22 @@
 /// Finds each `%%` operator outside string literals and rewrites
 /// `left %% right` → `fuzzy_match(left,right)`.
 pub fn preprocess(sql: &str) -> String {
+    // Replace pseudo-array type syntax before passing to sqlparser-rs.
+    // The engine stores arrays as JSON strings, so the base type is sufficient.
     let mut result = sql.to_string();
+    result = result.replace("STRINGS[]", "STRING");
+    result = result.replace("FLOATS[]", "FLOAT");
+
+    // Map date/time types to STRING (engine stores values as JSON-compatible strings)
+    result = result.replace(" DATE)", " STRING)");
+    result = result.replace(" DATE,", " STRING,");
+    result = result.replace(" TIMESTAMP)", " STRING)");
+    result = result.replace(" TIMESTAMP,", " STRING,");
+    result = result.replace(" TIMESTAMP ", " STRING ");
+    result = result.replace(" DATETIME)", " STRING)");
+    result = result.replace(" DATETIME,", " STRING,");
+    result = result.replace(" DATETIME ", " STRING ");
+
     let mut search_start = 0;
 
     while let Some(abs_pos) = find_unescaped_pct(&result, search_start) {
@@ -237,5 +252,60 @@ mod tests {
             preprocess("WHERE COALESCE(a,b,c) %% 'x'"),
             "WHERE fuzzy_match(COALESCE(a,b,c),'x')"
         );
+    }
+
+    #[test]
+    fn strings_array_type() {
+        assert_eq!(
+            preprocess("CREATE TABLE t (id STRING PRIMARY KEY, tags STRINGS[])"),
+            "CREATE TABLE t (id STRING PRIMARY KEY, tags STRING)"
+        );
+    }
+
+    #[test]
+    fn floats_array_type() {
+        assert_eq!(
+            preprocess("CREATE TABLE t (id STRING PRIMARY KEY, vals FLOATS[])"),
+            "CREATE TABLE t (id STRING PRIMARY KEY, vals FLOAT)"
+        );
+    }
+
+    #[test]
+    fn both_array_types() {
+        assert_eq!(
+            preprocess("CREATE TABLE t (id STRING PRIMARY KEY, tags STRINGS[], vals FLOATS[])"),
+            "CREATE TABLE t (id STRING PRIMARY KEY, tags STRING, vals FLOAT)"
+        );
+    }
+
+    #[test]
+    fn date_type() {
+        assert_eq!(
+            preprocess("CREATE TABLE t (id STRING PRIMARY KEY, d DATE)"),
+            "CREATE TABLE t (id STRING PRIMARY KEY, d STRING)"
+        );
+    }
+
+    #[test]
+    fn timestamp_type() {
+        assert_eq!(
+            preprocess("CREATE TABLE t (id STRING PRIMARY KEY, ts TIMESTAMP)"),
+            "CREATE TABLE t (id STRING PRIMARY KEY, ts STRING)"
+        );
+    }
+
+    #[test]
+    fn datetime_type() {
+        assert_eq!(
+            preprocess("CREATE TABLE t (id STRING PRIMARY KEY, dt DATETIME, ts TIMESTAMP)"),
+            "CREATE TABLE t (id STRING PRIMARY KEY, dt STRING, ts STRING)"
+        );
+    }
+
+    #[test]
+    fn date_function_not_mangled() {
+        // DATE inside function names should not be affected
+        let r = preprocess("SELECT DATE_FORMAT(ts, '%Y') AS y FROM t");
+        assert!(r.contains("DATE_FORMAT"), "DATE_FORMAT mangled: {}", r);
     }
 }

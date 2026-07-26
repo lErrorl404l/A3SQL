@@ -17,6 +17,8 @@
 //         [1 byte] value tag
 //         value data
 
+//! Binary serialization — compact binary format for save/load (`.bin` files).
+
 use super::super::database::Database;
 use super::super::table::Table;
 use super::super::value::{Column, ColumnType, DbValue};
@@ -36,7 +38,7 @@ enum BinTag {
 }
 
 /// Export full database as binary.
-pub fn export_binary(db: &Database) -> Vec<u8> {
+pub(crate) fn export_binary(db: &Database) -> Vec<u8> {
     let mut buf = Vec::new();
     buf.extend_from_slice(BINARY_MAGIC);
     buf.push(BINARY_VERSION);
@@ -146,7 +148,7 @@ fn write_bin_value(buf: &mut Vec<u8>, val: &DbValue) {
 }
 
 /// Import database from binary.
-pub fn import_binary(data: &[u8], db: &mut Database) -> Result<(), String> {
+pub(crate) fn import_binary(data: &[u8], db: &mut Database) -> Result<(), String> {
     if data.len() < 5 {
         return Err("Binary data too short".into());
     }

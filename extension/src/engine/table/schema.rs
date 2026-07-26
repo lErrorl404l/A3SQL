@@ -1,14 +1,18 @@
 // a3sql table schema — column/table structure definitions
 
+//! Table schema types — [`IndexImpl`], [`ForeignKeyInfo`], trigram utilities.
+
 use std::collections::HashSet;
 
 use super::super::index::{BTreeIndex, TrigramIndex};
 use super::super::value::{Column, ColumnType, DbValue};
 use super::Table;
 
+use crate::engine::error::EngineError;
+
 /// A foreign key constraint referencing another table's column.
 #[derive(Debug, Clone)]
-pub struct ForeignKeyInfo {
+pub(crate) struct ForeignKeyInfo {
     pub local_column: String,
     pub foreign_table: String,
     pub foreign_column: String,
@@ -17,7 +21,7 @@ pub struct ForeignKeyInfo {
 }
 
 #[derive(Debug, Clone)]
-pub enum IndexImpl {
+pub(crate) enum IndexImpl {
     BTree(BTreeIndex),
     Trigram(TrigramIndex),
 }
@@ -56,9 +60,9 @@ impl Table {
     // ── Schema management ───────────────────────────────────────────
 
     /// Add a new column to the table. Existing rows get NULL for the new column.
-    pub fn add_column(&mut self, name: String, dtype: ColumnType) -> Result<(), String> {
+    pub fn add_column(&mut self, name: String, dtype: ColumnType) -> Result<(), EngineError> {
         if self.columns.iter().any(|c| c.name == name) {
-            return Err(format!("Column '{}' already exists", name));
+            return Err(EngineError::ColumnAlreadyExists(name));
         }
         let idx = self.columns.len();
         self.columns.push(Column {
@@ -77,12 +81,12 @@ impl Table {
     }
 
     /// Rename a column.
-    pub fn rename_column(&mut self, old_name: &str, new_name: &str) -> Result<(), String> {
+    pub fn rename_column(&mut self, old_name: &str, new_name: &str) -> Result<(), EngineError> {
         let col = self
             .columns
             .iter_mut()
             .find(|c| c.name == old_name)
-            .ok_or_else(|| format!("Column '{}' not found", old_name))?;
+            .ok_or_else(|| EngineError::ColumnNotFound(old_name.to_string()))?;
         col.name = new_name.to_string();
         // Update col_index map
         self.col_index.remove(old_name);
@@ -94,12 +98,12 @@ impl Table {
     }
 
     /// Drop a column from the table. Removes the column and all its data.
-    pub fn drop_column(&mut self, name: &str) -> Result<(), String> {
+    pub fn drop_column(&mut self, name: &str) -> Result<(), EngineError> {
         let idx = self
             .columns
             .iter()
             .position(|c| c.name == name)
-            .ok_or_else(|| format!("Column '{}' not found", name))?;
+            .ok_or_else(|| EngineError::ColumnNotFound(name.to_string()))?;
         self.columns.remove(idx);
         for row in &mut self.rows {
             row.remove(idx);

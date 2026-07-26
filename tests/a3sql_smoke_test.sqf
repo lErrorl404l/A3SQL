@@ -39,6 +39,23 @@ private _test = {
 ["OFFSET", "SELECT * FROM sqf_test OFFSET 1", true] call _test;
 ["DISTINCT", "SELECT DISTINCT v FROM sqf_test", true] call _test;
 ["COUNT DISTINCT", "SELECT COUNT(DISTINCT v) FROM sqf_test", true] call _test;
+["FILTER on COUNT", "SELECT COUNT(*) FILTER (WHERE v > 15) AS high_cnt FROM sqf_test", true] call _test;
+["FILTER on SUM", "SELECT SUM(v) FILTER (WHERE k != 'a') AS filtered FROM sqf_test", true] call _test;
+
+// ═══════════════════════════════════════════
+// CASE / BETWEEN
+// ═══════════════════════════════════════════
+["CASE simple", "SELECT k, CASE WHEN v > 20 THEN 'high' ELSE 'low' END AS cat FROM sqf_test ORDER BY k", true] call _test;
+["BETWEEN", "SELECT k FROM sqf_test WHERE v BETWEEN 15 AND 25", true] call _test;
+
+// ═══════════════════════════════════════════
+// INSERT INTO ... SELECT
+// ═══════════════════════════════════════════
+["INSERT SELECT", "INSERT INTO sqf_test SELECT 'i' AS k, 100 AS v, 'insert_sel' AS name", true] call _test;
+["TRUNCATE", "TRUNCATE TABLE sqf_test", true] call _test;
+["Re-insert for later tests", "INSERT INTO sqf_test VALUES ('a', 10, 'alpha')", true] call _test;
+["INSERT INTO sqf_test VALUES ('b', 20, 'beta')", "INSERT INTO sqf_test VALUES ('b', 20, 'beta')", true] call _test;
+["INSERT INTO sqf_test VALUES ('c', 30, 'gamma')", "INSERT INTO sqf_test VALUES ('c', 30, 'gamma')", true] call _test;
 
 // ═══════════════════════════════════════════
 // Transactions
@@ -49,6 +66,17 @@ private _test = {
 ["Verify rollback", "SELECT * FROM sqf_test WHERE k = 'd'", true] call _test;
 ["BEGIN/COMMIT", "BEGIN", true] call _test;
 ["COMMIT", "COMMIT", true] call _test;
+
+// ═══════════════════════════════════════════
+// SAVEPOINT
+// ═══════════════════════════════════════════
+["BEGIN for savepoint", "BEGIN", true] call _test;
+["SAVEPOINT", "SAVEPOINT sp1", true] call _test;
+["Insert in savepoint", "INSERT INTO sqf_test VALUES ('sp', 999, 'savepoint')", true] call _test;
+["ROLLBACK TO", "ROLLBACK TO SAVEPOINT sp1", true] call _test;
+["Verify revert", "SELECT * FROM sqf_test WHERE k = 'sp'", true] call _test;
+["RELEASE SAVEPOINT", "RELEASE SAVEPOINT sp1", true] call _test;
+["COMMIT after savepoint", "COMMIT", true] call _test;
 
 // ═══════════════════════════════════════════
 // RETURNING
@@ -77,6 +105,14 @@ private _test = {
 // Recursive CTE
 // ═══════════════════════════════════════════
 ["Recursive CTE", "WITH RECURSIVE nums(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM nums WHERE n < 5) SELECT COUNT(*) FROM nums", true] call _test;
+["CTE chained", "WITH a AS (SELECT * FROM sqf_test), b AS (SELECT * FROM a WHERE v > 15) SELECT COUNT(*) FROM b", true] call _test;
+
+// ═══════════════════════════════════════════
+// MERGE (UPSERT)
+// ═══════════════════════════════════════════
+["MERGE insert", "MERGE INTO sqf_test AS t USING (SELECT 'm' AS k, 50 AS v, 'merge_ins' AS name) AS s ON t.k = s.k WHEN NOT MATCHED THEN INSERT VALUES (s.k, s.v, s.name)", true] call _test;
+["MERGE update", "MERGE INTO sqf_test AS t USING (SELECT 'a' AS k, 999 AS v, 'merged' AS name) AS s ON t.k = s.k WHEN MATCHED THEN UPDATE SET v = s.v", true] call _test;
+["MERGE RETURNING", "MERGE INTO sqf_test AS t USING (SELECT 'n' AS k, 77 AS v, 'merge_ret' AS name) AS s ON t.k = s.k WHEN NOT MATCHED THEN INSERT VALUES (s.k, s.v, s.name) RETURNING k, v", true] call _test;
 
 // ═══════════════════════════════════════════
 // Joins
@@ -89,6 +125,9 @@ private _test = {
 // ═══════════════════════════════════════════
 ["ROW_NUMBER", "SELECT ROW_NUMBER() OVER (ORDER BY v) AS rn, k, v FROM sqf_test", true] call _test;
 ["RANK", "SELECT RANK() OVER (ORDER BY v) AS rk, k, v FROM sqf_test", true] call _test;
+["Window SUM", "SELECT k, v, SUM(v) OVER (ORDER BY v ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS running FROM sqf_test ORDER BY k", true] call _test;
+["Window AVG", "SELECT k, v, AVG(v) OVER (ORDER BY v ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) AS centered FROM sqf_test ORDER BY k", true] call _test;
+["Window with PARTITION", "SELECT k, v, v > 20 AS grp, COUNT(*) OVER (PARTITION BY v > 20) AS cnt FROM sqf_test ORDER BY k", true] call _test;
 
 // ═══════════════════════════════════════════
 // Set operations
@@ -102,6 +141,8 @@ private _test = {
 // ═══════════════════════════════════════════
 ["Subquery WHERE", "SELECT * FROM sqf_test WHERE v > (SELECT AVG(v) FROM sqf_test)", true] call _test;
 ["Subquery FROM", "SELECT * FROM (SELECT k, v FROM sqf_test) sub ORDER BY k", true] call _test;
+["EXISTS", "SELECT * FROM sqf_test t WHERE EXISTS (SELECT 1 FROM sqf_test WHERE k = t.k)", true] call _test;
+["IN subquery", "SELECT * FROM sqf_test WHERE k IN (SELECT k FROM sqf_test WHERE v > 15)", true] call _test;
 
 // ═══════════════════════════════════════════
 // EXPLAIN
@@ -122,6 +163,13 @@ private _test = {
 ["CHECK passes", "INSERT INTO sqf_check VALUES ('a', 5)", true] call _test;
 ["CHECK fails", "INSERT INTO sqf_check VALUES ('b', -1)", false] call _test;
 ["DROP TABLE check", "DROP TABLE sqf_check", true] call _test;
+
+// ═══════════════════════════════════════════
+// Indexes
+// ═══════════════════════════════════════════
+["CREATE INDEX", "CREATE INDEX sqf_test_v ON sqf_test (v)", true] call _test;
+["Index equality lookup", "SELECT k FROM sqf_test WHERE v = 10", true] call _test;
+["DROP INDEX", "DROP INDEX sqf_test_v", true] call _test;
 
 // ═══════════════════════════════════════════
 // Full-text search

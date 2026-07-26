@@ -1,7 +1,10 @@
 // CREATE statements: TABLE, VIEW, TABLE AS SELECT, SEQUENCE, INDEX, TRIGGER, VIRTUAL TABLE
 
+//! CREATE execution — CREATE TABLE, VIEW, INDEX, TRIGGER, SEQUENCE, VIRTUAL TABLE.
+
 use super::{json_val_to_dbvalue, object_name_str, parse_data_type, sql_val_to_db};
 use crate::engine::database::Database;
+use crate::engine::error::EngineError;
 use crate::engine::index::IndexType as A3IndexType;
 use crate::engine::table::{ForeignKeyInfo, Table};
 use crate::engine::value::{Column, ColumnType, DbValue};
@@ -13,7 +16,7 @@ use sqlparser::ast::{
 
 // ── CREATE TABLE ────────────────────────────────────────────────────────
 
-pub(crate) fn exec_create_table(def: &sqlparser::ast::CreateTable, db: &mut Database) -> Result<String, String> {
+pub(crate) fn exec_create_table(def: &sqlparser::ast::CreateTable, db: &mut Database) -> Result<String, EngineError> {
     let table_name = object_name_str(&def.name);
 
     if def.if_not_exists && db.has_table(&table_name) {
@@ -48,7 +51,7 @@ pub(crate) fn exec_create_table(def: &sqlparser::ast::CreateTable, db: &mut Data
                 }
                 ColumnOption::Default(expression) => match expression {
                     Expr::Value(v) => default_val = Some(sql_val_to_db(&v.value)),
-                    _ => return Err("DEFAULT only supports literal values".into()),
+                    _ => return Err(EngineError::Parse("DEFAULT only supports literal values".into())),
                 },
                 _ => {}
             }
@@ -56,7 +59,7 @@ pub(crate) fn exec_create_table(def: &sqlparser::ast::CreateTable, db: &mut Data
 
         if is_pk {
             if has_pk {
-                return Err("Only one primary key column supported".into());
+                return Err(EngineError::Parse("Only one primary key column supported".into()));
             }
             has_pk = true;
         }
@@ -132,7 +135,7 @@ pub(crate) fn exec_create_table(def: &sqlparser::ast::CreateTable, db: &mut Data
                     let cname = text[start + 1..end].trim().to_lowercase();
                     if let Some(col) = columns.iter_mut().find(|col| col.name == cname) {
                         if has_pk {
-                            return Err("Only one primary key supported".into());
+                            return Err(EngineError::Parse("Only one primary key supported".into()));
                         }
                         col.primary_key = true;
                         has_pk = true;
@@ -142,35 +145,41 @@ pub(crate) fn exec_create_table(def: &sqlparser::ast::CreateTable, db: &mut Data
         }
     }
 
-    let mut table = Table::new(table_name.clone(), columns)?;
+    let mut table = Table::new(table_name.clone(), columns).map_err(EngineError::Exec)?;
     table.check_constraints = check_exprs;
     table.foreign_keys = foreign_keys;
-    db.create_table(&table_name, table)?;
+    db.create_table(&table_name, table).map_err(EngineError::Exec)?;
     Ok(format!("\"Table '{}' created\"", table_name))
 }
 
 // ── CREATE VIEW ─────────────────────────────────────────────────────────
 
-pub(crate) fn exec_create_view(cv: &sqlparser::ast::CreateView, db: &mut Database) -> Result<String, String> {
+pub(crate) fn exec_create_view(cv: &sqlparser::ast::CreateView, db: &mut Database) -> Result<String, EngineError> {
     // ponytail: non-materialized views only (re-executed each reference)
     if cv.materialized {
-        return Err("Materialized views are not supported".into());
+        return Err(EngineError::Exec("Materialized views are not supported".into()));
     }
     let name = object_name_str(&cv.name);
     if db.has_table(&name) {
-        return Err(format!("Table '{}' already exists — cannot create view", name));
+        return Err(EngineError::TableAlreadyExists(name.clone()));
+    }
+    if cv.or_replace && db.has_view(&name) {
+        db.drop_view(&name).map_err(EngineError::Exec)?;
     }
     if cv.if_not_exists && db.has_view(&name) {
         return Ok(format!("\"View '{}' already exists\"", name));
     }
     let view_sql = cv.query.to_string();
-    db.create_view(&name, &view_sql)?;
+    db.create_view(&name, &view_sql).map_err(EngineError::Exec)?;
     Ok(format!("\"View '{}' created\"", name))
 }
 
 // ── CREATE TABLE AS SELECT (CTAS) ──────────────────────────────────────
 
-pub(crate) fn exec_create_table_as(def: &sqlparser::ast::CreateTable, db: &mut Database) -> Result<String, String> {
+pub(crate) fn exec_create_table_as(
+    def: &sqlparser::ast::CreateTable,
+    db: &mut Database,
+) -> Result<String, EngineError> {
     let table_name = object_name_str(&def.name);
 
     if def.if_not_exists && db.has_table(&table_name) {
@@ -181,10 +190,10 @@ pub(crate) fn exec_create_table_as(def: &sqlparser::ast::CreateTable, db: &mut D
     let json = super::super::select::exec_select(query, db)?;
 
     let rows: Vec<Vec<serde_json::Value>> =
-        serde_json::from_str(&json).map_err(|e| format!("CTAS JSON parse: {}", e))?;
+        serde_json::from_str(&json).map_err(|e| EngineError::Exec(format!("CTAS JSON parse: {}", e)))?;
 
     if rows.len() < 2 {
-        return Err("CTAS: SELECT returned no columns".into());
+        return Err(EngineError::Exec("CTAS: SELECT returned no columns".into()));
     }
 
     let header = &rows[0];
@@ -201,13 +210,15 @@ pub(crate) fn exec_create_table_as(def: &sqlparser::ast::CreateTable, db: &mut D
         });
     }
 
-    let mut table = Table::new(table_name.clone(), columns)?;
+    let mut table = Table::new(table_name.clone(), columns).map_err(EngineError::Exec)?;
     for row_data in &rows[1..] {
         let db_row: Vec<DbValue> = row_data.iter().map(json_val_to_dbvalue).collect();
-        table.insert(db_row).map_err(|e| format!("CTAS insert: {}", e))?;
+        table
+            .insert(db_row)
+            .map_err(|e| EngineError::Exec(format!("CTAS insert: {}", e)))?;
     }
 
-    db.create_table(&table_name, table)?;
+    db.create_table(&table_name, table).map_err(EngineError::Exec)?;
     Ok(format!(
         "\"Table '{}' created with {} row(s)\"",
         table_name,
@@ -223,7 +234,7 @@ pub(crate) fn exec_create_sequence(
     _opts: &[SequenceOptions],
     _dt: Option<&DataType>,
     db: &mut Database,
-) -> Result<String, String> {
+) -> Result<String, EngineError> {
     let sn = object_name_str(name);
     if ifne && db.has_table(&sn) {
         return Ok(format!("\"Sequence '{}' exists\"", sn));
@@ -236,7 +247,8 @@ pub(crate) fn exec_create_sequence(
         default: Some(DbValue::Int(0)),
         auto_increment: false,
     }];
-    let mut table = Table::new(format!("__seq_{}", sn), cols).map_err(|e| format!("CREATE SEQUENCE: {}", e))?;
+    let mut table =
+        Table::new(format!("__seq_{}", sn), cols).map_err(|e| EngineError::Exec(format!("CREATE SEQUENCE: {}", e)))?;
     let _ = table.insert(vec![DbValue::Int(0)]);
     db.add_table(format!("__seq_{}", sn), table);
     Ok(format!("\"Sequence '{}' created\"", sn))
@@ -244,15 +256,15 @@ pub(crate) fn exec_create_sequence(
 
 // ── CREATE INDEX ───────────────────────────────────────────────────────────
 
-pub(crate) fn exec_create_index(idx: &CreateIndex, db: &mut Database) -> Result<String, String> {
+pub(crate) fn exec_create_index(idx: &CreateIndex, db: &mut Database) -> Result<String, EngineError> {
     let index_name = match &idx.name {
-        Some(name) => crate::engine::execute::object_name_str(name),
-        None => return Err("CREATE INDEX requires a name".into()),
+        Some(name) => object_name_str(name),
+        None => return Err(EngineError::Exec("CREATE INDEX requires a name".into())),
     };
-    let table_name = crate::engine::execute::object_name_str(&idx.table_name);
+    let table_name = object_name_str(&idx.table_name);
 
     if idx.if_not_exists {
-        let table = db.get_table(&table_name)?;
+        let table = db.get_table(&table_name).map_err(EngineError::Exec)?;
         if table.has_index(&index_name) {
             return Ok(format!("\"Index '{}' already exists\"", index_name));
         }
@@ -263,16 +275,18 @@ pub(crate) fn exec_create_index(idx: &CreateIndex, db: &mut Database) -> Result<
         None | Some(SqlIdx::BTree) => A3IndexType::BTree,
         Some(SqlIdx::GIN) => A3IndexType::Trigram,
         Some(SqlIdx::Custom(id)) if id.value.to_uppercase() == "TRIGRAM" => A3IndexType::Trigram,
-        Some(other) => return Err(format!("Unsupported index type: {}", other)),
+        Some(other) => return Err(EngineError::Exec(format!("Unsupported index type: {}", other))),
     };
 
     let column = match idx.columns.first() {
         Some(col) => col.to_string().to_lowercase(),
-        None => return Err("CREATE INDEX requires at least one column".into()),
+        None => return Err(EngineError::Exec("CREATE INDEX requires at least one column".into())),
     };
 
-    let table = db.get_table_mut(&table_name)?;
-    table.create_index(&index_name, &column, index_type)?;
+    let table = db.get_table_mut(&table_name).map_err(EngineError::Exec)?;
+    table
+        .create_index(&index_name, &column, index_type)
+        .map_err(EngineError::Exec)?;
 
     Ok(format!(
         "\"Index '{}' on '{}' ({}) created\"",
@@ -282,7 +296,7 @@ pub(crate) fn exec_create_index(idx: &CreateIndex, db: &mut Database) -> Result<
 
 // ── CREATE TRIGGER ──────────────────────────────────────────────────────────
 
-pub(crate) fn exec_create_trigger(ct: &CreateTrigger, db: &mut Database) -> Result<String, String> {
+pub(crate) fn exec_create_trigger(ct: &CreateTrigger, db: &mut Database) -> Result<String, EngineError> {
     let table_name = ct.table_name.to_string().to_lowercase();
     let trigger_name = ct.name.to_string().to_lowercase();
 
@@ -290,23 +304,23 @@ pub(crate) fn exec_create_trigger(ct: &CreateTrigger, db: &mut Database) -> Resu
         Some(TriggerEvent::Insert) => "INSERT",
         Some(TriggerEvent::Update(_)) => "UPDATE",
         Some(TriggerEvent::Delete) => "DELETE",
-        _ => return Err("Unsupported trigger event".into()),
+        _ => return Err(EngineError::Exec("Unsupported trigger event".into())),
     };
     let timing_str = match ct.period.as_ref() {
         Some(p) => match p {
             TriggerPeriod::Before => "BEFORE",
             TriggerPeriod::After => "AFTER",
-            _ => return Err("Only BEFORE/AFTER triggers supported".into()),
+            _ => return Err(EngineError::Exec("Only BEFORE/AFTER triggers supported".into())),
         },
-        None => return Err("Trigger timing (BEFORE/AFTER) required".into()),
+        None => return Err(EngineError::Exec("Trigger timing (BEFORE/AFTER) required".into())),
     };
 
     let body = ct.statements.as_ref().map(|s| format!("{}", s)).unwrap_or_default();
     if body.is_empty() {
-        return Err("Trigger requires a body (SQL statement)".into());
+        return Err(EngineError::Exec("Trigger requires a body (SQL statement)".into()));
     }
 
-    let table = db.get_table_mut(&table_name)?;
+    let table = db.get_table_mut(&table_name).map_err(EngineError::Exec)?;
     table.triggers.push(crate::engine::trigger::TriggerInfo {
         name: trigger_name.clone(),
         timing: timing_str.to_string(),
@@ -325,13 +339,16 @@ pub(crate) fn exec_create_virtual_table(
     module_name: &Ident,
     module_args: &[Ident],
     db: &mut Database,
-) -> Result<String, String> {
+) -> Result<String, EngineError> {
     let tn = object_name_str(name);
     if if_not_exists && db.has_table(&tn) {
         return Ok(format!("\"Table '{}' exists\"", tn));
     }
     if !["fts3", "fts4", "fts5"].contains(&module_name.value.to_lowercase().as_str()) {
-        return Err(format!("Virtual table module '{}' not supported", module_name));
+        return Err(EngineError::Exec(format!(
+            "Virtual table module '{}' not supported",
+            module_name
+        )));
     }
     let cols: Vec<Column> = module_args
         .iter()
@@ -345,9 +362,10 @@ pub(crate) fn exec_create_virtual_table(
         })
         .collect();
     if cols.is_empty() {
-        return Err("ftsX requires columns".into());
+        return Err(EngineError::Exec("ftsX requires columns".into()));
     }
-    let mut table = Table::new(tn.clone(), cols).map_err(|e| format!("CREATE VIRTUAL TABLE: {}", e))?;
+    let mut table =
+        Table::new(tn.clone(), cols).map_err(|e| EngineError::Exec(format!("CREATE VIRTUAL TABLE: {}", e)))?;
     for cn in module_args.iter() {
         let _ = table.create_index(
             &format!("fts_trgm_{}", cn.value.to_lowercase()),

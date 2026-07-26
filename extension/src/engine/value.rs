@@ -1,10 +1,18 @@
 // a3sql core types — column types and runtime values
 
+//! Core value types — [`DbValue`], [`Column`], [`ColumnType`], and comparison/serialization helpers.
+//!
+//! These types are the foundation of the engine's data model. Every cell in
+//! every row is a `DbValue`.
+
 use std::fmt;
+
+use super::functions::builtin::value_to_string;
+use super::functions::eval::to_float;
 
 /// Supported column data types.
 #[derive(Debug, Clone, PartialEq)]
-pub enum ColumnType {
+pub(crate) enum ColumnType {
     Bool,
     Int,
     Float,
@@ -28,7 +36,7 @@ impl std::fmt::Display for ColumnType {
 
 /// A column definition.
 #[derive(Debug, Clone)]
-pub struct Column {
+pub(crate) struct Column {
     pub name: String,
     pub dtype: ColumnType,
     pub primary_key: bool,
@@ -39,7 +47,7 @@ pub struct Column {
 
 /// Runtime value stored in cells.
 #[derive(Debug, Clone, PartialEq)]
-pub enum DbValue {
+pub(crate) enum DbValue {
     Null,
     Bool(bool),
     Int(i64),
@@ -107,6 +115,29 @@ impl fmt::Display for DbValue {
             DbValue::Strings(v) => write!(f, "[{}]", v.join(",")),
             DbValue::Floats(v) => write!(f, "[{}]", v.iter().map(|n| n.to_string()).collect::<Vec<_>>().join(",")),
         }
+    }
+}
+
+/// Convert a serde_json::Value to DbValue.
+pub(crate) fn json_val_to_dbvalue(v: &serde_json::Value) -> DbValue {
+    match v {
+        serde_json::Value::Null => DbValue::Null,
+        serde_json::Value::Bool(b) => DbValue::Bool(*b),
+        serde_json::Value::Number(n) => n
+            .as_i64()
+            .map(DbValue::Int)
+            .or_else(|| n.as_f64().map(DbValue::Float))
+            .unwrap_or(DbValue::Null),
+        serde_json::Value::String(s) => DbValue::String(s.clone()),
+        _ => DbValue::String(v.to_string()),
+    }
+}
+
+/// Compare two `DbValue`s for ordering.
+pub(crate) fn db_value_cmp(a: &DbValue, b: &DbValue) -> std::cmp::Ordering {
+    match (to_float(a), to_float(b)) {
+        (Some(x), Some(y)) => x.partial_cmp(&y).unwrap_or(std::cmp::Ordering::Equal),
+        _ => value_to_string(a).cmp(&value_to_string(b)),
     }
 }
 

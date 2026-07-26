@@ -83,7 +83,7 @@ s.close()
 ```bash
 cargo build --release -p a3sql   # extension
 hemtt build                      # addon PBOs
-cargo test --lib -p a3sql         # 165+ tests
+cargo test --lib -p a3sql         # 213+ tests
 ```
 
 See the [Building page](https://github.com/lErrorl404l/a3sql/wiki/Building) for cross-compilation, code signing, and CI details.

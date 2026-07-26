@@ -1,5 +1,7 @@
 // a3sql table — schema + row storage + CRUD operations
 
+//! Table implementation — schema, row storage, CRUD operations, index management.
+
 mod row_ops;
 mod schema;
 
@@ -11,11 +13,11 @@ use super::index::{BTreeIndex, IndexMeta, IndexType, TrigramIndex};
 use super::trigger::TriggerInfo;
 use super::value::{Column, DbValue};
 
-pub(crate) use schema::*;
+pub(crate) use schema::{trigrams, ForeignKeyInfo, IndexImpl};
 
 /// An in-memory table.
 #[derive(Debug, Clone)]
-pub struct Table {
+pub(crate) struct Table {
     pub name: String,
     pub columns: Vec<Column>,
     pub rows: Vec<Vec<DbValue>>,

@@ -1,13 +1,18 @@
 // Aggregate and GROUP BY helper functions — moved from execute.rs
 
+//! Aggregate functions — COUNT, SUM, AVG, MIN, MAX, GROUP_CONCAT.
+//! Supports GROUP BY, HAVING, DISTINCT, and FILTER (WHERE) clauses.
+//! Also computes window function results.
+
 use std::collections::HashMap;
 
 use sqlparser::ast::{Expr, Function, Select, SelectItem};
 
-use super::super::execute::db_value_cmp;
 use super::super::functions::builtin::{extract_func_arg, get_func_arg_unnamed, value_to_string};
 use super::super::functions::eval::{eval_expr, eval_literal_expr, is_truthy};
+use super::super::value::db_value_cmp;
 use super::super::value::DbValue;
+use crate::engine::error::EngineError;
 
 pub(crate) fn has_group_by(select: &Select) -> bool {
     use sqlparser::ast::GroupByExpr;
@@ -78,13 +83,13 @@ pub(crate) fn partition_by_group<'a>(
     rows: &[&'a [DbValue]],
     select: &Select,
     col_map: &HashMap<String, usize>,
-) -> Result<Vec<Vec<&'a [DbValue]>>, String> {
+) -> Result<Vec<Vec<&'a [DbValue]>>, EngineError> {
     let exprs = resolve_group_by_aliases(select);
     let mut groups: Vec<Vec<&[DbValue]>> = Vec::new();
     let mut keys: Vec<Vec<DbValue>> = Vec::new();
 
     'rows: for row in rows {
-        let key: Result<Vec<DbValue>, String> = exprs.iter().map(|e| eval_expr(e, row, col_map)).collect();
+        let key: Result<Vec<DbValue>, EngineError> = exprs.iter().map(|e| eval_expr(e, row, col_map)).collect();
         let key = key?;
 
         for (i, existing_key) in keys.iter().enumerate() {
@@ -100,11 +105,11 @@ pub(crate) fn partition_by_group<'a>(
     Ok(groups)
 }
 
-fn group_by_exprs(select: &Select) -> Result<&[Expr], String> {
+fn group_by_exprs(select: &Select) -> Result<&[Expr], EngineError> {
     use sqlparser::ast::GroupByExpr;
     match &select.group_by {
         GroupByExpr::Expressions(exprs, _) => Ok(exprs.as_slice()),
-        GroupByExpr::All(_) => Err("GROUP BY ALL not supported".into()),
+        GroupByExpr::All(_) => Err(EngineError::Exec("GROUP BY ALL not supported".into())),
     }
 }
 
@@ -117,7 +122,7 @@ pub(crate) fn compute_aggregates(
     partitions: &[Vec<&[DbValue]>],
     projection: &[SelectItem],
     col_map: &HashMap<String, usize>,
-) -> Result<String, String> {
+) -> Result<String, EngineError> {
     if partitions.is_empty() {
         return Ok("[]".to_string());
     }
@@ -128,7 +133,7 @@ pub(crate) fn compute_aggregates(
         match item {
             SelectItem::UnnamedExpr(expr) => header.push(projection_expr_name(expr)),
             SelectItem::ExprWithAlias { alias, .. } => header.push(alias.value.to_string()),
-            _ => return Err("Unsupported SELECT item in aggregate query".into()),
+            _ => return Err(EngineError::Exec("Unsupported SELECT item in aggregate query".into())),
         }
     }
 
@@ -174,7 +179,7 @@ fn eval_projection_expr(
     expr: &Expr,
     rows: &[&[DbValue]],
     col_map: &HashMap<String, usize>,
-) -> Result<(String, DbValue), String> {
+) -> Result<(String, DbValue), EngineError> {
     // DBG
     match expr {
         Expr::Function(f) => {
@@ -197,6 +202,9 @@ fn eval_projection_expr(
                     };
                     let mut vals: Vec<String> = Vec::new();
                     for r in rows {
+                        if !passes_filter(f, r, col_map) {
+                            continue;
+                        }
                         if let Ok(val) = eval_expr(arg, r, col_map) {
                             if !matches!(val, DbValue::Null) {
                                 vals.push(value_to_string(&val));
@@ -214,6 +222,9 @@ fn eval_projection_expr(
                     let count = if is_distinct {
                         let mut seen: Vec<DbValue> = Vec::new();
                         for r in rows {
+                            if !passes_filter(f, r, col_map) {
+                                continue;
+                            }
                             if let Ok(arg) = extract_func_arg(f) {
                                 if let Ok(val) = eval_expr(arg, r, col_map) {
                                     if !seen.contains(&val) {
@@ -224,7 +235,8 @@ fn eval_projection_expr(
                         }
                         DbValue::Int(seen.len() as i64)
                     } else {
-                        DbValue::Int(rows.len() as i64)
+                        let cnt = rows.iter().filter(|r| passes_filter(f, r, col_map)).count();
+                        DbValue::Int(cnt as i64)
                     };
                     Ok(("COUNT".to_string(), count))
                 }
@@ -258,7 +270,7 @@ fn eval_projection_expr(
             } else {
                 let idx = col_map
                     .get(&ident.value.to_lowercase())
-                    .ok_or_else(|| format!("Unknown column '{}'", ident.value))?;
+                    .ok_or_else(|| EngineError::ColumnNotFound(ident.value.clone()))?;
                 rows[0][*idx].clone()
             };
             Ok((ident.value.to_lowercase(), val))
@@ -271,7 +283,11 @@ fn eval_projection_expr(
 }
 
 /// Evaluate an expression on a group of rows. For non-aggregate columns, uses first row.
-fn eval_expr_on_group(expr: &Expr, rows: &[&[DbValue]], col_map: &HashMap<String, usize>) -> Result<DbValue, String> {
+fn eval_expr_on_group(
+    expr: &Expr,
+    rows: &[&[DbValue]],
+    col_map: &HashMap<String, usize>,
+) -> Result<DbValue, EngineError> {
     // For aggregate queries, non-aggregate columns use the first row's value
     if rows.is_empty() {
         return Ok(DbValue::Null);
@@ -286,7 +302,11 @@ fn passes_filter(func: &Function, row: &[DbValue], col_map: &HashMap<String, usi
         .is_none_or(|filter_expr| eval_expr(filter_expr, row, col_map).ok().is_none_or(|v| is_truthy(&v)))
 }
 
-fn aggregate_sum(func: &Function, rows: &[&[DbValue]], col_map: &HashMap<String, usize>) -> Result<DbValue, String> {
+fn aggregate_sum(
+    func: &Function,
+    rows: &[&[DbValue]],
+    col_map: &HashMap<String, usize>,
+) -> Result<DbValue, EngineError> {
     let arg = extract_func_arg(func)?;
     if rows.is_empty() {
         return Ok(DbValue::Null);
@@ -319,18 +339,25 @@ fn aggregate_sum(func: &Function, rows: &[&[DbValue]], col_map: &HashMap<String,
                 .sum();
             Ok(DbValue::Float(sum))
         }
-        _ => Err("SUM requires numeric column".into()),
+        _ => Err(EngineError::TypeError {
+            expected: "numeric column".into(),
+            actual: format!("{:?}", first),
+        }),
     }
 }
 
-fn aggregate_avg(func: &Function, rows: &[&[DbValue]], col_map: &HashMap<String, usize>) -> Result<DbValue, String> {
+fn aggregate_avg(
+    func: &Function,
+    rows: &[&[DbValue]],
+    col_map: &HashMap<String, usize>,
+) -> Result<DbValue, EngineError> {
     let arg = extract_func_arg(func)?;
-    if rows.is_empty() {
-        return Ok(DbValue::Null);
-    }
     let mut sum = 0.0f64;
     let mut count = 0usize;
     for r in rows {
+        if !passes_filter(func, r, col_map) {
+            continue;
+        }
         if let Ok(v) = eval_expr(arg, r, col_map) {
             match v {
                 DbValue::Int(n) => {
@@ -352,18 +379,28 @@ fn aggregate_avg(func: &Function, rows: &[&[DbValue]], col_map: &HashMap<String,
     }
 }
 
-fn aggregate_min(func: &Function, rows: &[&[DbValue]], col_map: &HashMap<String, usize>) -> Result<DbValue, String> {
+fn aggregate_min(
+    func: &Function,
+    rows: &[&[DbValue]],
+    col_map: &HashMap<String, usize>,
+) -> Result<DbValue, EngineError> {
     let arg = extract_func_arg(func)?;
     rows.iter()
+        .filter(|r| passes_filter(func, r, col_map))
         .filter_map(|r| eval_expr(arg, r, col_map).ok())
         .min_by(db_value_cmp)
-        .ok_or_else(|| "MIN on empty set".into())
+        .ok_or_else(|| EngineError::Exec("MIN on empty set".into()))
 }
 
-fn aggregate_max(func: &Function, rows: &[&[DbValue]], col_map: &HashMap<String, usize>) -> Result<DbValue, String> {
+fn aggregate_max(
+    func: &Function,
+    rows: &[&[DbValue]],
+    col_map: &HashMap<String, usize>,
+) -> Result<DbValue, EngineError> {
     let arg = extract_func_arg(func)?;
     rows.iter()
+        .filter(|r| passes_filter(func, r, col_map))
         .filter_map(|r| eval_expr(arg, r, col_map).ok())
         .max_by(db_value_cmp)
-        .ok_or_else(|| "MAX on empty set".into())
+        .ok_or_else(|| EngineError::Exec("MAX on empty set".into()))
 }
