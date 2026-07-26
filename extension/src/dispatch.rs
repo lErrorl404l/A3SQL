@@ -130,10 +130,11 @@ pub fn dispatch(input: &str, args: &[&str]) -> String {
         return ok_response(&json);
     }
     if lowered.starts_with("register_function ") {
-        let parts: Vec<&str> = trimmed.splitn(3, |c: char| c.is_whitespace()).collect();
+        let parts: Vec<&str> = trimmed.splitn(4, |c: char| c.is_whitespace()).collect();
         let name = parts.get(1).unwrap_or(&"unknown");
         let argc: usize = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
-        engine::plugin::register_sqf_function(name, argc);
+        let body = parts.get(3).unwrap_or(&"");
+        engine::plugin::register_sqf_function(name, argc, body);
         return ok_response(&format!("\"Function '{}' registered with {} args\"", name, argc));
     }
     if lowered.starts_with("plugin_dir ") {
@@ -162,6 +163,113 @@ pub fn dispatch(input: &str, args: &[&str]) -> String {
                 Ok(data) => ok_response(&data),
                 Err(e) => error_response(ErrorCode::Exec, &e.to_string()),
             };
+        }
+    }
+
+    // ── Query cursor — iterate large result sets ───────────────────────
+    // cursor create <name> <sql>    — create a cursor over a query
+    // cursor fetch <name> [limit]   — fetch next page of results
+    // cursor drop <name>            — close a cursor
+    if let Some(_rest) = lowered.strip_prefix("cursor create ") {
+        let parts: Vec<&str> = trimmed[14..].trim().splitn(2, |c: char| c.is_whitespace()).collect();
+        if parts.len() >= 2 {
+            let cur_name = parts[0];
+            let sql = parts[1..].join(" ").trim().to_string();
+            let mut db = DB.lock().unwrap();
+            db.create_cursor(cur_name, &sql, 100);
+            return ok_response(&format!("\"Cursor '{}' created\"", cur_name));
+        }
+        return error_response(ErrorCode::Exec, "Usage: cursor create <name> <query>");
+    }
+    if let Some(_rest) = lowered.strip_prefix("cursor fetch ") {
+        let parts: Vec<&str> = trimmed[13..].trim().splitn(2, |c: char| c.is_whitespace()).collect();
+        let cur_name = parts[0];
+        let limit: usize = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(100);
+        let (state, db) = {
+            let mut db = DB.lock().unwrap();
+            let cursor = db.cursors.get(cur_name).cloned();
+            match cursor {
+                Some(mut c) => {
+                    c.offset += limit;
+                    db.cursors.insert(cur_name.to_string(), c.clone());
+                    (c.clone(), db)
+                }
+                None => return error_response(ErrorCode::Exec, &format!("Cursor '{}' not found", cur_name)),
+            }
+        };
+        // Execute the paginated query
+        drop(state);
+        let sql = format!(
+            "{} LIMIT {} OFFSET {}",
+            db.cursors.get(cur_name).map(|c| &c.sql).unwrap_or(&String::new()),
+            limit,
+            db.cursors.get(cur_name).map(|c| c.offset - limit).unwrap_or(0),
+        );
+        drop(db);
+        let result = dispatch(&sql, &[]);
+        return result;
+    }
+    if lowered.starts_with("cursor drop ") || lowered == "cursor drop" {
+        let name = trimmed[12..].trim();
+        let mut db = DB.lock().unwrap();
+        match db.drop_cursor(name) {
+            Ok(()) => ok_response(&format!("\"Cursor '{}' dropped\"", name)),
+            Err(e) => error_response(ErrorCode::Exec, &e),
+        };
+        return ok_response("\"OK\"");
+    }
+
+    // ── Prepared statements ────────────────────────────────────────────
+    // prepare <name> <sql>                          — store SQL template
+    // execute_prepared <name> [arg1 arg2 ...]        — run stored SQL with args
+    if let Some(rest) = lowered.strip_prefix("prepare ") {
+        let parts: Vec<&str> = rest.trim().splitn(2, |c: char| c.is_whitespace()).collect::<Vec<_>>();
+        if parts.len() >= 2 {
+            let stmt_name = parts[0];
+            let sql = parts[1..].join(" ");
+            // Count $1 .. $n args
+            let arg_count = sql
+                .match_indices('$')
+                .filter(|&(idx, _)| sql.as_bytes().get(idx + 1).copied().unwrap_or(0).is_ascii_digit())
+                .count();
+            let mut db = DB.lock().unwrap();
+            db.prepare(stmt_name, &sql, arg_count);
+            return ok_response(&format!("\"Prepared '{}'\"", stmt_name));
+        }
+        return error_response(ErrorCode::Exec, "Usage: prepare <name> <sql>");
+    }
+    if let Some(rest) = lowered.strip_prefix("execute_prepared ") {
+        let parts: Vec<&str> = rest.trim().splitn(2, |c: char| c.is_whitespace()).collect::<Vec<_>>();
+        if parts.is_empty() {
+            return error_response(ErrorCode::Exec, "Usage: execute_prepared <name> [args...]");
+        }
+        let stmt_name = parts[0];
+        let rest_args = parts.get(1).map(|s| s.trim()).unwrap_or("");
+        let extra_args: Vec<&str> = if rest_args.is_empty() {
+            vec![]
+        } else {
+            rest_args.split_whitespace().collect()
+        };
+        let all_args: Vec<&str> = args.iter().chain(extra_args.iter()).copied().collect();
+        let sql;
+        let prepared;
+        {
+            let db = DB.lock().unwrap();
+            prepared = db.prepared.get(stmt_name).cloned();
+        }
+        match prepared {
+            Some(stmt) => {
+                sql = stmt.sql;
+                // Use substitute_params to fill placeholders, then execute
+                let filled = crate::dispatch::substitute_params(&sql, &all_args);
+                return dispatch(&filled, &[]);
+            }
+            None => {
+                return error_response(
+                    ErrorCode::Exec,
+                    &format!("Prepared statement '{}' not found", stmt_name),
+                )
+            }
         }
     }
 

@@ -11,7 +11,26 @@ use std::collections::HashMap;
 
 use super::table::Table;
 
-/// In-memory database instance with transaction replay capability.
+/// Active query cursor for iterative fetching (used by cursor commands).
+#[derive(Debug, Clone)]
+pub(crate) struct CursorState {
+    /// The original SQL the cursor was created from.
+    pub sql: String,
+    /// Current offset (row position).
+    pub offset: usize,
+    /// Number of rows per fetch.
+    pub page_size: usize,
+}
+
+/// A stored SQL template with a parameter count (used by prepared statements).
+#[derive(Debug, Clone)]
+pub(crate) struct PreparedStmt {
+    /// SQL template with $1, $2, ... placeholders.
+    pub sql: String,
+    /// Expected number of arguments.
+    pub arg_count: usize,
+}
+
 #[derive(Debug, Clone)]
 struct Snapshot {
     name: Option<String>,
@@ -32,6 +51,10 @@ pub(crate) struct Database {
     pub last_changes: usize,
     /// Session-level configuration (SET / PRAGMA key=value pairs).
     pub config: HashMap<String, String>,
+    /// Active query cursors (name → cursor state).
+    pub cursors: HashMap<String, CursorState>,
+    /// Prepared SQL statements (name → template + arg count).
+    pub prepared: HashMap<String, PreparedStmt>,
 }
 
 impl Database {
@@ -43,6 +66,8 @@ impl Database {
             last_insert_rowid: None,
             last_changes: 0,
             config: HashMap::new(),
+            cursors: HashMap::new(),
+            prepared: HashMap::new(),
         }
     }
 
@@ -187,6 +212,51 @@ impl Database {
     pub fn clear(&mut self) {
         self.tables.clear();
         self.views.clear();
+        self.cursors.clear();
+        self.prepared.clear();
+    }
+
+    // ── Cursor support ──────────────────────────────────────────────────
+
+    /// Create a new cursor for iterative query fetching.
+    pub fn create_cursor(&mut self, name: &str, sql: &str, page_size: usize) {
+        self.cursors.insert(
+            name.to_lowercase(),
+            CursorState {
+                sql: sql.to_string(),
+                offset: 0,
+                page_size,
+            },
+        );
+    }
+
+    /// Drop a cursor by name.
+    pub fn drop_cursor(&mut self, name: &str) -> Result<(), String> {
+        self.cursors
+            .remove(&name.to_lowercase())
+            .map(|_| ())
+            .ok_or_else(|| format!("Cursor '{}' not found", name))
+    }
+
+    // ── Prepared statement support ──────────────────────────────────────
+
+    /// Store a prepared SQL template.
+    pub fn prepare(&mut self, name: &str, sql: &str, arg_count: usize) {
+        self.prepared.insert(
+            name.to_lowercase(),
+            PreparedStmt {
+                sql: sql.to_string(),
+                arg_count,
+            },
+        );
+    }
+
+    /// Remove a prepared statement.
+    pub fn drop_prepared(&mut self, name: &str) -> Result<(), String> {
+        self.prepared
+            .remove(&name.to_lowercase())
+            .map(|_| ())
+            .ok_or_else(|| format!("Prepared statement '{}' not found", name))
     }
 
     // ── View support ────────────────────────────────────────────────────
