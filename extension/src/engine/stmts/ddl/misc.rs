@@ -1,29 +1,21 @@
-use super::super::database::Database;
-use super::super::table::Table;
-use super::super::value::{Column, ColumnType, DbValue};
+// Miscellaneous DDL/DML statements: MERGE, VACUUM, COPY, COMMENT, CALL, ANALYZE, SHOW COLUMNS, SHOW CREATE, DROP TRIGGER
+
+use super::object_name_str;
+use crate::engine::database::Database;
+use crate::engine::value::DbValue;
 use sqlparser::ast::{
-    Analyze, CopySource, CopyTarget, DataType, Function, Ident, Merge, MergeAction, MergeClauseKind, MergeInsertExpr,
-    MergeUpdateExpr, ObjectName, ObjectNamePart, SequenceOptions, ShowCreateObject, ShowStatementOptions,
-    VacuumStatement,
+    Analyze, CopySource, CopyTarget, Function, Merge, MergeAction, MergeClauseKind, MergeUpdateExpr, ObjectName,
+    ShowCreateObject, ShowStatementOptions, VacuumStatement,
 };
 
-fn object_name_str(name: &ObjectName) -> String {
-    name.0
-        .iter()
-        .filter_map(|p| match p {
-            ObjectNamePart::Identifier(i) => Some(i.value.to_lowercase()),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .join(".")
-}
+// ── SHOW COLUMNS ────────────────────────────────────────────────────────
 
 pub(crate) fn exec_show_columns(so: &ShowStatementOptions, db: &Database) -> Result<String, String> {
     let tn = so
         .show_in
         .as_ref()
         .and_then(|si| si.parent_name.as_ref())
-        .map(|n| object_name_str(n))
+        .map(object_name_str)
         .ok_or_else(|| "SHOW COLUMNS requires FROM".to_string())?;
     let t = db.get_table(&tn)?;
     let cols: Vec<String> = t
@@ -37,6 +29,8 @@ pub(crate) fn exec_show_columns(so: &ShowStatementOptions, db: &Database) -> Res
         .collect();
     Ok(format!("[{}]", cols.join(",")))
 }
+
+// ── SHOW CREATE ─────────────────────────────────────────────────────────
 
 pub(crate) fn exec_show_create(ot: &ShowCreateObject, on: &ObjectName, db: &Database) -> Result<String, String> {
     let name = object_name_str(on);
@@ -57,6 +51,8 @@ pub(crate) fn exec_show_create(ot: &ShowCreateObject, on: &ObjectName, db: &Data
         _ => Err("SHOW CREATE only supports TABLE".into()),
     }
 }
+
+// ── DROP TRIGGER ────────────────────────────────────────────────────────
 
 pub(crate) fn exec_drop_trigger(
     tn: &ObjectName,
@@ -81,6 +77,8 @@ pub(crate) fn exec_drop_trigger(
     Err(format!("Trigger '{}' not found", name))
 }
 
+// ── MERGE ───────────────────────────────────────────────────────────────
+
 pub(crate) fn exec_merge(merge: &Merge, db: &mut Database) -> Result<String, String> {
     let target = match &merge.table {
         sqlparser::ast::TableFactor::Table { name, .. } => Some(object_name_str(name)),
@@ -95,7 +93,7 @@ pub(crate) fn exec_merge(merge: &Merge, db: &mut Database) -> Result<String, Str
     let src = db.get_table(&source)?;
     let src_rows = src.rows.clone();
     let src_cols: Vec<String> = src.columns.iter().map(|c| c.name.clone()).collect();
-    drop(src);
+    let _ = src;
     let mut matched = 0u64;
     let mut inserted = 0u64;
     let tgt = db.get_table_mut(&target)?;
@@ -110,7 +108,7 @@ pub(crate) fn exec_merge(merge: &Merge, db: &mut Database) -> Result<String, Str
                 .enumerate()
                 .map(|(i, n)| (n.clone(), i))
                 .collect();
-            if let Ok(DbValue::Bool(true)) = super::super::execute::eval_expr(&merge.on, &combined, &cmap) {
+            if let Ok(DbValue::Bool(true)) = crate::engine::functions::eval::eval_expr(&merge.on, &combined, &cmap) {
                 is_matched = true;
                 for cl in &merge.clauses {
                     if matches!(cl.clause_kind, MergeClauseKind::Matched) {
@@ -120,7 +118,7 @@ pub(crate) fn exec_merge(merge: &Merge, db: &mut Database) -> Result<String, Str
                                     if let sqlparser::ast::AssignmentTarget::ColumnName(n) = &a.target {
                                         let cn = n.to_string().to_lowercase();
                                         if let Some(&ci) = tgt.col_index.get(&cn) {
-                                            if let Ok(v) = super::super::execute::eval_expr(
+                                            if let Ok(v) = crate::engine::functions::eval::eval_expr(
                                                 &a.value,
                                                 &tgt.rows[ri],
                                                 &tgt.col_index,
@@ -166,10 +164,12 @@ pub(crate) fn exec_merge(merge: &Merge, db: &mut Database) -> Result<String, Str
     Ok(format!("\"MERGE: {} matched, {} inserted\"", matched, inserted))
 }
 
+// ── VACUUM ──────────────────────────────────────────────────────────────
+
 pub(crate) fn exec_vacuum(v: &VacuumStatement, db: &mut Database) -> Result<String, String> {
     let tables: Vec<String> = db.table_names().iter().map(|s| s.to_string()).collect();
     for tn in tables {
-        if let Ok(mut t) = db.get_table_mut(&tn) {
+        if let Ok(t) = db.get_table_mut(&tn) {
             t.rebuild_index();
         }
     }
@@ -179,6 +179,8 @@ pub(crate) fn exec_vacuum(v: &VacuumStatement, db: &mut Database) -> Result<Stri
         Ok("\"VACUUM complete\"".into())
     }
 }
+
+// ── COPY ────────────────────────────────────────────────────────────────
 
 pub(crate) fn exec_copy(
     source: &CopySource,
@@ -198,30 +200,7 @@ pub(crate) fn exec_copy(
     }
 }
 
-pub(crate) fn exec_create_sequence(
-    name: &ObjectName,
-    ifne: bool,
-    _opts: &[SequenceOptions],
-    _dt: Option<&DataType>,
-    db: &mut Database,
-) -> Result<String, String> {
-    let sn = object_name_str(name);
-    if ifne && db.has_table(&sn) {
-        return Ok(format!("\"Sequence '{}' exists\"", sn));
-    }
-    let cols = vec![Column {
-        name: "val".into(),
-        dtype: ColumnType::Int,
-        primary_key: false,
-        not_null: false,
-        default: Some(DbValue::Int(0)),
-        auto_increment: false,
-    }];
-    let mut table = Table::new(format!("__seq_{}", sn), cols).map_err(|e| format!("CREATE SEQUENCE: {}", e))?;
-    let _ = table.insert(vec![DbValue::Int(0)]);
-    db.add_table(format!("__seq_{}", sn), table);
-    Ok(format!("\"Sequence '{}' created\"", sn))
-}
+// ── COMMENT ON ──────────────────────────────────────────────────────────
 
 pub(crate) fn exec_comment_on(
     _ot: &str,
@@ -233,14 +212,18 @@ pub(crate) fn exec_comment_on(
     Ok("\"COMMENT (stored)\"".into())
 }
 
-pub(crate) fn exec_call(func: &Function, db: &mut Database) -> Result<String, String> {
+// ── CALL ────────────────────────────────────────────────────────────────
+
+pub(crate) fn exec_call(func: &Function, _db: &mut Database) -> Result<String, String> {
     let empty = Vec::new();
     let empty_map = std::collections::HashMap::new();
-    match super::super::execute::exec_function(func, &empty, &empty_map) {
+    match crate::engine::functions::eval::exec_function(func, &empty, &empty_map) {
         Ok(val) => Ok(format!("\"CALL returned: {}\"", val)),
         Err(e) => Err(format!("CALL error: {}", e)),
     }
 }
+
+// ── ANALYZE ─────────────────────────────────────────────────────────────
 
 pub(crate) fn exec_analyze(a: &Analyze, db: &mut Database) -> Result<String, String> {
     let names: Vec<String> = if let Some(tn) = &a.table_name {
@@ -258,44 +241,4 @@ pub(crate) fn exec_analyze(a: &Analyze, db: &mut Database) -> Result<String, Str
         db.set_config(&format!("stat_cols_{}", tn), &cc.to_string());
     }
     Ok("\"ANALYZE complete\"".into())
-}
-
-pub(crate) fn exec_create_virtual_table(
-    name: &ObjectName,
-    if_not_exists: bool,
-    module_name: &Ident,
-    module_args: &[Ident],
-    db: &mut Database,
-) -> Result<String, String> {
-    let tn = object_name_str(name);
-    if if_not_exists && db.has_table(&tn) {
-        return Ok(format!("\"Table '{}' exists\"", tn));
-    }
-    if !["fts3", "fts4", "fts5"].contains(&module_name.value.to_lowercase().as_str()) {
-        return Err(format!("Virtual table module '{}' not supported", module_name));
-    }
-    let cols: Vec<Column> = module_args
-        .iter()
-        .map(|a| Column {
-            name: a.value.to_lowercase(),
-            dtype: ColumnType::String,
-            primary_key: false,
-            not_null: false,
-            default: None,
-            auto_increment: false,
-        })
-        .collect();
-    if cols.is_empty() {
-        return Err("ftsX requires columns".into());
-    }
-    let mut table = Table::new(tn.clone(), cols).map_err(|e| format!("CREATE VIRTUAL TABLE: {}", e))?;
-    for (i, cn) in module_args.iter().enumerate() {
-        let _ = table.create_index(
-            &format!("fts_trgm_{}", cn.value.to_lowercase()),
-            &cn.value.to_lowercase(),
-            super::super::index::IndexType::Trigram,
-        );
-    }
-    db.add_table(tn.clone(), table);
-    Ok(format!("\"Virtual table '{}' created (FTS trigram)\"", tn))
 }

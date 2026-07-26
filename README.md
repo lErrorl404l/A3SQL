@@ -1,7 +1,6 @@
 # A3SQL — Arma 3 Database Engine
 
 [![CI](https://github.com/lErrorl404l/a3sql/actions/workflows/ci.yml/badge.svg)](https://github.com/lErrorl404l/a3sql/actions)
-[![Tests](https://img.shields.io/badge/tests-162-brightgreen)](https://github.com/lErrorl404l/a3sql)
 [![Rust](https://img.shields.io/badge/rust-stable-orange)](https://rustup.rs/)
 [![HEMTT](https://img.shields.io/badge/HEMTT-1.20+-blue)](https://hemtt.dev/)
 [![License](https://img.shields.io/badge/license-APL--SA-red)](LICENSE)
@@ -68,20 +67,20 @@ s.close()
 
 ## Documentation
 
-- [Getting Started](https://github.com/lErrorl404l/db_a3/wiki/Getting-Started) — Full worked example
-- [SQL Dialect](https://github.com/lErrorl404l/db_a3/wiki/SQL-Dialect) — Supported SQL syntax
-- [CBA Settings](https://github.com/lErrorl404l/db_a3/wiki/CBA-Settings) — Addon configuration
-- [Standalone Server](https://github.com/lErrorl404l/db_a3/wiki/Standalone-Server) — Run without Arma
-- [Plugins](https://github.com/lErrorl404l/db_a3/wiki/Plugins) — Extend with Rust/C/SQF
-- [Building](https://github.com/lErrorl404l/db_a3/wiki/Building) — Compiling from source
-- [Development Setup](https://github.com/lErrorl404l/db_a3/wiki/Development-Setup) — Dev environment guide
+- [Getting Started](https://github.com/lErrorl404l/a3sql/wiki/Getting-Started) — Full worked example
+- [SQL Dialect](https://github.com/lErrorl404l/a3sql/wiki/SQL-Dialect) — Supported SQL syntax
+- [CBA Settings](https://github.com/lErrorl404l/a3sql/wiki/CBA-Settings) — Addon configuration
+- [Standalone Server](https://github.com/lErrorl404l/a3sql/wiki/Standalone-Server) — Run without Arma
+- [Plugins](https://github.com/lErrorl404l/a3sql/wiki/Plugins) — Extend with Rust/C/SQF
+- [Building](https://github.com/lErrorl404l/a3sql/wiki/Building) — Compiling from source
+- [Development Setup](https://github.com/lErrorl404l/a3sql/wiki/Development-Setup) — Dev environment guide
 
 ## Building
 
 ```bash
 cargo build --release -p a3sql   # extension
 hemtt build                      # addon PBOs
-cargo test --lib -p a3sql         # 162+ tests
+cargo test --lib -p a3sql         # 165+ tests
 ```
 
 See the [Building page](https://github.com/lErrorl404l/db_a3/wiki/Building) for cross-compilation, code signing, and CI details.
@@ -104,7 +103,7 @@ a3sql/
 
 | Component | Status |
 |-----------|--------|
-| SQL engine | 162 tests passing |
+| SQL engine | 165 tests passing |
 | Linting | Clippy clean, SQF validated |
 | CI/CD | GitHub Actions (test + 4-platform build + release) |
 | Cross-platform | Linux x86_64/i686, Windows x86_64/i686 |
