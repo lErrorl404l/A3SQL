@@ -1,0 +1,30 @@
+# Sync docs/wiki/ → GitHub Wiki on push to main
+# Source of truth: docs/wiki/ in the main repo.
+# Add/edit a .md file in docs/wiki/, merge to main, and the wiki
+# updates automatically.
+
+name: Wiki
+
+on:
+  push:
+    branches: [main]
+    paths: ["docs/wiki/**"]
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          submodules: recursive
+
+      - name: Push to wiki
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd docs/wiki
+          remote="https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.wiki.git"
+          git push "${remote}" HEAD:master
