@@ -556,8 +556,9 @@ pub(crate) fn exec_function(
         "fuzzy_match" => exec_fuzzy_match(func, row, col_map),
         "fts_score" => exec_fts_score(func, row, col_map),
         _ => {
-            // Check plugin registry for fn_ prefixed functions
+            // Check plugin/SQF registry for fn_ prefixed functions
             if let Some(fn_name) = name.strip_prefix("fn_") {
+                // 1. Rust/C ABI plugin function
                 if let Some((pfunc, _plugin)) = crate::engine::plugin::lookup_function(fn_name) {
                     let args = extract_func_args(func);
                     if args.len() < pfunc.min_args {
@@ -570,9 +571,74 @@ pub(crate) fn exec_function(
                     }
                     return (pfunc.func)(&args);
                 }
+                // 2. SQF-registered function with body → notify via CALLBACK
+                if crate::engine::plugin::get_sqf_function_body(fn_name).is_some() {
+                    let args = extract_func_args(func);
+                    let args_str: Vec<String> = args.iter().map(|a| a.to_string()).collect();
+                    let cb_msg = format!("{}({})", name, args_str.join(", "));
+                    if let Some(cb) = crate::ffi::CALLBACK.lock().unwrap().as_ref() {
+                        if let Ok(cstr) = std::ffi::CString::new(cb_msg) {
+                            // Safety: CALLBACK is the function pointer registered by Arma
+                            unsafe { cb(0, cstr.into_raw()) };
+                        }
+                    }
+                    // ponytail: SQF handles the actual result; return placeholder
+                    return Ok(DbValue::String(format!("<SQF: {}>", fn_name)));
+                }
                 return Err(EngineError::Exec(format!("Unknown plugin function '{}'", fn_name)));
             }
             exec_std_function(func, name, row, col_map)
         }
+    }
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+
+    #[test]
+    fn test_register_and_dispatch_sqf_function() {
+        // Register an SQF function with a body
+        crate::engine::plugin::register_sqf_function("_ut_sqf_fn", 1, "systemChat 'called'");
+
+        // Verify registration
+        assert!(crate::engine::plugin::is_registered("_ut_sqf_fn"));
+
+        // Verify body is retrievable
+        let body = crate::engine::plugin::get_sqf_function_body("_ut_sqf_fn");
+        assert_eq!(body, Some("systemChat 'called'".to_string()));
+
+        // Execute SQL that invokes fn__ut_sqf_fn('hello')
+        let mut db = crate::engine::database::Database::new();
+        let _ = crate::engine::test::exec_sql(&mut db, "CREATE TABLE t (id STRING PRIMARY KEY)");
+        let result = crate::engine::test::exec_sql(&mut db, "SELECT fn__ut_sqf_fn('hello')");
+        assert!(
+            result.contains("<SQF: _ut_sqf_fn>"),
+            "expected SQF placeholder in result: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_sqf_function_no_body_not_dispatchable() {
+        // Register an SQF function WITHOUT a body (empty string)
+        crate::engine::plugin::register_sqf_function("_ut_sqf_nb", 1, "");
+
+        // is_registered should still return true (name is tracked)
+        assert!(crate::engine::plugin::is_registered("_ut_sqf_nb"));
+
+        // get_sqf_function_body should return None for empty body
+        let body = crate::engine::plugin::get_sqf_function_body("_ut_sqf_nb");
+        assert_eq!(body, None);
+    }
+
+    #[test]
+    fn test_sqf_function_roundtrip() {
+        // Full roundtrip: register with body → lookup → verify
+        crate::engine::plugin::register_sqf_function("_ut_sqf_rt", 2, "hint str _this");
+        assert!(crate::engine::plugin::is_registered("_ut_sqf_rt"));
+        let body = crate::engine::plugin::get_sqf_function_body("_ut_sqf_rt");
+        assert_eq!(body, Some("hint str _this".to_string()));
     }
 }
