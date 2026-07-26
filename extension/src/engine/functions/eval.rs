@@ -596,7 +596,6 @@ pub(crate) fn exec_function(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
 
     #[test]
     fn test_register_and_dispatch_sqf_function() {
