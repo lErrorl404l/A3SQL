@@ -15,7 +15,7 @@ pub(crate) fn exec_show_columns(so: &ShowStatementOptions, db: &Database) -> Res
         .show_in
         .as_ref()
         .and_then(|si| si.parent_name.as_ref())
-        .map(|n| object_name_str(n))
+        .map(object_name_str)
         .ok_or_else(|| "SHOW COLUMNS requires FROM".to_string())?;
     let t = db.get_table(&tn)?;
     let cols: Vec<String> = t

@@ -610,14 +610,14 @@ fn handle_create_trigger(sql: &str, db: &mut crate::engine::database::Database) 
         if bytes[i..].starts_with(b"begin")
             && bytes
                 .get(i + 5)
-                .map_or(true, |c| !c.is_ascii_alphanumeric() && *c != b'_')
+                .is_none_or(|c| !c.is_ascii_alphanumeric() && *c != b'_')
         {
             depth += 1;
             i += 5;
         } else if bytes[i..].starts_with(b"end")
             && bytes
                 .get(i + 3)
-                .map_or(true, |c| !c.is_ascii_alphanumeric() && *c != b'_')
+                .is_none_or(|c| !c.is_ascii_alphanumeric() && *c != b'_')
         {
             depth -= 1;
             if depth == 0 {

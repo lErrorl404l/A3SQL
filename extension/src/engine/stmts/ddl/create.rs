@@ -348,7 +348,7 @@ pub(crate) fn exec_create_virtual_table(
         return Err("ftsX requires columns".into());
     }
     let mut table = Table::new(tn.clone(), cols).map_err(|e| format!("CREATE VIRTUAL TABLE: {}", e))?;
-    for (_i, cn) in module_args.iter().enumerate() {
+    for cn in module_args.iter() {
         let _ = table.create_index(
             &format!("fts_trgm_{}", cn.value.to_lowercase()),
             &cn.value.to_lowercase(),

@@ -281,11 +281,9 @@ fn eval_expr_on_group(expr: &Expr, rows: &[&[DbValue]], col_map: &HashMap<String
 
 /// Check if a row passes the aggregate FILTER clause (if any).
 fn passes_filter(func: &Function, row: &[DbValue], col_map: &HashMap<String, usize>) -> bool {
-    func.filter.as_ref().map_or(true, |filter_expr| {
-        eval_expr(filter_expr, row, col_map)
-            .ok()
-            .map_or(true, |v| is_truthy(&v))
-    })
+    func.filter
+        .as_ref()
+        .is_none_or(|filter_expr| eval_expr(filter_expr, row, col_map).ok().is_none_or(|v| is_truthy(&v)))
 }
 
 fn aggregate_sum(func: &Function, rows: &[&[DbValue]], col_map: &HashMap<String, usize>) -> Result<DbValue, String> {

@@ -1969,16 +1969,16 @@ pub(crate) fn parse_and_exec(sql: &str, db: &mut Database) -> Result<String, Str
     use sqlparser::dialect::SQLiteDialect;
     use sqlparser::parser::Parser;
     // Try SQLite dialect first (handles CREATE TRIGGER with BEGIN...END body)
-    let mut sqlite = SQLiteDialect {};
-    if let Ok(stmts) = Parser::parse_sql(&mut sqlite, sql) {
+    let sqlite = SQLiteDialect {};
+    if let Ok(stmts) = Parser::parse_sql(&sqlite, sql) {
         let mut results = Vec::new();
         for stmt in stmts {
             results.push(execute(&stmt, db)?);
         }
         return Ok(results.join("\n"));
     }
-    let mut meta = sqlparser::dialect::GenericDialect {};
-    let stmts = Parser::parse_sql(&mut meta, sql).map_err(|e| format!("Parse error in trigger body: {}", e))?;
+    let meta = sqlparser::dialect::GenericDialect {};
+    let stmts = Parser::parse_sql(&meta, sql).map_err(|e| format!("Parse error in trigger body: {}", e))?;
     let mut results = Vec::new();
     for stmt in stmts {
         results.push(execute(&stmt, db)?);
@@ -2188,9 +2188,8 @@ fn exec_merge(merge: &Merge, db: &mut Database) -> Result<String, String> {
 
 // ── EXPLAIN ─────────────────────────────────────────────────────────────
 
-/// Generate an EXPLAIN plan description as a JSON array of plan nodes.
-// Moved to functions/eval.rs: simple_like, like_match, wildcard_match
-// simple_wildcard was unused dead code, removed
+// Note: EXPLAIN, simple_like, like_match, wildcard_match moved to
+// functions/eval.rs. simple_wildcard was unused dead code, removed.
 
 // ── Tests ──────────────────────────────────────────────────────────────
 
