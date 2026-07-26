@@ -6,10 +6,15 @@
 //
 // All registered functions are callable from SQL as fn_<name>().
 
+//! Plugin system — Rust trait plugins and SQF function registration.
+//! Plugins can register custom functions and hook into query execution.
+
 use std::collections::HashMap;
 use std::sync::Mutex;
 
 use super::value::DbValue;
+
+use crate::engine::error::EngineError;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Types
@@ -17,16 +22,16 @@ use super::value::DbValue;
 
 /// A plugin-registered SQL function: name → (arg_count, impl).
 #[derive(Clone)]
-pub struct PluginFunction {
+pub(crate) struct PluginFunction {
     pub name: String,
     pub min_args: usize,
     pub max_args: usize,
-    pub func: fn(&[DbValue]) -> Result<DbValue, String>,
+    pub func: fn(&[DbValue]) -> Result<DbValue, EngineError>,
 }
 
 /// Hook into query execution.
 #[derive(Clone)]
-pub enum Hook {
+pub(crate) enum Hook {
     /// Called before query execution. Return None to allow, Some(err) to block.
     PreQuery(fn(sql: &str) -> Option<String>),
     /// Called after query execution with the result JSON string.
@@ -34,7 +39,7 @@ pub enum Hook {
 }
 
 /// A registered plugin descriptor.
-pub struct Plugin {
+pub(crate) struct Plugin {
     pub name: String,
     pub functions: Vec<PluginFunction>,
     pub hooks: Vec<Hook>,
@@ -61,7 +66,7 @@ struct PluginRegistryInner {
 }
 
 /// Register a Rust trait plugin.
-pub fn register_plugin(name: &str, functions: Vec<PluginFunction>, hooks: Vec<Hook>) {
+pub(crate) fn register_plugin(name: &str, functions: Vec<PluginFunction>, hooks: Vec<Hook>) {
     let mut reg = PLUGIN_REGISTRY.lock().unwrap();
     reg.plugins.push(Plugin {
         name: name.to_string(),
@@ -72,7 +77,7 @@ pub fn register_plugin(name: &str, functions: Vec<PluginFunction>, hooks: Vec<Ho
 }
 
 /// Register built-in Rust plugins (called at startup).
-pub fn init_builtin_plugins() {
+pub(crate) fn init_builtin_plugins() {
     // Echo plugin — returns its first argument unchanged
     register_plugin(
         "builtin_echo",
@@ -87,7 +92,7 @@ pub fn init_builtin_plugins() {
 }
 
 /// Register a function from SQF.
-pub fn register_sqf_function(name: &str, arg_count: usize) {
+pub(crate) fn register_sqf_function(name: &str, arg_count: usize) {
     let mut reg = PLUGIN_REGISTRY.lock().unwrap();
     reg.sqf_functions.insert(name.to_string(), (String::new(), arg_count));
     // ponytail: SQF functions are evaluated by the caller (fn_execute.sqf),
@@ -95,7 +100,7 @@ pub fn register_sqf_function(name: &str, arg_count: usize) {
 }
 
 /// Look up a plugin function by name. Returns (function, plugin_name).
-pub fn lookup_function(name: &str) -> Option<(PluginFunction, String)> {
+pub(crate) fn lookup_function(name: &str) -> Option<(PluginFunction, String)> {
     let reg = PLUGIN_REGISTRY.lock().unwrap();
     for plugin in &reg.plugins {
         for func in &plugin.functions {
@@ -108,7 +113,7 @@ pub fn lookup_function(name: &str) -> Option<(PluginFunction, String)> {
 }
 
 /// Check if a name matches a registered function (plugin or SQF).
-pub fn is_registered(name: &str) -> bool {
+pub(crate) fn is_registered(name: &str) -> bool {
     let reg = PLUGIN_REGISTRY.lock().unwrap();
     for plugin in &reg.plugins {
         for func in &plugin.functions {
@@ -121,7 +126,7 @@ pub fn is_registered(name: &str) -> bool {
 }
 
 /// Run pre-query hooks. Returns Some(error) if a hook blocked the query.
-pub fn run_pre_query_hooks(sql: &str) -> Option<String> {
+pub(crate) fn run_pre_query_hooks(sql: &str) -> Option<String> {
     let reg = PLUGIN_REGISTRY.lock().unwrap();
     for plugin in &reg.plugins {
         for hook in &plugin.hooks {
@@ -136,7 +141,7 @@ pub fn run_pre_query_hooks(sql: &str) -> Option<String> {
 }
 
 /// Run post-query hooks.
-pub fn run_post_query_hooks(sql: &str, result: &str) {
+pub(crate) fn run_post_query_hooks(sql: &str, result: &str) {
     let reg = PLUGIN_REGISTRY.lock().unwrap();
     for plugin in &reg.plugins {
         for hook in &plugin.hooks {
@@ -148,7 +153,7 @@ pub fn run_post_query_hooks(sql: &str, result: &str) {
 }
 
 /// List all registered plugins and their functions (for diagnostics).
-pub fn list_plugins() -> Vec<(String, Vec<String>, Vec<String>)> {
+pub(crate) fn list_plugins() -> Vec<(String, Vec<String>, Vec<String>)> {
     let reg = PLUGIN_REGISTRY.lock().unwrap();
     let mut out = Vec::new();
     for plugin in &reg.plugins {
@@ -176,7 +181,7 @@ pub fn list_plugins() -> Vec<(String, Vec<String>, Vec<String>)> {
 
 /// Load plugins from shared libraries in a directory.
 /// Only loaded once at startup.
-pub fn load_plugin_dir(path: &str) -> Vec<String> {
+pub(crate) fn load_plugin_dir(path: &str) -> Vec<String> {
     let mut loaded = Vec::new();
     let dir = match std::fs::read_dir(path) {
         Ok(d) => d,
@@ -202,20 +207,20 @@ pub fn load_plugin_dir(path: &str) -> Vec<String> {
     loaded
 }
 
-fn load_plugin_file(path: &str) -> Result<String, String> {
+fn load_plugin_file(path: &str) -> Result<String, EngineError> {
     // Safety: libloading is safe — the plugin is a shared lib we control.
     // The plugin C ABI must match a3sql_plugin.h.
     unsafe {
-        let lib = libloading::Library::new(path).map_err(|e| format!("dlopen: {}", e))?;
+        let lib = libloading::Library::new(path).map_err(|e| EngineError::Exec(format!("dlopen: {}", e)))?;
 
         let init: libloading::Symbol<unsafe extern "C" fn(*mut std::ffi::c_void) -> *const std::ffi::c_char> = lib
             .get(b"a3sql_plugin_init")
-            .map_err(|_| "no a3sql_plugin_init symbol".to_string())?;
+            .map_err(|_| EngineError::Exec("no a3sql_plugin_init symbol".into()))?;
 
         let registry_ptr: *mut std::ffi::c_void = std::ptr::null_mut();
         let name_ptr = init(registry_ptr);
         if name_ptr.is_null() {
-            return Err("plugin init returned null".into());
+            return Err(EngineError::Exec("plugin init returned null".into()));
         }
         let name = std::ffi::CStr::from_ptr(name_ptr).to_string_lossy().into_owned();
 
@@ -257,7 +262,11 @@ pub extern "C" fn a3sql_plugin_register_function(
         name: fname.clone(),
         min_args: min_args as usize,
         max_args: max_args as usize,
-        func: |_| Err("C ABI function call not yet implemented — use Rust trait or SQF".into()),
+        func: |_| {
+            Err(EngineError::Exec(
+                "C ABI function call not yet implemented — use Rust trait or SQF".into(),
+            ))
+        },
     };
 
     let mut reg = PLUGIN_REGISTRY.lock().unwrap();

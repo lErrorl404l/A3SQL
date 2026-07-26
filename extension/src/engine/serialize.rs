@@ -1,5 +1,7 @@
 // a3sql serialization — JSON, CSV, SQL, and Binary formats
 
+//! Serialization — import/export tables in JSON, CSV, SQL, and Binary formats.
+
 use super::database::Database;
 use super::table::Table;
 use super::value::DbValue;
@@ -8,13 +10,13 @@ mod binary;
 mod csv;
 mod json;
 
-pub use binary::*;
-pub use csv::*;
-pub use json::*;
+pub(crate) use binary::{export_binary, import_binary};
+pub(crate) use csv::{export_csv, import_csv};
+pub(crate) use json::{export_json, import_json};
 
 /// Supported serialization formats.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Format {
+pub(crate) enum Format {
     Json,
     Csv,
     Sql,
@@ -49,11 +51,12 @@ impl std::fmt::Display for Format {
 // SQL dump
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Export full database as SQL statements.
-pub fn export_sql(db: &Database) -> String {
+/// Export full database as SQL statements including schema (tables, views, indexes).
+pub(crate) fn export_sql(db: &Database) -> String {
     let mut out = String::new();
     out.push_str("-- a3sql SQL dump\n\n");
 
+    // ── Tables ──────────────────────────────────────────────────────────
     for name in db.table_names() {
         let table = match db.get_table(name) {
             Ok(t) => t,
@@ -92,12 +95,27 @@ pub fn export_sql(db: &Database) -> String {
         let all_parts: Vec<String> = col_defs.into_iter().chain(fk_parts).collect();
         out.push_str(&format!("CREATE TABLE {} ({});\n", table.name, all_parts.join(", ")));
 
+        // CREATE INDEX for each secondary index
+        for (meta, _) in &table.indices {
+            out.push_str(&format!(
+                "CREATE {} INDEX {} ON {} ({});\n",
+                meta.index_type, meta.name, meta.table, meta.column
+            ));
+        }
+
         // INSERT rows
         for row in &table.rows {
             let vals: Vec<String> = row.iter().map(sql_value).collect();
             out.push_str(&format!("INSERT INTO {} VALUES ({});\n", table.name, vals.join(", ")));
         }
         out.push('\n');
+    }
+
+    // ── Views ───────────────────────────────────────────────────────────
+    for vname in db.view_names() {
+        if let Some(sql) = db.get_view(vname) {
+            out.push_str(&format!("CREATE VIEW {} AS {};\n\n", vname, sql));
+        }
     }
 
     out
@@ -131,7 +149,7 @@ fn sql_value(v: &DbValue) -> String {
 // ── Convenience ──────────────────────────────────────────────────────────
 
 /// Export in the given format.
-pub fn export(format: Format, table: &Table, db: &Database) -> String {
+pub(crate) fn export(format: Format, table: &Table, db: &Database) -> String {
     match format {
         Format::Json => export_json(table),
         Format::Csv => export_csv(table),
@@ -144,7 +162,7 @@ pub fn export(format: Format, table: &Table, db: &Database) -> String {
     }
 }
 
-pub fn hex_encode(bytes: &[u8]) -> String {
+pub(crate) fn hex_encode(bytes: &[u8]) -> String {
     let mut s = String::with_capacity(bytes.len() * 2);
     for b in bytes {
         s.push_str(&format!("{:02x}", b));
@@ -164,7 +182,7 @@ fn hex_decode(hex: &str) -> Result<Vec<u8>, String> {
 }
 
 /// Import in the given format.
-pub fn import(format: Format, table_name: &str, data: &str, db: &mut Database) -> Result<(), String> {
+pub(crate) fn import(format: Format, table_name: &str, data: &str, db: &mut Database) -> Result<(), String> {
     match format {
         Format::Json => import_json(table_name, data, db),
         Format::Csv => import_csv(table_name, data, db),
@@ -228,8 +246,8 @@ mod tests {
     #[test]
     fn json_db_roundtrip() {
         let db = make_db();
-        let json = export_json_db(&db); // full DB JSON
-                                        // Parse and verify structure
+        let json = super::json::export_json_db(&db); // full DB JSON
+                                                     // Parse and verify structure
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert!(parsed.get("tables").is_some());
     }

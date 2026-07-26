@@ -1,6 +1,10 @@
 // Standard SQL function implementations — the big function dispatch and all
 // built-in scalar functions that don't need the expression evaluator.
 
+//! Built-in scalar functions — UPPER, LOWER, SUBSTR, TRIM, COALESCE, ROUND, ABS,
+//! date functions (NOW, CURDATE, DATE_FORMAT, DATEDIFF, UNIX_TIMESTAMP),
+//! and utility functions (LAST_INSERT_ROWID, CHANGES, TYPEOF).
+
 use std::collections::HashMap;
 
 use sqlparser::ast::{
@@ -8,12 +12,22 @@ use sqlparser::ast::{
 };
 
 use super::super::database::Database;
-use super::super::execute::{execute, json_val_to_dbvalue, object_name_str, LAST_CHANGES, LAST_INSERT_ROWID};
+use super::super::execute::{execute, LAST_CHANGES, LAST_INSERT_ROWID};
 use super::super::index::IndexType as A3IndexType;
+use super::super::stmts::ddl::object_name_str;
 use super::super::table::{IndexImpl, Table};
+use super::super::value::json_val_to_dbvalue;
 use super::super::value::{Column, ColumnType, DbValue};
 
 use super::eval::eval_expr;
+
+use crate::engine::error::EngineError;
+use std::cell::Cell;
+
+thread_local! {
+    /// Set by RAISE(ABORT, 'msg') to signal trigger abort.
+    pub(crate) static RAISE_ABORTED: Cell<bool> = const { Cell::new(false) };
+}
 
 // ── String conversion ──────────────────────────────────────────────────
 
@@ -185,25 +199,25 @@ fn like_match(val: &[char], pat: &[char], vi: usize, pi: usize) -> bool {
 // ── Argument extraction ────────────────────────────────────────────────
 
 /// Get function argument as Expr, assuming Unnamed(FunctionArgExpr::Expr(e))
-pub(crate) fn get_func_arg_unnamed(arg: &FunctionArg) -> Result<&Expr, String> {
+pub(crate) fn get_func_arg_unnamed(arg: &FunctionArg) -> Result<&Expr, EngineError> {
     match arg {
         FunctionArg::Unnamed(FunctionArgExpr::Expr(e)) => Ok(e),
-        FunctionArg::Unnamed(_) => Err("Expected expression argument".into()),
+        FunctionArg::Unnamed(_) => Err(EngineError::Exec("Expected expression argument".into())),
         FunctionArg::Named { arg, .. } | FunctionArg::ExprNamed { arg, .. } => match arg {
             FunctionArgExpr::Expr(e) => Ok(e),
-            _ => Err("Expected expression in named argument".into()),
+            _ => Err(EngineError::Exec("Expected expression in named argument".into())),
         },
     }
 }
 
 /// Extract the first argument expression from a function.
-pub(crate) fn extract_func_arg(func: &Function) -> Result<&Expr, String> {
+pub(crate) fn extract_func_arg(func: &Function) -> Result<&Expr, EngineError> {
     let args = match &func.args {
         FunctionArguments::List(list) => &list.args,
-        _ => return Err("Function requires argument list".into()),
+        _ => return Err(EngineError::Exec("Function requires argument list".into())),
     };
     if args.is_empty() {
-        return Err("Function requires argument".into());
+        return Err(EngineError::Exec("Function requires argument".into()));
     }
     get_func_arg_unnamed(&args[0])
 }
@@ -242,14 +256,14 @@ pub(crate) fn exec_std_function(
     name: String,
     row: &[DbValue],
     col_map: &HashMap<String, usize>,
-) -> Result<DbValue, String> {
+) -> Result<DbValue, EngineError> {
     let args = match &func.args {
         FunctionArguments::List(list) => &list.args,
         _ => return Ok(now_value()), // e.g. CURRENT_TIMESTAMP without parens
     };
-    let eval_args = |count: usize| -> Result<Vec<DbValue>, String> {
+    let eval_args = |count: usize| -> Result<Vec<DbValue>, EngineError> {
         if args.len() < count {
-            return Err(format!("'{}' requires {} argument(s)", name, count));
+            return Err(EngineError::Exec(format!("'{}' requires {} argument(s)", name, count)));
         }
         args.iter()
             .take(count)
@@ -278,12 +292,22 @@ pub(crate) fn exec_std_function(
             let s = value_to_string(&vals[0]);
             let start = match vals[1] {
                 DbValue::Int(i) => i.max(1) as usize - 1, // SQL is 1-indexed
-                _ => return Err("SUBSTR start must be integer".into()),
+                _ => {
+                    return Err(EngineError::TypeError {
+                        expected: "integer".into(),
+                        actual: format!("{:?}", vals[1]),
+                    })
+                }
             };
             if vals.len() >= 3 {
                 let length = match vals[2] {
                     DbValue::Int(i) => i as usize,
-                    _ => return Err("SUBSTR length must be integer".into()),
+                    _ => {
+                        return Err(EngineError::TypeError {
+                            expected: "integer".into(),
+                            actual: format!("{:?}", vals[2]),
+                        })
+                    }
                 };
                 Ok(DbValue::String(s.chars().skip(start).take(length).collect()))
             } else {
@@ -309,12 +333,22 @@ pub(crate) fn exec_std_function(
             let num = match vals[0] {
                 DbValue::Float(f) => f,
                 DbValue::Int(i) => i as f64,
-                _ => return Err("ROUND requires numeric argument".into()),
+                _ => {
+                    return Err(EngineError::TypeError {
+                        expected: "numeric".into(),
+                        actual: format!("{:?}", vals[0]),
+                    })
+                }
             };
             let decimals = if vals.len() >= 2 {
                 match vals[1] {
                     DbValue::Int(i) => i as u32,
-                    _ => return Err("ROUND decimals must be integer".into()),
+                    _ => {
+                        return Err(EngineError::TypeError {
+                            expected: "integer".into(),
+                            actual: format!("{:?}", vals[1]),
+                        })
+                    }
                 }
             } else {
                 0
@@ -327,7 +361,10 @@ pub(crate) fn exec_std_function(
             match v {
                 DbValue::Int(i) => Ok(DbValue::Int(i.abs())),
                 DbValue::Float(f) => Ok(DbValue::Float(f.abs())),
-                _ => Err("ABS requires numeric argument".into()),
+                _ => Err(EngineError::TypeError {
+                    expected: "numeric".into(),
+                    actual: format!("{:?}", v),
+                }),
             }
         }
         "now" | "current_timestamp" => Ok(now_value()),
@@ -362,7 +399,7 @@ pub(crate) fn exec_std_function(
                     let days = date_to_days(y, m, d);
                     Ok(DbValue::Int(days * 86400 + h * 3600 + mi * 60 + sec))
                 } else {
-                    Err(format!("Cannot parse date: '{}'", s))
+                    Err(EngineError::Parse(format!("Cannot parse date: '{}'", s)))
                 }
             }
         }
@@ -370,7 +407,8 @@ pub(crate) fn exec_std_function(
             let vals = eval_args(2)?;
             let s = value_to_string(&vals[0]);
             let fmt = value_to_string(&vals[1]);
-            let (y, m, d, h, mi, sec) = parse_iso_date(&s).ok_or_else(|| format!("Cannot parse date: '{}'", s))?;
+            let (y, m, d, h, mi, sec) =
+                parse_iso_date(&s).ok_or_else(|| EngineError::Parse(format!("Cannot parse date: '{}'", s)))?;
             let mut result = String::new();
             let mut chars = fmt.chars();
             while let Some(c) = chars.next() {
@@ -395,32 +433,46 @@ pub(crate) fn exec_std_function(
             let vals = eval_args(2)?;
             let s1 = value_to_string(&vals[0]);
             let s2 = value_to_string(&vals[1]);
-            let (y1, m1, d1, _, _, _) = parse_iso_date(&s1).ok_or_else(|| format!("Cannot parse date: '{}'", s1))?;
-            let (y2, m2, d2, _, _, _) = parse_iso_date(&s2).ok_or_else(|| format!("Cannot parse date: '{}'", s2))?;
+            let (y1, m1, d1, _, _, _) =
+                parse_iso_date(&s1).ok_or_else(|| EngineError::Parse(format!("Cannot parse date: '{}'", s1)))?;
+            let (y2, m2, d2, _, _, _) =
+                parse_iso_date(&s2).ok_or_else(|| EngineError::Parse(format!("Cannot parse date: '{}'", s2)))?;
             let days1 = date_to_days(y1, m1, d1);
             let days2 = date_to_days(y2, m2, d2);
             Ok(DbValue::Int(days1 - days2))
         }
-        _ => Err(format!("Unknown function '{}'", name)),
+        // RAISE(ABORT, 'msg') — SQLite trigger abort. Returns an error message.
+        "raise" => {
+            // RAISE(ABORT, 'msg') — sqlparser passes ABORT as a keyword, not an arg.
+            // Try 2 args, fall back to 1, fall back to 0 (the flag is what matters).
+            let vals = eval_args(2).or_else(|_| eval_args(1)).unwrap_or_default();
+            let msg = vals.last().map(value_to_string).unwrap_or_default();
+            RAISE_ABORTED.with(|r| r.set(true));
+            Err(EngineError::Exec(format!("RAISE: {}", msg)))
+        }
+        _ => Err(EngineError::Exec(format!("Unknown function '{}'", name))),
     }
 }
 
 // ── Table resolution ───────────────────────────────────────────────────
 
 /// Materialize a view by executing its SQL and inserting the results as a temp table.
-pub(crate) fn materialize_view(name: &str, db: &mut Database) -> Result<(), String> {
+pub(crate) fn materialize_view(name: &str, db: &mut Database) -> Result<(), EngineError> {
     let sql = db
         .get_view(name)
-        .ok_or_else(|| format!("View '{}' not found", name))?
+        .ok_or_else(|| EngineError::ViewNotFound(name.into()))?
         .clone();
 
-    let stmts = crate::parser::parse_sql(&sql).map_err(|e| format!("{}", e))?;
-    let stmt = stmts.into_iter().next().ok_or("View definition is empty")?;
+    let stmts = crate::parser::parse_sql(&sql).map_err(|e| EngineError::Parse(e.to_string()))?;
+    let stmt = stmts
+        .into_iter()
+        .next()
+        .ok_or(EngineError::Exec("View definition is empty".into()))?;
 
     let result = execute(&stmt, db)?;
 
     let rows: Vec<Vec<serde_json::Value>> =
-        serde_json::from_str(&result).map_err(|e| format!("View result parse: {}", e))?;
+        serde_json::from_str(&result).map_err(|e| EngineError::Exec(format!("View result parse: {}", e)))?;
 
     if rows.len() >= 2 {
         let header = &rows[0];
@@ -452,25 +504,29 @@ pub(crate) fn materialize_view(name: &str, db: &mut Database) -> Result<(), Stri
 pub(crate) fn resolve_table_factor(
     factor: &TableFactor,
     db: &mut Database,
-) -> Result<(String, crate::engine::table::Table), String> {
+) -> Result<(String, crate::engine::table::Table), EngineError> {
     match factor {
         TableFactor::Table { name, .. } => {
             let tname = object_name_str(name);
             if !db.has_table(&tname) && db.has_view(&tname) {
                 materialize_view(&tname, db)?;
             }
-            let table = db.get_table(&tname)?.clone();
+            let table = db.get_table(&tname).map_err(EngineError::Exec)?.clone();
             Ok((tname, table))
         }
-        _ => Err("Only simple table references supported in FROM".into()),
+        _ => Err(EngineError::Exec(
+            "Only simple table references supported in FROM".into(),
+        )),
     }
 }
 
-pub(crate) fn resolve_single_table<'a>(from: &[TableWithJoins], db: &'a Database) -> Result<&'a Table, String> {
-    let tf = from.first().ok_or("No FROM clause")?;
+pub(crate) fn resolve_single_table<'a>(from: &[TableWithJoins], db: &'a Database) -> Result<&'a Table, EngineError> {
+    let tf = from.first().ok_or(EngineError::Exec("No FROM clause".into()))?;
     match &tf.relation {
-        TableFactor::Table { name, .. } => db.get_table(&object_name_str(name)),
-        _ => Err("Only simple table references supported in FROM".into()),
+        TableFactor::Table { name, .. } => db.get_table(&object_name_str(name)).map_err(EngineError::Exec),
+        _ => Err(EngineError::Exec(
+            "Only simple table references supported in FROM".into(),
+        )),
     }
 }
 

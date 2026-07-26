@@ -1,8 +1,12 @@
 // a3sql table row operations — insert, update, delete
 
+//! Row-level operations — insert, update, delete, and their trigger/integrity checks.
+
 use super::super::index::{BTreeIndex, TrigramIndex};
 use super::super::value::DbValue;
 use super::{IndexImpl, Table};
+
+use crate::engine::error::EngineError;
 
 impl Table {
     /// Number of rows in this table.
@@ -13,13 +17,13 @@ impl Table {
     // ── Row operations ───────────────────────────────────────────────
 
     /// Insert a row. Returns error if PK constraint violated or type mismatch.
-    pub fn insert(&mut self, mut row: Vec<DbValue>) -> Result<(), String> {
+    pub fn insert(&mut self, mut row: Vec<DbValue>) -> Result<(), EngineError> {
         if row.len() != self.columns.len() {
-            return Err(format!(
+            return Err(EngineError::Exec(format!(
                 "Insert: expected {} columns, got {}",
                 self.columns.len(),
                 row.len()
-            ));
+            )));
         }
 
         // Coerce, apply defaults, check NOT NULL, check types
@@ -33,22 +37,25 @@ impl Table {
 
             Self::coerce_value(val, &self.columns[i].dtype);
             if !Self::type_match(&self.columns[i].dtype, val) {
-                return Err(format!(
-                    "Column '{}' expected {:?}, got {:?}",
-                    self.columns[i].name, self.columns[i].dtype, val
-                ));
+                return Err(EngineError::TypeError {
+                    expected: format!("{:?}", self.columns[i].dtype),
+                    actual: format!("{:?}", val),
+                });
             }
 
             // NOT NULL check after default + coercion
             if self.columns[i].not_null && matches!(val, DbValue::Null) {
-                return Err(format!("Column '{}' cannot be NULL", self.columns[i].name));
+                return Err(EngineError::Exec(format!(
+                    "Column '{}' cannot be NULL",
+                    self.columns[i].name
+                )));
             }
         }
 
         // Check PK uniqueness
         if let Some(key) = self.pk_key(&row) {
             if self.pk_set.contains(&key) {
-                return Err(format!("Duplicate primary key value '{}'", key));
+                return Err(EngineError::DuplicateKey(key));
             }
             self.pk_set.insert(key);
         }
@@ -231,7 +238,7 @@ impl Table {
     }
 
     /// Truncate — remove all rows.
-    pub fn truncate(&mut self) -> Result<(), String> {
+    pub fn truncate(&mut self) -> Result<(), EngineError> {
         self.rows.clear();
         Ok(())
     }

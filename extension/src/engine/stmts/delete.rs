@@ -1,27 +1,40 @@
+//! DELETE execution — WHERE filter, RETURNING clause support.
+
 use std::collections::HashSet;
 
 use sqlparser::ast::{Delete, FromTable, ReferentialAction, TableFactor};
 
 use super::super::database::Database;
-use super::super::execute::{fire_triggers, format_projected_result, object_name_str, LAST_CHANGES};
+use super::super::error::EngineError;
+use super::super::execute::{format_projected_result, LAST_CHANGES};
 use super::super::functions::eval::{eval_expr, is_truthy};
 use super::super::value::DbValue;
+use super::ddl::object_name_str;
+use crate::engine::trigger::{fire_triggers, fire_triggers_before};
 
-pub(crate) fn exec_delete(del: &Delete, db: &mut Database) -> Result<String, String> {
+pub(crate) fn exec_delete(del: &Delete, db: &mut Database) -> Result<String, EngineError> {
     let table_name = match &del.from {
         FromTable::WithFromKeyword(tables) | FromTable::WithoutKeyword(tables) => match tables.first() {
             Some(tj) => match &tj.relation {
                 TableFactor::Table { name, .. } => object_name_str(name),
-                _ => return Err("DELETE: only simple table references supported".into()),
+                _ => {
+                    return Err(EngineError::Exec(
+                        "DELETE: only simple table references supported".into(),
+                    ))
+                }
             },
-            None => return Err("DELETE must specify a table".into()),
+            None => return Err(EngineError::Exec("DELETE must specify a table".into())),
         },
     };
 
     let returning = del.returning.clone();
 
     // Clone col_index to avoid borrow conflict with table.delete()
-    let col_idx = db.get_table(&table_name)?.col_index.clone();
+    let col_idx = db
+        .get_table(&table_name)
+        .map_err(|_| EngineError::TableNotFound(table_name.clone()))?
+        .col_index
+        .clone();
     let pred = del.selection.clone();
 
     // Collect referencing tables with FK pointing to this table
@@ -86,7 +99,9 @@ pub(crate) fn exec_delete(del: &Delete, db: &mut Database) -> Result<String, Str
             Some(ReferentialAction::Cascade) => {
                 // Delete child rows referencing the deleted PKs
                 let child_pks_to_delete: Vec<String> = {
-                    let t = db.get_table(ref_table)?;
+                    let t = db
+                        .get_table(ref_table)
+                        .map_err(|_| EngineError::TableNotFound(ref_table.clone()))?;
                     let pk_idx = t.columns.iter().position(|c| c.primary_key);
                     t.rows
                         .iter()
@@ -101,7 +116,9 @@ pub(crate) fn exec_delete(del: &Delete, db: &mut Database) -> Result<String, Str
                     if child_pk.is_empty() {
                         continue;
                     }
-                    let child_table = db.get_table_mut(ref_table)?;
+                    let child_table = db
+                        .get_table_mut(ref_table)
+                        .map_err(|_| EngineError::TableNotFound(ref_table.clone()))?;
                     let pk_idx = child_table.columns.iter().position(|c| c.primary_key);
                     if let Some(pi) = pk_idx {
                         child_table.delete(|row| row[pi].to_string().to_lowercase() == *child_pk);
@@ -121,7 +138,9 @@ pub(crate) fn exec_delete(del: &Delete, db: &mut Database) -> Result<String, Str
             }
             _ => {
                 // RESTRICT / NO ACTION / None — reject
-                let t = db.get_table(ref_table)?;
+                let t = db
+                    .get_table(ref_table)
+                    .map_err(|_| EngineError::TableNotFound(ref_table.clone()))?;
                 let ref_pk_set: HashSet<String> = t
                     .rows
                     .iter()
@@ -129,10 +148,10 @@ pub(crate) fn exec_delete(del: &Delete, db: &mut Database) -> Result<String, Str
                     .collect();
                 for (_, pk_val) in &deleted_pks {
                     if ref_pk_set.contains(pk_val) {
-                        return Err(format!(
+                        return Err(EngineError::Exec(format!(
                             "FOREIGN KEY constraint violation: '{}' references '{}'",
                             ref_table, pk_val
-                        ));
+                        )));
                     }
                 }
             }
@@ -141,7 +160,9 @@ pub(crate) fn exec_delete(del: &Delete, db: &mut Database) -> Result<String, Str
 
     // Capture old rows for RETURNING (before deletion)
     let old_rows: Vec<Vec<DbValue>> = if returning.is_some() {
-        let t = db.get_table(&table_name)?;
+        let t = db
+            .get_table(&table_name)
+            .map_err(|_| EngineError::TableNotFound(table_name.clone()))?;
         match &pred {
             Some(expr) => t
                 .rows
@@ -155,7 +176,22 @@ pub(crate) fn exec_delete(del: &Delete, db: &mut Database) -> Result<String, Str
         Vec::new()
     };
 
-    let table = db.get_table_mut(&table_name)?;
+    let _table_name_c = table_name.clone();
+    let col_idx = {
+        let table = db
+            .get_table(&table_name)
+            .map_err(|_| EngineError::TableNotFound(table_name.clone()))?;
+        table.col_index.clone()
+    };
+
+    // Fire BEFORE DELETE triggers (aborts if trigger returns error)
+    if let Err(e) = fire_triggers_before(&table_name, "DELETE", db) {
+        return Err(EngineError::Exec(e));
+    }
+
+    let table = db
+        .get_table_mut(&table_name)
+        .map_err(|_| EngineError::TableNotFound(table_name.clone()))?;
     let count = match pred {
         Some(expr) => table.delete(|row| eval_expr(&expr, row, &col_idx).map(|v| is_truthy(&v)).unwrap_or(false)),
         None => table.delete(|_| true),
@@ -165,7 +201,9 @@ pub(crate) fn exec_delete(del: &Delete, db: &mut Database) -> Result<String, Str
     LAST_CHANGES.with(|c| *c.borrow_mut() = count);
 
     if let Some(returning) = &returning {
-        let table = db.get_table(&table_name)?;
+        let table = db
+            .get_table(&table_name)
+            .map_err(|_| EngineError::TableNotFound(table_name.clone()))?;
         let ref_rows: Vec<&[DbValue]> = old_rows.iter().map(|r| r.as_slice()).collect();
         return Ok(format_projected_result(ref_rows, returning, &table.col_index, table));
     }

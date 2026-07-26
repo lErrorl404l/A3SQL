@@ -2,6 +2,8 @@
 //
 // Delegates everything to GenericDialect. Custom statements handled at dispatch level.
 
+//! Custom SQL dialect — extends GenericDialect with Arma/MySQL compatibility.
+
 use sqlparser::ast::Statement;
 use sqlparser::dialect::{Dialect, GenericDialect};
 use sqlparser::parser::{Parser, ParserError};

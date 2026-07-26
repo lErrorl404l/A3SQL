@@ -1,6 +1,11 @@
 // a3sql database — table container + schema management
 
-pub mod save;
+//! Database state — table, view, config, transaction, and save/load management.
+//!
+//! [`Database`] is the top-level state container. It owns all tables, views,
+//! triggers, sequences, and runtime configuration.
+
+pub(crate) mod save;
 
 use std::collections::HashMap;
 
@@ -15,7 +20,7 @@ struct Snapshot {
 }
 
 #[derive(Debug, Clone)]
-pub struct Database {
+pub(crate) struct Database {
     tables: HashMap<String, Table>,
     /// Stored view definitions (view name → SQL text).
     views: HashMap<String, String>,

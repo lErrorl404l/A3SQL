@@ -1,13 +1,16 @@
 // EXPLAIN plan generation — produces JSON query plan descriptions
 // Extracted from execute.rs.
 
+//! EXPLAIN / EXPLAIN QUERY PLAN — returns the execution plan as JSON.
+
 use serde_json::json;
 use sqlparser::ast::{FromTable, GroupByExpr, LimitClause, OrderByKind, SetExpr, Statement, TableFactor};
 
 use super::super::database::Database;
+use crate::engine::error::EngineError;
 
 /// Generate an EXPLAIN plan description as a JSON array of plan nodes.
-pub fn explain_statement(stmt: &Statement, db: &Database) -> Result<String, String> {
+pub(crate) fn explain_statement(stmt: &Statement, db: &Database) -> Result<String, EngineError> {
     match stmt {
         Statement::Query(query) => {
             let mut steps: Vec<serde_json::Value> = Vec::new();
@@ -104,7 +107,7 @@ pub fn explain_statement(stmt: &Statement, db: &Database) -> Result<String, Stri
                 steps.push(json!({"type": "Unknown"}));
             }
 
-            serde_json::to_string(&steps).map_err(|e| e.to_string())
+            serde_json::to_string(&steps).map_err(|e| EngineError::Exec(e.to_string()))
         }
 
         Statement::Insert(ins) => {
@@ -115,14 +118,14 @@ pub fn explain_statement(stmt: &Statement, db: &Database) -> Result<String, Stri
                 let cols: Vec<String> = ins.columns.iter().map(|c| c.to_string().to_lowercase()).collect();
                 plan["columns"] = json!(cols);
             }
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
+            serde_json::to_string(&[plan]).map_err(|e| EngineError::Exec(e.to_string()))
         }
 
         Statement::CreateTable(def) => {
             let tname = def.name.to_string().to_lowercase();
             let ncols = def.columns.len();
             let plan = json!({"type": "CreateTable", "table": tname, "columns": ncols});
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
+            serde_json::to_string(&[plan]).map_err(|e| EngineError::Exec(e.to_string()))
         }
 
         Statement::CreateIndex(idx) => {
@@ -134,7 +137,7 @@ pub fn explain_statement(stmt: &Statement, db: &Database) -> Result<String, Stri
                 .to_lowercase();
             let tname = idx.table_name.to_string().to_lowercase();
             let plan = json!({"type": "CreateIndex", "index": iname, "table": tname});
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
+            serde_json::to_string(&[plan]).map_err(|e| EngineError::Exec(e.to_string()))
         }
 
         Statement::Update(upd) => {
@@ -144,7 +147,7 @@ pub fn explain_statement(stmt: &Statement, db: &Database) -> Result<String, Stri
                 _ => String::new(),
             };
             let plan = json!({"type": "Update", "table": tname});
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
+            serde_json::to_string(&[plan]).map_err(|e| EngineError::Exec(e.to_string()))
         }
 
         Statement::Delete(del) => {
@@ -158,14 +161,14 @@ pub fn explain_statement(stmt: &Statement, db: &Database) -> Result<String, Stri
                 },
             };
             let plan = json!({"type": "Delete", "table": tname});
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
+            serde_json::to_string(&[plan]).map_err(|e| EngineError::Exec(e.to_string()))
         }
 
         Statement::Drop { names, object_type, .. } => {
             let oname = names.first().map(|n| n.to_string()).unwrap_or_default();
             let otype = format!("{}", object_type).to_lowercase();
             let plan = json!({"type": "Drop", "object_type": otype, "name": oname});
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
+            serde_json::to_string(&[plan]).map_err(|e| EngineError::Exec(e.to_string()))
         }
 
         Statement::Truncate(trunc) => {
@@ -175,75 +178,75 @@ pub fn explain_statement(stmt: &Statement, db: &Database) -> Result<String, Stri
                 .map(|t| t.name.to_string())
                 .unwrap_or_default();
             let plan = json!({"type": "Truncate", "table": tname.to_lowercase()});
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
+            serde_json::to_string(&[plan]).map_err(|e| EngineError::Exec(e.to_string()))
         }
 
         Statement::AlterTable(at) => {
             let tname = at.name.to_string().to_lowercase();
             let ops: Vec<String> = at.operations.iter().map(|o| format!("{}", o)).collect();
             let plan = json!({"type": "AlterTable", "table": tname, "operations": ops});
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
+            serde_json::to_string(&[plan]).map_err(|e| EngineError::Exec(e.to_string()))
         }
 
         Statement::RenameTable(rt) => {
             let old = rt[0].old_name.to_string().to_lowercase();
             let new = rt[0].new_name.to_string().to_lowercase();
             let plan = json!({"type": "RenameTable", "old_name": old, "new_name": new});
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
+            serde_json::to_string(&[plan]).map_err(|e| EngineError::Exec(e.to_string()))
         }
 
         Statement::ShowTables { .. } => {
             let plan = json!({"type": "ShowTables"});
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
+            serde_json::to_string(&[plan]).map_err(|e| EngineError::Exec(e.to_string()))
         }
 
         Statement::StartTransaction { .. } => {
             let plan = json!({"type": "StartTransaction"});
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
+            serde_json::to_string(&[plan]).map_err(|e| EngineError::Exec(e.to_string()))
         }
 
         Statement::Commit { .. } => {
             let plan = json!({"type": "Commit"});
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
+            serde_json::to_string(&[plan]).map_err(|e| EngineError::Exec(e.to_string()))
         }
 
         Statement::Rollback { .. } => {
             let plan = json!({"type": "Rollback"});
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
+            serde_json::to_string(&[plan]).map_err(|e| EngineError::Exec(e.to_string()))
         }
 
         Statement::Savepoint { name, .. } => {
             let plan = json!({"type": "Savepoint", "name": name.to_string()});
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
+            serde_json::to_string(&[plan]).map_err(|e| EngineError::Exec(e.to_string()))
         }
 
         Statement::ReleaseSavepoint { name, .. } => {
             let plan = json!({"type": "ReleaseSavepoint", "name": name.to_string()});
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
+            serde_json::to_string(&[plan]).map_err(|e| EngineError::Exec(e.to_string()))
         }
 
         Statement::Merge(merge) => {
             let tname = format!("{}", merge.table);
             let plan = json!({"type": "Merge", "target": tname, "clauses": merge.clauses.len()});
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
+            serde_json::to_string(&[plan]).map_err(|e| EngineError::Exec(e.to_string()))
         }
 
         Statement::AttachDatabase { schema_name, .. } => {
             let plan = json!({"type": "AttachDatabase", "schema": schema_name.to_string()});
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
+            serde_json::to_string(&[plan]).map_err(|e| EngineError::Exec(e.to_string()))
         }
 
         Statement::CreateVirtualTable { name, module_name, .. } => {
             let plan = json!(
                 {"type": "CreateVirtualTable", "table": name.to_string(), "module": module_name.to_string()}
             );
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
+            serde_json::to_string(&[plan]).map_err(|e| EngineError::Exec(e.to_string()))
         }
 
         // Fallback for unsupported statement types — show the SQL text
         other => {
             let plan = json!({"type": format!("{}", other)});
-            serde_json::to_string(&[plan]).map_err(|e| e.to_string())
+            serde_json::to_string(&[plan]).map_err(|e| EngineError::Exec(e.to_string()))
         }
     }
 }

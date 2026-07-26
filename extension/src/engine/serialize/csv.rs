@@ -1,11 +1,13 @@
 // a3sql serialization — CSV format
 
+//! CSV serialization — comma-separated values for spreadsheet interoperability.
+
 use super::super::database::Database;
 use super::super::table::Table;
 use super::super::value::{Column, ColumnType, DbValue};
 
 /// Export a table as CSV (header row + data rows).
-pub fn export_csv(table: &Table) -> String {
+pub(crate) fn export_csv(table: &Table) -> String {
     let header: String = table
         .columns
         .iter()
@@ -33,7 +35,7 @@ pub fn export_csv(table: &Table) -> String {
 }
 
 /// Import a table from CSV string.
-pub fn import_csv(table_name: &str, csv_str: &str, db: &mut Database) -> Result<(), String> {
+pub(crate) fn import_csv(table_name: &str, csv_str: &str, db: &mut Database) -> Result<(), String> {
     let lines: Vec<&str> = csv_str.lines().collect();
     if lines.is_empty() {
         return Err("Empty CSV".into());

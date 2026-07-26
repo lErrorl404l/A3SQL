@@ -1,5 +1,7 @@
 // a3sql SQL parser — wraps sqlparser-rs with custom dialect and preprocessing
 
+//! SQL parser — wraps sqlparser-rs with Arma-specific dialect and preprocessing.
+
 pub mod dialect;
 pub mod preprocessor;
 
@@ -60,5 +62,12 @@ mod tests {
         let sql = "DROP TABLE weapons";
         let stmts = parse_sql(sql).unwrap();
         assert!(matches!(&stmts[0], Statement::Drop { .. }));
+    }
+
+    #[test]
+    fn parse_create_with_array_types() {
+        let sql = "CREATE TABLE t (id STRING PRIMARY KEY, tags STRINGS[], vals FLOATS[])";
+        let stmts = parse_sql(sql).unwrap();
+        assert!(matches!(&stmts[0], Statement::CreateTable { .. }));
     }
 }

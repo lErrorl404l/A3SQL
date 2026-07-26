@@ -1,10 +1,101 @@
 // a3sql structured error codes
 
+//! Error handling — typed errors, response formatting, and error codes.
+//!
+//! Internal engine functions return [`Result<T, EngineError>`]. At the FFI
+//! boundary, `EngineError` is converted to an [`A3sqlError`] response string.
+
 use std::fmt;
+
+// ── Typed engine errors ─────────────────────────────────────────────────
+
+/// Typed error used throughout the engine internals.
+///
+/// Each variant carries the fields needed to produce a useful error message.
+/// The [`Display`] impl produces a human-readable message.
+/// [`code()`] returns the [`ErrorCode`] for the ABI response.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum EngineError {
+    #[error("Table '{0}' does not exist")]
+    TableNotFound(String),
+
+    #[error("Table '{0}' already exists")]
+    TableAlreadyExists(String),
+
+    #[error("Column '{0}' does not exist")]
+    ColumnNotFound(String),
+
+    #[error("Column '{name}' not found in table '{table}'")]
+    ColumnNotFoundInTable { name: String, table: String },
+
+    #[error("Column '{0}' already exists")]
+    ColumnAlreadyExists(String),
+
+    #[error("Duplicate key '{0}'")]
+    DuplicateKey(String),
+
+    #[error("Index '{0}' does not exist")]
+    IndexNotFound(String),
+
+    #[error("Index '{0}' already exists")]
+    IndexAlreadyExists(String),
+
+    #[error("View '{0}' not found")]
+    ViewNotFound(String),
+
+    #[error("Trigger '{0}' already exists")]
+    TriggerAlreadyExists(String),
+
+    #[error("Parse error: {0}")]
+    Parse(String),
+
+    #[error("{0}")]
+    Exec(String),
+
+    #[error("Type error: expected {expected}, got {actual}")]
+    TypeError { expected: String, actual: String },
+
+    #[error("{0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("Savepoint '{0}' already exists")]
+    SavepointExists(String),
+
+    #[error("Savepoint '{0}' not found")]
+    SavepointNotFound(String),
+
+    #[error("Internal error: {0}")]
+    Internal(String),
+}
+
+impl EngineError {
+    /// Map to the ABI error code.
+    pub(crate) fn code(&self) -> ErrorCode {
+        match self {
+            EngineError::TableNotFound(_) | EngineError::TableAlreadyExists(_) => ErrorCode::Table,
+            EngineError::ColumnNotFound(_)
+            | EngineError::ColumnNotFoundInTable { .. }
+            | EngineError::ColumnAlreadyExists(_) => ErrorCode::Table,
+            EngineError::DuplicateKey(_) => ErrorCode::Pk,
+            EngineError::IndexNotFound(_) | EngineError::IndexAlreadyExists(_) => ErrorCode::Table,
+            EngineError::ViewNotFound(_) => ErrorCode::Table,
+            EngineError::TriggerAlreadyExists(_) => ErrorCode::Exec,
+            EngineError::Parse(_) => ErrorCode::Parse,
+            EngineError::Exec(_) | EngineError::SavepointExists(_) | EngineError::SavepointNotFound(_) => {
+                ErrorCode::Exec
+            }
+            EngineError::TypeError { .. } => ErrorCode::Type,
+            EngineError::Io(_) => ErrorCode::Io,
+            EngineError::Internal(_) => ErrorCode::Internal,
+        }
+    }
+}
+
+// ── Legacy error types (for ABI boundary) ───────────────────────────────
 
 /// Structured error with a machine-readable code and human-readable message.
 #[derive(Debug, Clone)]
-pub struct A3sqlError {
+pub(crate) struct A3sqlError {
     pub code: ErrorCode,
     pub message: String,
 }
@@ -36,9 +127,33 @@ impl From<(&str, String)> for A3sqlError {
     }
 }
 
+impl From<EngineError> for A3sqlError {
+    fn from(e: EngineError) -> Self {
+        A3sqlError::new(e.code(), e.to_string())
+    }
+}
+
+// Bridge: allow `?` to propagate EngineError through `Result<_, String>` —
+// used by test modules and intermediate code that hasn't migrated yet.
+impl From<EngineError> for String {
+    fn from(e: EngineError) -> Self {
+        e.to_string()
+    }
+}
+
+// Bridge: allow `?` to propagate `String` errors through `Result<_, EngineError>` —
+// used while stmts modules are still migrating.
+impl From<String> for EngineError {
+    fn from(s: String) -> Self {
+        EngineError::Exec(s)
+    }
+}
+
+// ── Error codes ─────────────────────────────────────────────────────────
+
 /// Machine-readable error codes from the handoff spec.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum ErrorCode {
+pub(crate) enum ErrorCode {
     Ok,
     Parse,
     Exec,
@@ -81,12 +196,12 @@ impl fmt::Display for ErrorCode {
 }
 
 /// Build an OK response JSON string.
-pub fn ok_response(data: &str) -> String {
+pub(crate) fn ok_response(data: &str) -> String {
     format!("[0,\"OK\",{}]", data)
 }
 
 /// Build an error response JSON string.
-pub fn error_response(code: ErrorCode, msg: &str) -> String {
+pub(crate) fn error_response(code: ErrorCode, msg: &str) -> String {
     format!("[-1,\"{}\",\"{}\"]", code, msg)
 }
 
@@ -118,5 +233,27 @@ mod tests {
     fn error_response_format() {
         let r = error_response(ErrorCode::Table, "table not found");
         assert_eq!(r, "[-1,\"ERR_TABLE\",\"table not found\"]");
+    }
+
+    #[test]
+    fn engine_error_table_not_found() {
+        let e = EngineError::TableNotFound("users".into());
+        assert_eq!(e.to_string(), "Table 'users' does not exist");
+        assert_eq!(e.code(), ErrorCode::Table);
+    }
+
+    #[test]
+    fn engine_error_duplicate_key() {
+        let e = EngineError::DuplicateKey("id_42".into());
+        assert_eq!(e.to_string(), "Duplicate key 'id_42'");
+        assert_eq!(e.code(), ErrorCode::Pk);
+    }
+
+    #[test]
+    fn engine_error_to_a3sql() {
+        let e = EngineError::TableNotFound("orders".into());
+        let a: A3sqlError = e.into();
+        assert_eq!(a.code, ErrorCode::Table);
+        assert!(a.message.contains("orders"));
     }
 }

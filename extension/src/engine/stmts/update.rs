@@ -1,15 +1,23 @@
+//! UPDATE execution — SET column = expr, WHERE filter,
+//! RETURNING clause support.
+
 use std::collections::HashSet;
 
 use super::super::database::Database;
-use super::super::execute::{fire_triggers, format_projected_result, resolve_table_from_joins, LAST_CHANGES};
+use super::super::error::EngineError;
+use super::super::execute::{format_projected_result, LAST_CHANGES};
 use super::super::functions::eval::{eval_expr, eval_literal_expr, is_truthy};
+use super::super::stmts::select::joins::resolve_table_from_joins;
 use super::super::value::DbValue;
+use crate::engine::trigger::{fire_triggers, fire_triggers_before};
 use sqlparser::ast::{Expr, ReferentialAction, Update};
 
-pub(crate) fn exec_update(upd: &Update, db: &mut Database) -> Result<String, String> {
+pub(crate) fn exec_update(upd: &Update, db: &mut Database) -> Result<String, EngineError> {
     let table_name = resolve_table_from_joins(&upd.table)?;
     let returning = upd.returning.clone();
-    let table = db.get_table_mut(&table_name)?;
+    let table = db
+        .get_table_mut(&table_name)
+        .map_err(|_| EngineError::TableNotFound(table_name.clone()))?;
 
     let where_expr = upd.selection.as_ref();
 
@@ -36,10 +44,13 @@ pub(crate) fn exec_update(upd: &Update, db: &mut Database) -> Result<String, Str
             let col_name = assign.target.to_string().to_lowercase();
             let idx = table
                 .col_idx(&col_name)
-                .ok_or_else(|| format!("Unknown column '{}'", col_name))?;
+                .ok_or_else(|| EngineError::ColumnNotFoundInTable {
+                    name: col_name.clone(),
+                    table: table_name.clone(),
+                })?;
             Ok((idx, &assign.value))
         })
-        .collect::<Result<Vec<_>, String>>()?;
+        .collect::<Result<Vec<_>, EngineError>>()?;
 
     // Collect all assignments and validate CHECK constraints upfront
     let mut updates: Vec<(usize, usize, DbValue)> = Vec::new();
@@ -53,7 +64,9 @@ pub(crate) fn exec_update(upd: &Update, db: &mut Database) -> Result<String, Str
 
     // Validate CHECK constraints for each updated row (drop table borrow first)
     let validated_updates = {
-        let t = db.get_table(&table_name)?;
+        let t = db
+            .get_table(&table_name)
+            .map_err(|_| EngineError::TableNotFound(table_name.clone()))?;
         updates
             .iter()
             .filter_map(|(row_i, col_ci, val)| {
@@ -62,19 +75,21 @@ pub(crate) fn exec_update(upd: &Update, db: &mut Database) -> Result<String, Str
                 for expr in &t.check_constraints {
                     let v = eval_expr(expr, &row, &t.col_index).ok()?;
                     if !is_truthy(&v) {
-                        return Some(Err("CHECK constraint failed"));
+                        return Some(Err(EngineError::Exec("CHECK constraint failed".into())));
                     }
                 }
                 Some(Ok((*row_i, *col_ci, val.clone())))
             })
-            .collect::<Result<Vec<(usize, usize, DbValue)>, &str>>()
+            .collect::<Result<Vec<(usize, usize, DbValue)>, EngineError>>()
     }?;
 
     // Validate FOREIGN KEY constraints for each update
     // Pre-collect PK update cascade data (must outlive the immutable borrow block)
     let mut pk_cascade_queue: Vec<(String, usize, String, DbValue)> = Vec::new();
     {
-        let t = db.get_table(&table_name)?;
+        let t = db
+            .get_table(&table_name)
+            .map_err(|_| EngineError::TableNotFound(table_name.clone()))?;
         // Pre-collect FK lookup data: local_column → (foreign_table, pk_set)
         let fk_lookups: Vec<(String, HashSet<String>)> = t
             .foreign_keys
@@ -116,10 +131,10 @@ pub(crate) fn exec_update(upd: &Update, db: &mut Database) -> Result<String, Str
                     if *col_ci == local_ci && !matches!(val, DbValue::Null) {
                         let val_str = val.to_string().to_lowercase();
                         if !ref_pks.contains(&val_str) {
-                            return Err(format!(
+                            return Err(EngineError::Exec(format!(
                                 "FOREIGN KEY constraint: '{}' value '{}' not found in referenced table",
                                 local_col, val_str
-                            ));
+                            )));
                         }
                     }
                 }
@@ -131,7 +146,9 @@ pub(crate) fn exec_update(upd: &Update, db: &mut Database) -> Result<String, Str
                     let new_val_cascade = val.clone();
                     // (use outer pk_cascade_queue)
                     for (ref_table, ref_col_idx) in &fk_refs {
-                        let child = db.get_table(ref_table)?;
+                        let child = db
+                            .get_table(ref_table)
+                            .map_err(|_| EngineError::TableNotFound(ref_table.clone()))?;
                         let on_update = child
                             .foreign_keys
                             .iter()
@@ -155,10 +172,10 @@ pub(crate) fn exec_update(upd: &Update, db: &mut Database) -> Result<String, Str
                                     ));
                                 }
                                 _ => {
-                                    return Err(format!(
+                                    return Err(EngineError::Exec(format!(
                                         "FOREIGN KEY constraint violation: '{}' has reference to '{}' in '{}'",
                                         ref_table, old_val, table_name
-                                    ));
+                                    )));
                                 }
                             }
                         }
@@ -183,7 +200,9 @@ pub(crate) fn exec_update(upd: &Update, db: &mut Database) -> Result<String, Str
 
     // Capture old rows for RETURNING (before applying updates)
     let old_rows: Vec<Vec<DbValue>> = if returning.is_some() {
-        let t = db.get_table(&table_name)?;
+        let t = db
+            .get_table(&table_name)
+            .map_err(|_| EngineError::TableNotFound(table_name.clone()))?;
         let mut seen = HashSet::new();
         validated_updates
             .iter()
@@ -194,7 +213,20 @@ pub(crate) fn exec_update(upd: &Update, db: &mut Database) -> Result<String, Str
         Vec::new()
     };
 
-    let t = db.get_table_mut(&table_name)?;
+    let _t = {
+        let _t = db
+            .get_table_mut(&table_name)
+            .map_err(|_| EngineError::TableNotFound(table_name.clone()))?;
+        // Fire BEFORE UPDATE triggers (drop mutable borrow first)
+    };
+
+    if let Err(e) = fire_triggers_before(&table_name, "UPDATE", db) {
+        return Err(EngineError::Exec(e));
+    }
+
+    let t = db
+        .get_table_mut(&table_name)
+        .map_err(|_| EngineError::TableNotFound(table_name.clone()))?;
     for (row_i, col_ci, val) in &validated_updates {
         t.update_cell(*row_i, *col_ci, val.clone());
     }
@@ -203,7 +235,9 @@ pub(crate) fn exec_update(upd: &Update, db: &mut Database) -> Result<String, Str
     LAST_CHANGES.with(|c| *c.borrow_mut() = validated_updates.len());
 
     if let Some(returning) = &returning {
-        let table = db.get_table(&table_name)?;
+        let table = db
+            .get_table(&table_name)
+            .map_err(|_| EngineError::TableNotFound(table_name.clone()))?;
         let ref_rows: Vec<&[DbValue]> = old_rows.iter().map(|r| r.as_slice()).collect();
         return Ok(format_projected_result(ref_rows, returning, &table.col_index, table));
     }
