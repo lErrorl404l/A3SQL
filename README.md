@@ -1,6 +1,9 @@
 # A3SQL — Arma 3 Database Engine
 
 [![CI](https://github.com/lErrorl404l/a3sql/actions/workflows/ci.yml/badge.svg)](https://github.com/lErrorl404l/a3sql/actions)
+[![Tests](https://github.com/lErrorl404l/a3sql/actions/workflows/test.yml/badge.svg)](https://github.com/lErrorl404l/a3sql/actions/workflows/test.yml)
+[![Lint](https://github.com/lErrorl404l/a3sql/actions/workflows/lint.yml/badge.svg)](https://github.com/lErrorl404l/a3sql/actions/workflows/lint.yml)
+[![Build](https://github.com/lErrorl404l/a3sql/actions/workflows/build.yml/badge.svg)](https://github.com/lErrorl404l/a3sql/actions/workflows/build.yml)
 [![Rust](https://img.shields.io/badge/rust-stable-orange)](https://rustup.rs/)
 [![HEMTT](https://img.shields.io/badge/HEMTT-1.20+-blue)](https://hemtt.dev/)
 [![License](https://img.shields.io/badge/license-APL--SA-red)](LICENSE)
@@ -83,32 +86,53 @@ hemtt build                      # addon PBOs
 cargo test --lib -p a3sql         # 165+ tests
 ```
 
-See the [Building page](https://github.com/lErrorl404l/db_a3/wiki/Building) for cross-compilation, code signing, and CI details.
+See the [Building page](https://github.com/lErrorl404l/a3sql/wiki/Building) for cross-compilation, code signing, and CI details.
 
 ## Project Structure
 
 ```
 a3sql/
 ├── extension/           # Rust crate (cdylib + rlib)
-│   └── src/             # lib.rs (C ABI), engine/, parser/, bin/
-├── addons/{main,sql}/   # Arma 3 addon PBOs
+│   ├── Cargo.toml
+│   ├── .cargo/config.toml   # Cross-compilation linkers
+│   └── src/
+│       ├── lib.rs            # C ABI entry point
+│       ├── parser/           # SQL parser + dialect + preprocessor
+│       ├── engine/           # Core database engine
+│       │   ├── database/     # Database struct, persistence, snapshots
+│       │   ├── execute.rs    # Statement dispatch + CTE + tests
+│       │   ├── functions/    # SQL functions + expression eval
+│       │   ├── index.rs      # BTree + Trigram indices
+│       │   ├── plugin.rs     # Rust/C ABI/SQF plugin system
+│       │   ├── serialize/    # JSON/CSV/Binary/SQL export/import
+│       │   ├── stmts/        # Statement executors (ddl/, select/, etc.)
+│       │   ├── table/        # Table struct, row ops, schema
+│       │   ├── trigger.rs    # Trigger execution
+│       │   ├── value.rs      # Column types, DbValue enum
+│       │   └── error.rs      # Structured error codes
+│       └── bin/              # Standalone a3sql-server binary
+├── addons/{main,sql}/   # Arma 3 addon PBOs (SQF API + CBA settings)
 ├── include/             # CBA build-time headers
 ├── tools/               # Python dev tools (UV-managed)
 ├── .hemtt/              # HEMTT config + hooks
+├── .github/workflows/   # CI: test, lint, build, release, wiki-sync
 ├── keys/                # BI signing keys
-└── plugins/             # Example C ABI plugin
+├── docs/wiki/           # GitHub Wiki source (auto-synced on push to main)
+└── plugins/             # Example C ABI plugin (C source)
 ```
 
 ## Status
 
 | Component | Status |
 |-----------|--------|
-| SQL engine | 165 tests passing |
-| Linting | Clippy clean, SQF validated |
-| CI/CD | GitHub Actions (test + 4-platform build + release) |
-| Cross-platform | Linux x86_64/i686, Windows x86_64/i686 |
-| Signing | DSSignFile via Wine/Proton (Linux CI) |
-| License | APL-SA — Arma Public License Share Alike |
+| **Tests** | [![Tests](https://github.com/lErrorl404l/a3sql/actions/workflows/test.yml/badge.svg)](https://github.com/lErrorl404l/a3sql/actions/workflows/test.yml) |
+| **Lint** | [![Lint](https://github.com/lErrorl404l/a3sql/actions/workflows/lint.yml/badge.svg)](https://github.com/lErrorl404l/a3sql/actions/workflows/lint.yml) |
+| **Build** | [![Build](https://github.com/lErrorl404l/a3sql/actions/workflows/build.yml/badge.svg)](https://github.com/lErrorl404l/a3sql/actions/workflows/build.yml) |
+| **CI** | [![CI](https://github.com/lErrorl404l/a3sql/actions/workflows/ci.yml/badge.svg)](https://github.com/lErrorl404l/a3sql/actions/workflows/ci.yml) |
+| **Coverage** | SQL, JOINs, CTE, window functions, triggers, FK cascade, UPSERT |
+| **Security** | Parameterized queries, TCP LOGIN |
+| **Plugins** | Rust trait, C ABI dynamic, SQF registration |
+| **License** | APL-SA — Arma Public License Share Alike |
 
 ## License
 
