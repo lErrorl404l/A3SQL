@@ -1,0 +1,196 @@
+# Phase 4: Arma 3 Engine Command Sync
+#
+# Syncs command metadata from the actual game binary (Profiling Branch) via
+# supportInfo dump, bypassing the community-maintained arma3-wiki crate.
+#
+# Schedule:    weekly (Mon 06:00 UTC)
+# Manual:      workflow_dispatch
+# Credentials: STEAM_USERNAME, STEAM_PASSWORD (GitHub Secrets)
+#
+# Output:      Produces commands.json — parsed supportInfo matching the
+#              CmdInfo/Arity/ReturnType structures in database.rs
+#
+# If changes are detected vs the previous snapshot, opens a PR.
+
+name: Command Sync
+
+on:
+  schedule:
+    # Every Monday at 06:00 UTC — early enough for same-day review
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      skip_pr:
+        description: "Skip creating a PR (just produce artifact)"
+        type: boolean
+        default: false
+      pretest:
+        description: "Pretest mode — parse sample data, no Steam download"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  sync:
+    name: Sync Arma 3 Commands
+    runs-on: ubuntu-latest
+    timeout-minutes: 120  # Steam download + DS boot can be slow
+
+    steps:
+      # ── Checkout ──────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.3.0
+        with:
+          fetch-depth: 0  # needed for diff / PR creation
+
+      # ── Pretest: parse bundled sample data ────────────────────────────
+      - name: Pretest — parse sample supportInfo
+        if: github.event.inputs.pretest == 'true'
+        run: |
+          python3 scripts/command-sync/support_info_to_json.py \
+            --file scripts/command-sync/testdata/sample_support_info.txt \
+            --output /tmp/commands.json \
+            --pretty
+          echo "=== Parsed commands ==="
+          python3 -c "
+          import json
+          with open('/tmp/commands.json') as f:
+              cmds = json.load(f)
+          print(f'Total: {len(cmds)} commands')
+          for c in cmds[:5]:
+              print(f'  {c[\"name\"]:15s} arity={c[\"arity\"]:6s} ret={c[\"ret\"]}')
+          print('  ...')
+          "
+          echo "pretest_complete=true" >> "$GITHUB_ENV"
+
+      # ── Build Docker image ────────────────────────────────────────────
+      - name: Build Docker image
+        if: github.event.inputs.pretest != 'true'
+        run: |
+          docker build \
+            --tag a3sql-command-sync \
+            --file scripts/command-sync/Dockerfile \
+            .
+
+      # ── Run Docker container ──────────────────────────────────────────
+      - name: Run command sync
+        if: github.event.inputs.pretest != 'true'
+        id: sync
+        run: |
+          # Extract previous snapshot for diff
+          if [ -f scripts/command-sync/commands_previous.json ]; then
+            cp scripts/command-sync/commands_previous.json /tmp/commands_prev.json
+          fi
+
+          mkdir -p /tmp/sync_output
+
+          docker run --rm \
+            -e STEAM_USERNAME="${{ secrets.STEAM_USERNAME }}" \
+            -e STEAM_PASSWORD="${{ secrets.STEAM_PASSWORD }}" \
+            -e STEAM_GUARD_CODE="${{ secrets.STEAM_GUARD_CODE }}" \
+            -v /tmp/sync_output:/output \
+            a3sql-command-sync
+
+          # Copy output to workspace
+          cp /tmp/sync_output/commands.json scripts/command-sync/commands_engine.json
+
+          # Check change flag
+          if [ -f /tmp/sync_output/.changed ]; then
+            echo "changes_detected=true" >> "$GITHUB_ENV"
+          else
+            echo "changes_detected=false" >> "$GITHUB_ENV"
+          fi
+
+          echo "=== Engine commands ==="
+          python3 -c "
+          import json
+          with open('scripts/command-sync/commands_engine.json') as f:
+              cmds = json.load(f)
+          print(f'Total: {len(cmds)} commands')
+          arities = {}
+          for c in cmds:
+              arities[c['arity']] = arities.get(c['arity'], 0) + 1
+          print(f'Arities: {arities}')
+          "
+
+      # ── Create PR if changes detected ─────────────────────────────────
+      - name: Create PR with updated commands
+        if: >
+          env.changes_detected == 'true'
+          && github.event.inputs.skip_pr != 'true'
+          && github.event.inputs.pretest != 'true'
+        id: create_pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          BRANCH="sync/command-update-$(date +%Y%m%d)"
+          git config user.name "a3sql-command-sync[bot]"
+          git config user.email "bot@a3sql.dev"
+
+          # Create branch
+          git checkout -b "${BRANCH}"
+
+          # Stage updated file
+          git add scripts/command-sync/commands_engine.json
+
+          # Commit
+          git commit \
+            -m "sync: update engine command metadata from supportInfo ($(date +%Y-%m-%d))" \
+            -m "Auto-generated by command-sync workflow." \
+            -m "Changes detected in Arma 3 Profiling Branch supportInfo dump."
+
+          # Push
+          git push origin "${BRANCH}"
+
+          # Create PR
+          gh pr create \
+            --base main \
+            --head "${BRANCH}" \
+            --title "Sync: engine command metadata update ($(date +%Y-%m-%d))" \
+            --body "## Command Sync Update
+
+            Automated update from Arma 3 Profiling Branch supportInfo dump.
+
+            ### Changes
+            - Updated \`scripts/command-sync/commands_engine.json\`
+
+            ### Verification
+            - [ ] Parsed output matches \`CmdInfo\` structure in \`database.rs\`
+            - [ ] No unexpected command regressions
+            - [ ] Arity classifications are correct
+
+            ### Workflow
+            This PR was auto-generated by the \`command-sync.yml\` workflow.
+            Review and merge if the diff looks correct.
+            " \
+            --label "automated"
+
+          echo "pr_number=${{ steps.create_pr.outputs.pr-number }}" >> "$GITHUB_ENV"
+
+      # ── Upload artifact ───────────────────────────────────────────────
+      - name: Upload commands JSON artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4.3.4
+        with:
+          name: commands-engine-json
+          path: scripts/command-sync/commands_engine.json
+          retention-days: 30
+
+      # ── Summary ───────────────────────────────────────────────────────
+      - name: Job summary
+        run: |
+          echo "## Command Sync Results" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f scripts/command-sync/commands_engine.json ]; then
+            COUNT=$(python3 -c "import json; print(len(json.load(open('scripts/command-sync/commands_engine.json'))))" 2>/dev/null || echo "0")
+            echo "**Commands parsed:** ${COUNT}" >> "$GITHUB_STEP_SUMMARY"
+            echo "**Changes detected:** ${changes_detected:-unknown}" >> "$GITHUB_STEP_SUMMARY"
+            echo "**Artifact:** \`commands-engine-json\`" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "**Status:** Pretest run (no Steam download)" >> "$GITHUB_STEP_SUMMARY"
+          fi
