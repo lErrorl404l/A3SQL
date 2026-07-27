@@ -53,29 +53,57 @@ if [ -z "$STEAMCMD" ]; then
     fi
 fi
 
-# ── 2. Login — try cached session first, fall back to env credentials ──
-LOGIN_CMD=""
-if [ -n "${STEAM_USERNAME:-}" ] && [ -n "${STEAM_PASSWORD:-}" ]; then
-    echo "[sync] Using env credentials: $STEAM_USERNAME"
-    LOGIN_CMD="+login $STEAM_USERNAME $STEAM_PASSWORD ${STEAM_GUARD_CODE:-}"
+# ── 2. Check if Arma 3 is already installed locally ──────────────────
+ARMA_BIN=""
+for candidate in "$ARMA_DIR/arma3server" "$ARMA_DIR/Arma3Server" "$ARMA_DIR/arma3server_x64"; do
+    if [ -x "$candidate" ]; then
+        ARMA_BIN="$candidate"
+        break
+    fi
+done
+
+if [ -n "$ARMA_BIN" ]; then
+    echo "[sync] Found existing Arma 3 Server at: $ARMA_BIN"
+    echo "[sync] Skipping SteamCMD download."
 else
-    echo "[sync] No credentials in env — trying cached SteamCMD session..."
-    # Check if steamcmd has a cached session by running a simple query
-    LOGIN_CMD="+login anonymous"
-    # anonymous won't work for Arma 3 DS, but it lets us test session caching
+    echo "[sync] Arma 3 Server not found locally — will download via SteamCMD."
+
+    # ── 2a. Login — try cached session first, fall back to env credentials ──
+    LOGIN_CMD=""
+    if [ -n "${STEAM_USERNAME:-}" ] && [ -n "${STEAM_PASSWORD:-}" ]; then
+        echo "[sync] Using env credentials: $STEAM_USERNAME"
+        LOGIN_CMD="+login $STEAM_USERNAME $STEAM_PASSWORD ${STEAM_GUARD_CODE:-}"
+    else
+        echo "[sync] No credentials in env — trying cached SteamCMD session..."
+        LOGIN_CMD="+login anonymous"
+    fi
+
+    # ── 2b. Download / update Arma 3 DS (Profiling Branch) ────────────────
+    echo "[sync] Downloading/updating Arma 3 DS (Profiling Branch)..."
+    if ! $STEAMCMD +force_install_dir "$ARMA_DIR" \
+        $LOGIN_CMD \
+        +app_update "$ARMA_APP_ID" -beta profiling validate \
+        +quit; then
+        echo "[sync] Download failed — possibly need to login."
+        echo "[sync] Set STEAM_USERNAME, STEAM_PASSWORD, and (if needed) STEAM_GUARD_CODE."
+        echo "[sync] Or login interactively first: steamcmd +login YOUR_USERNAME"
+        exit 1
+    fi
+
+    # Find binary after download
+    for candidate in "$ARMA_DIR/arma3server" "$ARMA_DIR/Arma3Server" "$ARMA_DIR/arma3server_x64"; do
+        if [ -x "$candidate" ]; then
+            ARMA_BIN="$candidate"
+            break
+        fi
+    done
 fi
 
-# ── 3. Download / update Arma 3 DS (Profiling Branch) ──────────────────
-echo "[sync] Downloading/updating Arma 3 DS (Profiling Branch)..."
-if ! $STEAMCMD +force_install_dir "$ARMA_DIR" \
-    $LOGIN_CMD \
-    +app_update "$ARMA_APP_ID" -beta profiling validate \
-    +quit; then
-    echo "[sync] Download failed — possibly need to login."
-    echo "[sync] Set STEAM_USERNAME, STEAM_PASSWORD, and (if needed) STEAM_GUARD_CODE."
-    echo "[sync] Or login interactively first: steamcmd +login YOUR_USERNAME"
+if [ -z "$ARMA_BIN" ]; then
+    echo "[sync] ERROR: No arma3server binary found in $ARMA_DIR"
     exit 1
 fi
+echo "[sync] Using server binary: $ARMA_BIN"
 
 # ── 4. Create minimal mission for supportInfo dump ────────────────────
 MISSION_DIR="$ARMA_DIR/mpmissions/__support_dump__"
@@ -99,12 +127,25 @@ SQFEOM
 cat > "$MISSION_DIR/mission.sqm" << 'SQMEOM'
 version=12;
 class Mission { addOns[] = {}; addOnsAuto[] = {}; randomSeed = 0; };
-class Intel { briefingName = "support_dump"; };
+class Intel {
+    briefingName = "support_dump";
+    isPersistent = 1;  // required for -autoInit to work
+};
 SQMEOM
 
 # ── 5. Boot server and capture output ─────────────────────────────────
 echo "[sync] Booting Arma 3 DS Profiling Branch..."
-RPT_DIR="$ARMA_DIR"
+
+# Kill any stale arma server processes from previous runs
+pkill -f "arma3server" 2>/dev/null || true
+sleep 2
+
+# Use profiling binary if available (faster boot)
+if [ -x "$(dirname "$ARMA_BIN")/arma3serverprofiling_x64" ]; then
+    ARMA_BIN="$(dirname "$ARMA_BIN")/arma3serverprofiling_x64"
+    echo "[sync] Using profiling binary: $ARMA_BIN"
+fi
+
 SERVER_CFG="$ARMA_DIR/server.cfg"
 cat > "$SERVER_CFG" << 'CFGEOM'
 hostname = "CMD_SYNC";
@@ -115,31 +156,40 @@ headlessClients[] = {};
 localClient[] = {0};
 CFGEOM
 
-# Run server headless, capture RPT output
-timeout 300 "$ARMA_DIR/arma3server" \
+# SteamAppId bypasses the "Unable to locate a running instance of Steam" check
+export SteamAppId=233780
+
+# Pick a random port to avoid conflicts from stale processes
+SYNC_PORT=$(( 2400 + RANDOM % 1000 ))
+
+# Run server headless, capture output directly from stdout
+# The supportInfo dump goes to both RPT and stdout via diag_log
+timeout 120 "$ARMA_BIN" \
     -config="$SERVER_CFG" \
-    -port=2302 \
+    -port=$SYNC_PORT \
     -world=empty \
     -name=sync \
-    -profiles=sync \
-    -cfg="$ARMA_DIR/basic.cfg" \
+    -profiles="$ARMA_DIR/sync_profiles" \
     -mod= \
     -serverMod= \
     -nosplash \
     -noSound \
     -skipIntro \
     -autoInit \
+    -bandspeed=0 \
+    -netlog \
     2>&1 | tee "$OUTPUT_DIR/server.log" || true
 
-# ── 6. Extract supportInfo from RPT ───────────────────────────────────
-echo "[sync] Extracting supportInfo from server log..."
-RPT_FILE=$(ls -t "$ARMA_DIR/sync/*.rpt" 2>/dev/null | head -1)
+# ── 6. Extract supportInfo from server output ────────────────────────
+echo "[sync] Extracting supportInfo from server output..."
+
+# Try RPT files first (most complete output)
+RPT_FILE=$(find "$ARMA_DIR/sync_profiles" -name "*.rpt" 2>/dev/null | head -1)
 if [ -z "$RPT_FILE" ]; then
-    # Fallback: search in common locations
-    RPT_FILE=$(find "$ARMA_DIR" -name "*.rpt" -newer "$OUTPUT_DIR/server.log" 2>/dev/null | head -1)
+    RPT_FILE=$(find /tmp -name "*.rpt" -newer "$OUTPUT_DIR/server.log" 2>/dev/null | head -1)
 fi
 if [ -z "$RPT_FILE" ]; then
-    # Last resort: extract from stdout log
+    # Fallback: extract from stdout log (diag_log writes to both)
     RPT_FILE="$OUTPUT_DIR/server.log"
 fi
 

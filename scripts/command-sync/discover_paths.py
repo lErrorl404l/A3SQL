@@ -51,17 +51,32 @@ def find_steamcmd() -> str | None:
 
 
 def find_arma3_ds() -> str | None:
-    """Find Arma 3 Dedicated Server installation."""
+    """Find Arma 3 Dedicated Server installation.
+
+    Checks Steam library VDF first, then common install paths directly.
+    """
+    # Check VDF-configured libraries
     for lib in find_library_folders():
         apps = lib.get("apps", {})
         if str(ARMA3_DS_APP_ID) in apps:
-            path = Path(lib["path"]) / f"steamapps/common/Arma 3 Dedicated Server"
+            for name in ["Arma 3 Dedicated Server", "Arma 3 Server"]:
+                path = Path(lib["path"]) / f"steamapps/common/{name}"
+                if path.is_dir():
+                    return str(path)
+
+    # Fallback: check common install paths directly (for libraries not
+    # listed in the primary Steam config, e.g. external/mounted drives)
+    for root in [
+        "/ext/SteamLibrary",
+        "/ext/games/SteamLibrary",
+        "/mnt/games/SteamLibrary",
+        str(Path.home() / "SteamLibrary"),
+    ]:
+        for name in ["Arma 3 Dedicated Server", "Arma 3 Server"]:
+            path = Path(root) / f"steamapps/common/{name}"
             if path.is_dir():
                 return str(path)
-            # Try alternative common names
-            path2 = Path(lib["path"]) / "steamapps/common/Arma 3 Server"
-            if path2.is_dir():
-                return str(path2)
+
     return None
 
 
