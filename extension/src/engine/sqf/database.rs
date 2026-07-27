@@ -1,8 +1,8 @@
 // SQF command database — Arma 3 command registry.
 //
 // Primary source: arma3-wiki crate — tries remote git on startup (6-hour cache),
-// falls back to build-time embedded data. Covers ~3,200 Arma 3 commands.
-// Static eval subset always overlaid (math/string/array native implementations).
+// falls back to build-time embedded data. Covers ~2,700 Arma 3 commands.
+// Each command stores arity, return type classification, and wiki groups.
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -17,30 +17,101 @@ pub(crate) enum Arity {
     Binary,
 }
 
+/// Simplified return type for SQF dispatch decisions.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum ReturnType {
+    Number,
+    String,
+    Boolean,
+    Array,
+    Nothing,
+    /// Game engine types we can't produce in Rust (Object, Config, Code, …)
+    Other,
+}
+
+impl ReturnType {
+    fn from_wiki_value(v: &arma3_wiki::model::Value) -> Self {
+        use arma3_wiki::model::Value;
+        match v {
+            Value::Number | Value::NumberEnum(_) | Value::NumberRange(..) => ReturnType::Number,
+            Value::String | Value::StringEnum(_) | Value::StructuredText => ReturnType::String,
+            Value::Boolean => ReturnType::Boolean,
+            Value::ArraySized { .. }
+            | Value::ArrayUnknown
+            | Value::ArrayUnsized { .. }
+            | Value::ArrayEmpty
+            | Value::ArrayDate
+            | Value::ArrayColor
+            | Value::ArrayColorRgb
+            | Value::ArrayColorRgba
+            | Value::ArrayEdenEntities
+            | Value::Position
+            | Value::Position2d
+            | Value::Position3d
+            | Value::Position3dASL
+            | Value::Position3DASLW
+            | Value::Position3dATL
+            | Value::Position3dAGL
+            | Value::Position3dAGLS
+            | Value::Position3dRelative
+            | Value::Vector
+            | Value::Vector2d
+            | Value::Vector3d
+            | Value::TurretPath
+            | Value::UnitLoadoutArray => ReturnType::Array,
+            Value::Nothing => ReturnType::Nothing,
+            Value::Anything => ReturnType::Other,
+            _ => ReturnType::Other,
+        }
+    }
+
+    /// Check if this return type is actually "implementable" in Rust evaluation
+    /// or requires the game engine.
+    pub(crate) fn is_implementable(self) -> bool {
+        matches!(
+            self,
+            ReturnType::Number | ReturnType::String | ReturnType::Boolean | ReturnType::Array | ReturnType::Nothing
+        )
+    }
+}
+
+/// Metadata stored per command.
+#[derive(Debug, Clone)]
+pub(crate) struct CmdInfo {
+    pub arity: Arity,
+    pub ret: ReturnType,
+    pub groups: Vec<String>,
+}
+
 /// Database metadata.
 #[derive(Debug, Clone)]
 pub(crate) struct WikiMeta {
-    /// Source of wiki data: "git", "cache", or "embedded"
     pub source: &'static str,
-    /// Wiki data version (Arma 3 version the wiki was last synced from)
     pub major: u8,
     pub minor: u8,
-    /// Number of commands in wiki
     pub command_count: usize,
 }
 
 struct Database {
-    commands: HashMap<String, (Arity, bool)>,
+    commands: HashMap<String, CmdInfo>,
     meta: WikiMeta,
 }
 
 impl Database {
     fn load() -> Self {
-        let mut commands: HashMap<String, (Arity, bool)> = HashMap::new();
+        let mut commands: HashMap<String, CmdInfo> = HashMap::new();
 
-        // Static eval commands always available — power our eval implementations
-        for &(name, arity, is_arith) in EVAL_COMMANDS {
-            commands.insert(name.to_string(), (arity, is_arith));
+        // Pre-populate with native implementation commands so they're always
+        // present even when the wiki cache fails.
+        for &(name, arity, ret) in NATIVE_COMMANDS {
+            commands.insert(
+                name.to_string(),
+                CmdInfo {
+                    arity,
+                    ret,
+                    groups: vec!["Native".into()],
+                },
+            );
         }
 
         // Load arma3-wiki data
@@ -51,37 +122,39 @@ impl Database {
                 let source = if w.updated() { "git" } else { "cache" };
                 let n = w.commands().iter().count();
 
-                // Populate command map
                 let n0 = commands.len();
                 for (name, cmd) in w.commands().iter() {
+                    let groups: Vec<String> = cmd.groups().to_vec();
+                    // Pick the "best" syntax (prefer nular > unary > binary, prefer Number return)
+                    let mut best: Option<(Arity, ReturnType)> = None;
                     for syn in cmd.syntax() {
                         let arity = match syn.call() {
                             Call::Nular => Arity::Nular,
                             Call::Unary(_) => Arity::Unary,
                             Call::Binary(_, _) => Arity::Binary,
                         };
-                        let is_arith = matches!(syn.ret().typ(), arma3_wiki::model::Value::Number);
-
-                        let entry = commands.entry(name.clone());
-                        match entry {
-                            std::collections::hash_map::Entry::Occupied(mut o) => {
-                                let existing = o.get().0;
-                                let better = matches!(
-                                    (existing, &arity),
+                        let ret = ReturnType::from_wiki_value(syn.ret().typ());
+                        match best {
+                            None => best = Some((arity, ret)),
+                            Some((existing_arity, existing_ret)) => {
+                                let better_arity = matches!(
+                                    (existing_arity, &arity),
                                     (Arity::Binary, Arity::Unary)
                                         | (Arity::Binary, Arity::Nular)
                                         | (Arity::Unary, Arity::Nular)
                                 );
-                                if better {
-                                    o.insert((arity, is_arith));
+                                let better_ret = existing_ret == ReturnType::Other && ret != ReturnType::Other;
+                                if better_arity || better_ret {
+                                    best = Some((arity, ret));
                                 }
-                            }
-                            std::collections::hash_map::Entry::Vacant(v) => {
-                                v.insert((arity, is_arith));
                             }
                         }
                     }
+                    if let Some((arity, ret)) = best {
+                        commands.insert(name.clone(), CmdInfo { arity, ret, groups });
+                    }
                 }
+
                 let n1 = commands.len();
                 eprintln!(
                     "[a3sql] SQF DB: {} commands (+{} from arma3-wiki v{}.{} {})",
@@ -107,7 +180,7 @@ impl Database {
             },
         };
 
-        // Version drift check: warn if wiki data doesn't match configured game version
+        // Version drift check
         if let Some(cfg) = crate::config::Config::load().game_version {
             let wiki_v = format!("{}.{}", meta.major, meta.minor);
             if wiki_v != cfg {
@@ -121,8 +194,8 @@ impl Database {
         Database { commands, meta }
     }
 
-    fn lookup(&self, name: &str) -> Option<Arity> {
-        self.commands.get(name).map(|(a, _)| *a)
+    fn lookup(&self, name: &str) -> Option<&CmdInfo> {
+        self.commands.get(name)
     }
 }
 
@@ -131,9 +204,14 @@ fn global_db() -> &'static Database {
     DB.get_or_init(Database::load)
 }
 
-/// Look up a command name (lowercased) and return its arity.
-pub(crate) fn lookup(name: &str) -> Option<Arity> {
+/// Look up a command by name (lowercased) and return its metadata.
+pub(crate) fn lookup_info(name: &str) -> Option<&'static CmdInfo> {
     global_db().lookup(name)
+}
+
+/// Look up just the arity.
+pub(crate) fn lookup(name: &str) -> Option<Arity> {
+    global_db().lookup(name).map(|i| i.arity)
 }
 
 /// Check if a name is a known command.
@@ -141,7 +219,7 @@ pub(crate) fn is_command(name: &str) -> bool {
     global_db().lookup(name).is_some()
 }
 
-/// Wiki metadata (source, version, command count, max Arma 3 version).
+/// Wiki metadata.
 pub(crate) fn wiki_meta() -> &'static WikiMeta {
     &global_db().meta
 }
@@ -171,43 +249,104 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn lookup_math_command() {
+        if let Some(info) = lookup_info("sqrt") {
+            assert_eq!(info.arity, Arity::Unary);
+            assert_eq!(info.ret, ReturnType::Number);
+        }
+    }
+
+    #[test]
+    fn lookup_string_command() {
+        if let Some(info) = lookup_info("toupper") {
+            assert_eq!(info.arity, Arity::Unary);
+            assert_eq!(info.ret, ReturnType::String);
+        }
+    }
 }
 
-// ── Static commands (always available, powers eval implementations) ────
+// ── Native implementation commands ────────────────────────────────────
+// These are commands we have actual Rust eval implementations for.
+// (name, arity, return_type) — the eval implementations are in eval.rs.
 
-static EVAL_COMMANDS: &[(&str, Arity, bool)] = &[
-    ("pi", Arity::Nular, true),
-    ("true", Arity::Nular, false),
-    ("false", Arity::Nular, false),
-    ("nil", Arity::Nular, false),
-    ("abs", Arity::Unary, true),
-    ("acos", Arity::Unary, true),
-    ("asin", Arity::Unary, true),
-    ("atan", Arity::Unary, true),
-    ("ceil", Arity::Unary, true),
-    ("cos", Arity::Unary, true),
-    ("count", Arity::Unary, true),
-    ("deg", Arity::Unary, true),
-    ("exp", Arity::Unary, true),
-    ("floor", Arity::Unary, true),
-    ("hint", Arity::Unary, false),
-    ("hintc", Arity::Unary, false),
-    ("ln", Arity::Unary, true),
-    ("log", Arity::Unary, true),
-    ("log10", Arity::Unary, true),
-    ("parsenumber", Arity::Unary, true),
-    ("parse_number", Arity::Unary, true),
-    ("rad", Arity::Unary, true),
-    ("round", Arity::Unary, true),
-    ("sin", Arity::Unary, true),
-    ("sqrt", Arity::Unary, true),
-    ("str", Arity::Unary, false),
-    ("tan", Arity::Unary, true),
-    ("to_string", Arity::Unary, false),
-    ("to_lower", Arity::Unary, false),
-    ("to_upper", Arity::Unary, false),
-    ("tolower", Arity::Unary, false),
-    ("toupper", Arity::Unary, false),
-    ("type_name", Arity::Unary, false),
-    ("typename", Arity::Unary, false),
+static NATIVE_COMMANDS: &[(&str, Arity, ReturnType)] = &[
+    // Nular constants
+    ("pi", Arity::Nular, ReturnType::Number),
+    ("true", Arity::Nular, ReturnType::Boolean),
+    ("false", Arity::Nular, ReturnType::Boolean),
+    ("nil", Arity::Nular, ReturnType::Nothing),
+    // Unary math
+    ("abs", Arity::Unary, ReturnType::Number),
+    ("acos", Arity::Unary, ReturnType::Number),
+    ("asin", Arity::Unary, ReturnType::Number),
+    ("atan", Arity::Unary, ReturnType::Number),
+    ("ceil", Arity::Unary, ReturnType::Number),
+    ("cos", Arity::Unary, ReturnType::Number),
+    ("deg", Arity::Unary, ReturnType::Number),
+    ("exp", Arity::Unary, ReturnType::Number),
+    ("floor", Arity::Unary, ReturnType::Number),
+    ("ln", Arity::Unary, ReturnType::Number),
+    ("log", Arity::Unary, ReturnType::Number),
+    ("log10", Arity::Unary, ReturnType::Number),
+    ("rad", Arity::Unary, ReturnType::Number),
+    ("round", Arity::Unary, ReturnType::Number),
+    ("sin", Arity::Unary, ReturnType::Number),
+    ("sqrt", Arity::Unary, ReturnType::Number),
+    ("tan", Arity::Unary, ReturnType::Number),
+    // Unary string
+    ("str", Arity::Unary, ReturnType::String),
+    ("to_string", Arity::Unary, ReturnType::String),
+    ("toupper", Arity::Unary, ReturnType::String),
+    ("to_upper", Arity::Unary, ReturnType::String),
+    ("tolower", Arity::Unary, ReturnType::String),
+    ("to_lower", Arity::Unary, ReturnType::String),
+    ("typename", Arity::Unary, ReturnType::String),
+    ("type_name", Arity::Unary, ReturnType::String),
+    ("count", Arity::Unary, ReturnType::Number),
+    ("parsenumber", Arity::Unary, ReturnType::Number),
+    ("parse_number", Arity::Unary, ReturnType::Number),
+    // Unary non-value (side-effect passthrough in eval)
+    ("hint", Arity::Unary, ReturnType::String),
+    ("hintc", Arity::Unary, ReturnType::String),
+    // --- New native implementations ---
+    // Math extensions
+    ("min", Arity::Binary, ReturnType::Number),
+    ("max", Arity::Binary, ReturnType::Number),
+    ("atan2", Arity::Binary, ReturnType::Number),
+    ("random", Arity::Unary, ReturnType::Number), // random [0, N) or random N
+    ("trunc", Arity::Unary, ReturnType::Number),
+    ("sign", Arity::Unary, ReturnType::Number),
+    // String extensions
+    ("find", Arity::Binary, ReturnType::Number), // string find substr → index
+    ("split", Arity::Binary, ReturnType::Array), // string split delimiter → array
+    ("trim", Arity::Unary, ReturnType::String),
+    ("replace", Arity::Binary, ReturnType::String),
+    ("resize", Arity::Binary, ReturnType::Number), // string resize → new string…
+    ("select", Arity::Binary, ReturnType::Other),  // array/string select index
+    ("in", Arity::Binary, ReturnType::Boolean),    // value in array
+    // Type helpers
+    ("isnil", Arity::Unary, ReturnType::Boolean),
+    ("is_null", Arity::Unary, ReturnType::Boolean),
+    ("isequalto", Arity::Binary, ReturnType::Boolean),
+    ("is_equal_to", Arity::Binary, ReturnType::Boolean),
+    ("isEqualTo", Arity::Binary, ReturnType::Boolean),
+    // Math - extra trig
+    ("cosec", Arity::Unary, ReturnType::Number),
+    ("sec", Arity::Unary, ReturnType::Number),
+    ("cot", Arity::Unary, ReturnType::Number),
+    // Math - vector (simplified: operate on scalars)
+    ("vectoradd", Arity::Binary, ReturnType::Array),
+    ("vectorsubtract", Arity::Binary, ReturnType::Array),
+    ("vectordotproduct", Arity::Binary, ReturnType::Number),
+    ("vectorcrossproduct", Arity::Binary, ReturnType::Array),
+    ("vectormagnitude", Arity::Unary, ReturnType::Number),
+    ("vectornormalized", Arity::Unary, ReturnType::Array),
+    // Array ops
+    ("pushback", Arity::Binary, ReturnType::Array),
+    ("deleteat", Arity::Binary, ReturnType::Array),
+    ("apply", Arity::Unary, ReturnType::Array), // simplified — returns the array
+    // Bounds checking
+    ("clamp", Arity::Binary, ReturnType::Number),
 ];
