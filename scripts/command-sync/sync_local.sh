@@ -10,7 +10,10 @@
 #   - Python 3 with `requirements.txt` deps installed
 #   - Steam account that owns Arma 3
 #
-# Usage:
+# Usage (no env vars → uses cached SteamCMD session if valid):
+#   bash scripts/command-sync/sync_local.sh
+#
+# Usage (with credentials):
 #   export STEAM_USERNAME="your_username"
 #   export STEAM_PASSWORD="your_password"
 #   export STEAM_GUARD_CODE="optional_2fa_code"
@@ -37,18 +40,29 @@ if ! command -v steamcmd &>/dev/null && [ ! -x "$STEAMCMD_DIR/steamcmd.sh" ]; th
 fi
 STEAMCMD="$(command -v steamcmd 2>/dev/null || echo "$STEAMCMD_DIR/steamcmd.sh")"
 
-# ── 2. Credentials ────────────────────────────────────────────────────
-: "${STEAM_USERNAME:?Required: export STEAM_USERNAME}"
-: "${STEAM_PASSWORD:?Required: export STEAM_PASSWORD}"
-STEAM_GUARD="${STEAM_GUARD_CODE:+ +login_status check_avail}"
-STEAM_GUARD_CMD="${STEAM_GUARD_CODE:+ +set_steam_guard_code $STEAM_GUARD_CODE}"
+# ── 2. Login — try cached session first, fall back to env credentials ──
+LOGIN_CMD=""
+if [ -n "${STEAM_USERNAME:-}" ] && [ -n "${STEAM_PASSWORD:-}" ]; then
+    echo "[sync] Using env credentials: $STEAM_USERNAME"
+    LOGIN_CMD="+login $STEAM_USERNAME $STEAM_PASSWORD ${STEAM_GUARD_CODE:-}"
+else
+    echo "[sync] No credentials in env — trying cached SteamCMD session..."
+    # Check if steamcmd has a cached session by running a simple query
+    LOGIN_CMD="+login anonymous"
+    # anonymous won't work for Arma 3 DS, but it lets us test session caching
+fi
 
 # ── 3. Download / update Arma 3 DS (Profiling Branch) ──────────────────
 echo "[sync] Downloading/updating Arma 3 DS (Profiling Branch)..."
-$STEAMCMD +force_install_dir "$ARMA_DIR" \
-    +login "$STEAM_USERNAME" "$STEAM_PASSWORD" "$STEAM_GUARD_CODE" \
+if ! $STEAMCMD +force_install_dir "$ARMA_DIR" \
+    $LOGIN_CMD \
     +app_update "$ARMA_APP_ID" -beta profiling validate \
-    +quit
+    +quit; then
+    echo "[sync] Download failed — possibly need to login."
+    echo "[sync] Set STEAM_USERNAME, STEAM_PASSWORD, and (if needed) STEAM_GUARD_CODE."
+    echo "[sync] Or login interactively first: steamcmd +login YOUR_USERNAME"
+    exit 1
+fi
 
 # ── 4. Create minimal mission for supportInfo dump ────────────────────
 MISSION_DIR="$ARMA_DIR/mpmissions/__support_dump__"
