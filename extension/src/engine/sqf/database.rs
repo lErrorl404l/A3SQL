@@ -141,26 +141,6 @@ impl Database {
                     }
                 }
 
-                // Ensure native commands with Rust implementations are present.
-                // Wiki data is already loaded, so this only adds commands that
-                // the wiki doesn't know about.
-                let wiki_loaded = commands.len();
-                for &(name, _) in crate::engine::sqf::commands::NATIVE_CMD_FNS {
-                    commands.entry(name.to_string()).or_insert_with(|| CmdInfo {
-                        arity: Arity::Unary,
-                        ret: ReturnType::Other,
-                        groups: vec!["Native".into()],
-                    });
-                }
-                let native_only = commands.len() - wiki_loaded;
-
-                eprintln!(
-                    "[a3sql] SQF DB: {} commands (+{} wiki, +{} native-only)",
-                    commands.len(),
-                    wiki_loaded,
-                    native_only,
-                );
-
                 WikiMeta {
                     source,
                     major: v.major(),
@@ -175,6 +155,24 @@ impl Database {
                 command_count: 0,
             },
         };
+
+        // Ensure native commands with Rust implementations are present.
+        // Runs regardless of whether wiki data loaded successfully.
+        let n0 = commands.len();
+        for &(name, _) in crate::engine::sqf::commands::NATIVE_CMD_FNS {
+            commands.entry(name.to_string()).or_insert_with(|| CmdInfo {
+                arity: Arity::Unary,
+                ret: ReturnType::Other,
+                groups: vec!["Native".into()],
+            });
+        }
+
+        eprintln!(
+            "[a3sql] SQF DB: {} commands (+{} wiki, +{} native-only)",
+            commands.len(),
+            n0,
+            commands.len() - n0,
+        );
 
         // Version drift check
         if let Some(cfg) = crate::config::Config::load().game_version {
