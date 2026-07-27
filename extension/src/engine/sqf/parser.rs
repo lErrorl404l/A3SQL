@@ -137,18 +137,30 @@ impl Parser {
     fn parse_bp(&mut self, min_prec: u8) -> Result<Expr, String> {
         let mut lhs = self.parse_prefix()?;
 
-        // Binary operators
+        // Binary operators — includes both symbolic operators (+, &&, ==, etc.)
+        // and SQF binary commands used in infix position (e.g. `3 min 7`).
         while let Some(op) = self.peek() {
-            if !is_binary_op(op) {
-                break;
-            }
-            let prec = precedence(op);
-            if prec < min_prec {
+            let (is_infix_binop, prec) = if is_binary_cmd(op) {
+                // SQF binary commands bind at the lowest precedence
+                (true, 0u8)
+            } else if is_binary_op(op) {
+                (true, precedence(op))
+            } else {
+                (false, 0)
+            };
+            if !is_infix_binop || prec < min_prec {
                 break;
             }
             let op_token = self.advance().unwrap().clone();
-            let rhs = self.parse_bp(prec + 1)?;
-            lhs = Expr::Binary(op_from_token(&op_token).unwrap(), Box::new(lhs), Box::new(rhs));
+            if let Token::Ident(name) = &op_token {
+                // SQF binary command: lhs <command> rhs
+                let rhs = self.parse_bp(0)?;
+                lhs = Expr::Command(name.to_ascii_lowercase(), vec![lhs, rhs]);
+            } else {
+                // Symbolic operator
+                let rhs = self.parse_bp(prec + 1)?;
+                lhs = Expr::Binary(op_from_token(&op_token).unwrap(), Box::new(lhs), Box::new(rhs));
+            }
         }
 
         Ok(lhs)
@@ -213,6 +225,15 @@ impl Parser {
             }
             Some(t) => Err(format!("unexpected token in SQF expression: {}", t)),
         }
+    }
+}
+
+/// Check if a token is a known binary command name.
+fn is_binary_cmd(t: &Token) -> bool {
+    if let Token::Ident(name) = t {
+        super::database::lookup(name) == Some(super::database::Arity::Binary)
+    } else {
+        false
     }
 }
 
@@ -350,6 +371,29 @@ mod tests {
                 Op::Sub,
                 Box::new(Expr::Binary(Op::Sub, Box::new(Expr::Int(1)), Box::new(Expr::Int(2)))),
                 Box::new(Expr::Int(3)),
+            )
+        );
+    }
+
+    #[test]
+    fn test_binary_command_infix() {
+        // "3 min 7" should parse as Command("min", [Int(3), Int(7)])
+        let e = parse_expr("3 min 7").unwrap();
+        assert_eq!(e, Expr::Command("min".into(), vec![Expr::Int(3), Expr::Int(7)]));
+    }
+
+    #[test]
+    fn test_binary_command_with_arith() {
+        // "3 + 4 min 7" should parse as min((3+4), 7) since binary commands bind lower
+        let e = parse_expr("3 + 4 min 7").unwrap();
+        assert_eq!(
+            e,
+            Expr::Command(
+                "min".into(),
+                vec![
+                    Expr::Binary(Op::Add, Box::new(Expr::Int(3)), Box::new(Expr::Int(4))),
+                    Expr::Int(7),
+                ]
             )
         );
     }
