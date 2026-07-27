@@ -1,11 +1,16 @@
 // a3sql config — version validation, startup options from a3sql.toml
 //
-// Reads `$A3SQL_CONFIG` or `./a3sql.toml` for an optional game_version override.
+// Reads `$A3SQL_CONFIG` or `./a3sql.toml` for an optional game_version override,
+// public_key for Ed25519 query signing, and auth_required flag.
 // If the wiki data version differs from the configured game version, the engine
 // logs a drift warning at startup so users know their command database might
 // not match their installed Arma 3 version.
 
 use std::path::Path;
+use std::sync::LazyLock;
+
+/// Cached application config, loaded once on first access.
+pub(crate) static CONFIG: LazyLock<Config> = LazyLock::new(Config::load);
 
 /// Parsed application config.
 #[derive(Debug, Default, serde::Deserialize)]
@@ -13,9 +18,41 @@ pub(crate) struct Config {
     /// Expected Arma 3 game version (e.g. "2.20"). When set, the engine compares
     /// it to the arma3-wiki data version and logs a warning on mismatch.
     pub game_version: Option<String>,
+
+    /// Hex‑encoded Ed25519 public key (64 hex chars). Required when
+    /// `auth_required` is `true` and the `auth` feature is enabled.
+    pub public_key: Option<String>,
+
+    /// Require every query to carry a `SIGNED <sig> <query>` prefix with a
+    /// valid Ed25519 signature. Default: `false`.
+    pub auth_required: Option<bool>,
 }
 
 impl Config {
+    /// Whether auth verification is required.
+    pub(crate) fn auth_enabled(&self) -> bool {
+        #[cfg(feature = "auth")]
+        {
+            self.auth_required.unwrap_or(false)
+        }
+        #[cfg(not(feature = "auth"))]
+        {
+            false
+        }
+    }
+
+    /// The configured Ed25519 public key bytes, if any.
+    pub(crate) fn public_key_bytes(&self) -> Option<[u8; 32]> {
+        #[cfg(feature = "auth")]
+        {
+            self.public_key.as_ref().and_then(|hex| crate::auth::hex_to_pubkey(hex))
+        }
+        #[cfg(not(feature = "auth"))]
+        {
+            None
+        }
+    }
+
     /// Load config from `$A3SQL_CONFIG` or `./a3sql.toml`. Returns default on
     /// missing file or parse error (config is advisory, not required).
     pub fn load() -> Self {

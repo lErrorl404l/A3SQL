@@ -11,6 +11,7 @@
 // ponytail: unused items kept for phased implementation
 #![allow(dead_code)]
 
+pub(crate) mod auth;
 pub(crate) mod config;
 pub(crate) mod dispatch;
 mod engine;

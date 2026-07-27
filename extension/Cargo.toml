@@ -59,9 +59,13 @@ openssl-sys = { version = "0.9", features = ["vendored"] }
 hemtt-preprocessor = { version = "1", optional = true }
 hemtt-tokens = { version = "1", optional = true }
 
+# Ed25519 signature verification for SQF query authentication.
+ed25519-dalek = { version = "2", features = ["pkcs8"], optional = true }
+
 [features]
 default = ["sqf-preprocessor"]
 sqf-preprocessor = ["hemtt-preprocessor", "hemtt-tokens"]
+auth = ["ed25519-dalek"]
 
 
 [dev-dependencies]
