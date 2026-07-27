@@ -60,7 +60,7 @@ hemtt-preprocessor = { version = "1", optional = true }
 hemtt-tokens = { version = "1", optional = true }
 
 # Ed25519 signature verification for SQF query authentication.
-ed25519-dalek = { version = "2", features = ["pkcs8"], optional = true }
+ed25519-dalek = { version = "3", features = ["pkcs8"], optional = true }
 
 [features]
 default = ["sqf-preprocessor"]
