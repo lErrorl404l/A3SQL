@@ -104,7 +104,7 @@ impl Database {
         // Pre-populate from commands.rs dispatch table — adds native commands
         // automatically without a separate static list. Wiki data overlays
         // real arity/return-type on top during the loop below.
-        for name in crate::engine::sqf::commands::native_command_names() {
+        for &(name, _) in crate::engine::sqf::commands::NATIVE_CMD_FNS {
             commands.entry(name.to_string()).or_insert_with(|| CmdInfo {
                 arity: Arity::Unary,    // most SQF commands are unary; wiki fixes this
                 ret: ReturnType::Other, // safe fallback; wiki has real return type
