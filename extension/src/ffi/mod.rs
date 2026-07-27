@@ -8,10 +8,13 @@
 
 //! C ABI entry points — RVExtension, RVExtensionArgs, RVExtensionVersion.
 //! These are the interface between the Arma 3 engine and a3sql.
+//!
+//! Command routing and testing infrastructure provided by [`arma_rs`].
 
-use std::ffi::CStr;
 use std::os::raw::c_char;
-use std::sync::{LazyLock, Mutex};
+use std::sync::{LazyLock, Mutex, Once};
+
+use arma_rs::Extension;
 
 use crate::dispatch;
 use crate::engine;
@@ -30,50 +33,116 @@ pub(crate) static CREDENTIALS: LazyLock<Mutex<(String, String)>> =
     LazyLock::new(|| Mutex::new((String::new(), String::new())));
 pub(crate) static REMOTE: LazyLock<Mutex<Option<std::net::TcpStream>>> = LazyLock::new(|| Mutex::new(None));
 
-// ── ABI ─────────────────────────────────────────────────────────────────────
-
 /// Output buffer size from Arma engine. Currently 10240 bytes.
 pub(crate) const OUTPUT_BUF_SIZE: u32 = 10240;
 
 /// Version string — max 32 bytes including null terminator.
 const VERSION: &[u8] = b"a3sql 0.1.0\0";
 
-/// Called by engine on extension load.
+// ── Arma-rs Extension ─────────────────────────────────────────────────────────
+
+/// Lazy-initialized [`arma_rs::Extension`]. Built exactly once on first C ABI
+/// call, then reused for the lifetime of the extension.
+///
+/// `Extension` contains `Rc` (from arma-rs's context manager) and is therefore
+/// `!Send + !Sync`, which rules out [`OnceLock`](std::sync::OnceLock) and
+/// [`Mutex`]. Instead we use [`Once`] + `static mut` — the standard Rust pattern
+/// for `!Send` statics. Safety rests on:
+/// - [`Once`] guarantees single-threaded initialisation.
+/// - After init the value is never mutated, only immutably borrowed.
+/// - Arma always calls extensions from a single thread.
+static INIT: Once = Once::new();
+static mut RV_EXTENSION: Option<Extension> = None;
+
+/// Acquire the extension, initialising it on first access.
+fn with_extension<F, R>(f: F) -> R
+where
+    F: FnOnce(&Extension) -> R,
+{
+    INIT.call_once(|| {
+        // SAFETY: Called exactly once via Once.
+        unsafe { RV_EXTENSION = Some(build_extension()) }
+    });
+    // SAFETY: After `INIT.call_once`, `RV_EXTENSION` is `Some` and never mutated.
+    // `addr_of!` avoids the `static_mut_refs` lint.
+    let ext = unsafe { std::ptr::addr_of!(RV_EXTENSION).as_ref().unwrap().as_ref().unwrap() };
+    f(ext)
+}
+
+/// Build the arma-rs [`Extension`] with registered commands.
+///
+/// Command structure:
+/// - `"sql"` — receives an SQF-encoded array as a single `Vec<String>` parameter.
+///   The first element is the SQL input, remaining elements are bind params.
+///
+/// Public so integration tests can create a [`testing::Extension`](arma_rs::testing::Extension).
+pub fn build_extension() -> Extension {
+    Extension::build()
+        .version("a3sql 0.1.0".to_string())
+        .command("sql", sql_handler)
+        .finish()
+}
+
+/// Handler for the `sql` command.
+///
+/// The SQF wrapper encodes the call as an SQF array string:
+/// ```ignore
+/// _payload = format ['["%1"%2]', _stmt, _args]; // _args is prefixed with commas
+/// "a3sql" callExtension ["sql", [_payload]];
+/// ```
+///
+/// `payload` is deserialized by arma-rs's [`Vec<T>: FromArma`](arma_rs::FromArma):
+/// - `payload[0]` — SQL input string
+/// - `payload[1..]` — bind parameter strings (substituted for `$1`, `$2`, ...)
+fn sql_handler(payload: Vec<String>) -> String {
+    if payload.is_empty() {
+        return dispatch::dispatch("", &[]);
+    }
+    let input = &payload[0];
+    let args: Vec<&str> = payload[1..].iter().map(|s| s.as_str()).collect();
+    dispatch::dispatch(input, &args)
+}
+
+// ── C ABI ─────────────────────────────────────────────────────────────────────
+
+/// Called by Arma engine on extension load. Returns the version string.
+///
+/// Also triggers extension initialisation (plugins, state) on first call.
 ///
 /// # Safety
 /// `output` must be a valid, writable buffer of at least `output_size` bytes.
 #[no_mangle]
 pub unsafe extern "C" fn RVExtensionVersion(output: *mut c_char, output_size: u32) {
+    with_extension(|_| {}); // ensure extension + plugins are initialised
     let len = (output_size as usize).min(VERSION.len());
     std::ptr::copy_nonoverlapping(VERSION.as_ptr(), output as *mut u8, len);
-    // Init built-in plugins on first load
-    engine::plugin::init_builtin_plugins();
 }
 
 /// STRING callExtension STRING — compatibility entry point.
 ///
+/// Not supported with arma-rs command routing. The SQF wrapper should always
+/// use the array form: `callExtension ["sql", [payload]]`.
+///
 /// # Safety
-/// `output` and `function` must be valid, non-null pointers to C string buffers.
+/// `output` must be a valid, writable buffer.
 #[no_mangle]
-pub unsafe extern "C" fn RVExtension(output: *mut c_char, output_size: u32, function: *const c_char) {
-    if output.is_null() || function.is_null() {
-        return;
+pub unsafe extern "C" fn RVExtension(output: *mut c_char, output_size: u32, _function: *const c_char) {
+    if !output.is_null() && output_size > 0 {
+        *output = 0;
     }
-
-    let input = match CStr::from_ptr(function).to_str() {
-        Ok(s) => s,
-        Err(_) => {
-            write_output(output, output_size, "[-1,\"ERROR\",\"INVALID_UTF8\"]");
-            return;
-        }
-    };
-
-    let result = dispatch::dispatch(input, &[]);
-    write_output(output, output_size, &result);
 }
 
 /// STRING callExtension ARRAY — main entry point.
-/// Returns 0 on success, -1 on error (extension return code).
+///
+/// Delegates to [`arma_rs::Extension::handle_call`] for command routing. The
+/// command name is the first array element (`function`); remaining elements are
+/// passed as args to the command handler.
+///
+/// Returns arma-rs status codes:
+/// - `0` = success
+/// - `1` = command not found
+/// - `2N` = wrong argument count (N = received count)
+/// - `9` = application error
 ///
 /// # Safety
 /// All pointer arguments must be valid, non-null pointers from the Arma engine.
@@ -88,30 +157,16 @@ pub unsafe extern "C" fn RVExtensionArgs(
     if output.is_null() || function.is_null() {
         return -1;
     }
-
-    let input = match CStr::from_ptr(function).to_str() {
-        Ok(s) => s,
-        Err(_) => {
-            write_output(output, output_size, "[-1,\"ERROR\",\"INVALID_UTF8\"]");
-            return -1;
-        }
-    };
-
-    let mut args: Vec<&str> = Vec::new();
-    if !argv.is_null() {
-        for i in 0..argc as isize {
-            let ptr = *argv.offset(i);
-            if !ptr.is_null() {
-                if let Ok(s) = CStr::from_ptr(ptr).to_str() {
-                    args.push(s);
-                }
-            }
-        }
-    }
-
-    let result = dispatch::dispatch(input, &args);
-    write_output(output, output_size, &result);
-    0
+    with_extension(|ext| {
+        ext.handle_call(
+            function as *mut c_char,
+            output,
+            output_size as usize,
+            Some(argv as *mut *mut i8),
+            Some(argc as i32),
+            true,
+        )
+    })
 }
 
 // ── Callback registration ──────────────────────────────────────────────────
@@ -119,21 +174,12 @@ pub unsafe extern "C" fn RVExtensionArgs(
 /// Register a callback function that the extension can call back into SQF.
 /// Arma calls this automatically when the extension exports the symbol.
 ///
+/// Stored in the [`CALLBACK`] static for access by [`eval`](crate::engine::functions::eval).
+///
 /// # Safety
 /// `callbackProc` must be a valid function pointer provided by the Arma engine.
 #[no_mangle]
 pub unsafe extern "C" fn RVExtensionRegisterCallback(callbackProc: Option<unsafe extern "C" fn(i32, *mut c_char)>) {
     let mut cb = CALLBACK.lock().unwrap();
     *cb = callbackProc;
-}
-
-// ── Output helper ─────────────────────────────────────────────────────────
-
-fn write_output(output: *mut c_char, output_size: u32, s: &str) {
-    let bytes = s.as_bytes();
-    let len = (output_size as usize - 1).min(bytes.len());
-    unsafe {
-        std::ptr::copy_nonoverlapping(bytes.as_ptr(), output as *mut u8, len);
-        *output.add(len) = 0;
-    }
 }
