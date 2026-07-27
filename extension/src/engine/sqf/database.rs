@@ -160,10 +160,18 @@ impl Database {
         // Runs regardless of whether wiki data loaded successfully.
         let n0 = commands.len();
         for &(name, _) in crate::engine::sqf::commands::NATIVE_CMD_FNS {
-            commands.entry(name.to_string()).or_insert_with(|| CmdInfo {
-                arity: Arity::Unary,
-                ret: ReturnType::Other,
-                groups: vec!["Native".into()],
+            commands.entry(name.to_string()).or_insert_with(|| {
+                // Use correct metadata from fallback static
+                let (arity, ret) = NATIVE_META
+                    .iter()
+                    .find(|&&(n, _, _)| n == name)
+                    .map(|&(_, a, r)| (a, r))
+                    .unwrap_or((Arity::Unary, ReturnType::Other));
+                CmdInfo {
+                    arity,
+                    ret,
+                    groups: vec!["Native".into()],
+                }
             });
         }
 
@@ -217,6 +225,69 @@ pub(crate) fn is_command(name: &str) -> bool {
 pub(crate) fn wiki_meta() -> &'static WikiMeta {
     &global_db().meta
 }
+
+// ── Native fallback metadata ──────────────────────────────────────────
+// Correct arity/return-type for every native command, used when wiki data
+// is unavailable (e.g. offline CI).
+
+static NATIVE_META: &[(&str, Arity, ReturnType)] = &[
+    ("pi", Arity::Nular, ReturnType::Number),
+    ("true", Arity::Nular, ReturnType::Boolean),
+    ("false", Arity::Nular, ReturnType::Boolean),
+    ("nil", Arity::Nular, ReturnType::Nothing),
+    ("abs", Arity::Unary, ReturnType::Number),
+    ("acos", Arity::Unary, ReturnType::Number),
+    ("asin", Arity::Unary, ReturnType::Number),
+    ("atan", Arity::Unary, ReturnType::Number),
+    ("ceil", Arity::Unary, ReturnType::Number),
+    ("cos", Arity::Unary, ReturnType::Number),
+    ("deg", Arity::Unary, ReturnType::Number),
+    ("exp", Arity::Unary, ReturnType::Number),
+    ("floor", Arity::Unary, ReturnType::Number),
+    ("ln", Arity::Unary, ReturnType::Number),
+    ("log", Arity::Unary, ReturnType::Number),
+    ("log10", Arity::Unary, ReturnType::Number),
+    ("rad", Arity::Unary, ReturnType::Number),
+    ("round", Arity::Unary, ReturnType::Number),
+    ("sin", Arity::Unary, ReturnType::Number),
+    ("sqrt", Arity::Unary, ReturnType::Number),
+    ("tan", Arity::Unary, ReturnType::Number),
+    ("cosec", Arity::Unary, ReturnType::Number),
+    ("sec", Arity::Unary, ReturnType::Number),
+    ("cot", Arity::Unary, ReturnType::Number),
+    ("str", Arity::Unary, ReturnType::String),
+    ("to_string", Arity::Unary, ReturnType::String),
+    ("toupper", Arity::Unary, ReturnType::String),
+    ("to_upper", Arity::Unary, ReturnType::String),
+    ("tolower", Arity::Unary, ReturnType::String),
+    ("to_lower", Arity::Unary, ReturnType::String),
+    ("trim", Arity::Unary, ReturnType::String),
+    ("typename", Arity::Unary, ReturnType::String),
+    ("type_name", Arity::Unary, ReturnType::String),
+    ("count", Arity::Unary, ReturnType::Number),
+    ("parsenumber", Arity::Unary, ReturnType::Number),
+    ("parse_number", Arity::Unary, ReturnType::Number),
+    ("random", Arity::Unary, ReturnType::Number),
+    ("trunc", Arity::Unary, ReturnType::Number),
+    ("sign", Arity::Unary, ReturnType::Number),
+    ("hint", Arity::Unary, ReturnType::String),
+    ("hintc", Arity::Unary, ReturnType::String),
+    ("vectormagnitude", Arity::Unary, ReturnType::Number),
+    ("isnil", Arity::Unary, ReturnType::Boolean),
+    ("is_null", Arity::Unary, ReturnType::Boolean),
+    ("min", Arity::Binary, ReturnType::Number),
+    ("max", Arity::Binary, ReturnType::Number),
+    ("atan2", Arity::Binary, ReturnType::Number),
+    ("clamp", Arity::Binary, ReturnType::Number),
+    ("find", Arity::Binary, ReturnType::Number),
+    ("select", Arity::Binary, ReturnType::Other),
+    ("in", Arity::Binary, ReturnType::Boolean),
+    ("replace", Arity::Binary, ReturnType::String),
+    ("isequalto", Arity::Binary, ReturnType::Boolean),
+    ("is_equal_to", Arity::Binary, ReturnType::Boolean),
+    ("pushback", Arity::Binary, ReturnType::Array),
+    ("deleteat", Arity::Binary, ReturnType::Array),
+];
 
 #[cfg(test)]
 mod tests {
