@@ -38,6 +38,19 @@ sqlformat = "0.5"
 # Zero-copy binary serialization for persistence
 rkyv = { version = "0.8.17", features = [] }
 
+# arma-rs — C ABI generation + type-safe command routing + testing
+arma-rs = "1.12"
+
+# SQF literal parser — zero-copy nom parser for fast-path data ingestion
+nom = "8"
+
+# SQF command database — Arma 3 wiki data for full command recognition
+arma3-wiki = "0.5"
+
+# TOML config for version pinning and startup options
+toml = "0.8"
+
+
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 proptest = "1.11"
