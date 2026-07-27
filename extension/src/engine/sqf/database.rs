@@ -101,18 +101,7 @@ impl Database {
     fn load() -> Self {
         let mut commands: HashMap<String, CmdInfo> = HashMap::new();
 
-        // Pre-populate from commands.rs dispatch table — adds native commands
-        // automatically without a separate static list. Wiki data overlays
-        // real arity/return-type on top during the loop below.
-        for &(name, _) in crate::engine::sqf::commands::NATIVE_CMD_FNS {
-            commands.entry(name.to_string()).or_insert_with(|| CmdInfo {
-                arity: Arity::Unary,    // most SQF commands are unary; wiki fixes this
-                ret: ReturnType::Other, // safe fallback; wiki has real return type
-                groups: vec!["Native".into()],
-            });
-        }
-
-        // Load arma3-wiki data
+        // Load arma3-wiki data FIRST (primary source)
         let wiki = std::panic::catch_unwind(|| arma3_wiki::Wiki::load(false)).ok();
         let meta = match &wiki {
             Some(w) => {
@@ -120,7 +109,6 @@ impl Database {
                 let source = if w.updated() { "git" } else { "cache" };
                 let n = w.commands().iter().count();
 
-                let n0 = commands.len();
                 for (name, cmd) in w.commands().iter() {
                     let groups: Vec<String> = cmd.groups().to_vec();
                     // Pick the "best" syntax (prefer nular > unary > binary, prefer Number return)
@@ -153,14 +141,24 @@ impl Database {
                     }
                 }
 
-                let n1 = commands.len();
+                // Ensure native commands with Rust implementations are present.
+                // Wiki data is already loaded, so this only adds commands that
+                // the wiki doesn't know about.
+                let wiki_loaded = commands.len();
+                for &(name, _) in crate::engine::sqf::commands::NATIVE_CMD_FNS {
+                    commands.entry(name.to_string()).or_insert_with(|| CmdInfo {
+                        arity: Arity::Unary,
+                        ret: ReturnType::Other,
+                        groups: vec!["Native".into()],
+                    });
+                }
+                let native_only = commands.len() - wiki_loaded;
+
                 eprintln!(
-                    "[a3sql] SQF DB: {} commands (+{} from arma3-wiki v{}.{} {})",
-                    n1,
-                    n1 - n0,
-                    v.major(),
-                    v.minor(),
-                    source,
+                    "[a3sql] SQF DB: {} commands (+{} wiki, +{} native-only)",
+                    commands.len(),
+                    wiki_loaded,
+                    native_only,
                 );
 
                 WikiMeta {
