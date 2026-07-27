@@ -21,7 +21,7 @@ fn build_native_impls() -> HashMap<&'static str, CmdFn> {
     m
 }
 
-static NATIVE_CMD_FNS: &[(&str, CmdFn)] = &[
+pub(crate) static NATIVE_CMD_FNS: &[(&str, CmdFn)] = &[
     // Nular constants
     ("pi", cmd_pi),
     ("true", cmd_true),
@@ -90,7 +90,7 @@ static NATIVE_CMD_FNS: &[(&str, CmdFn)] = &[
     ("hintc", cmd_hint),
 ];
 
-// ── Public entry point ──────────────────────────────────────────────────
+// ── Public entry points ────────────────────────────────────────────────
 
 static NATIVE_IMPLS: std::sync::LazyLock<HashMap<&'static str, CmdFn>> = std::sync::LazyLock::new(build_native_impls);
 

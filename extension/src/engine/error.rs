@@ -162,6 +162,7 @@ pub(crate) enum ErrorCode {
     Pk,
     Io,
     Internal,
+    Auth,
 }
 
 impl ErrorCode {
@@ -175,6 +176,7 @@ impl ErrorCode {
             "ERR_PK" | "PK" => Some(ErrorCode::Pk),
             "ERR_IO" | "IO" => Some(ErrorCode::Io),
             "ERR_INTERNAL" | "INTERNAL" => Some(ErrorCode::Internal),
+            "ERR_AUTH" | "AUTH" => Some(ErrorCode::Auth),
             _ => None,
         }
     }
@@ -191,6 +193,7 @@ impl fmt::Display for ErrorCode {
             ErrorCode::Pk => write!(f, "ERR_PK"),
             ErrorCode::Io => write!(f, "ERR_IO"),
             ErrorCode::Internal => write!(f, "ERR_INTERNAL"),
+            ErrorCode::Auth => write!(f, "ERR_AUTH"),
         }
     }
 }

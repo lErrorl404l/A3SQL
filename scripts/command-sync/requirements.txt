@@ -1,0 +1,4 @@
+# A3SQL command-sync pipeline — Python dependencies
+# The support_info_to_json.py parser is pure-Python 3.12+ with no deps.
+# This file exists for CI tooling compatibility and future extensions.
+# (empty = no external dependencies)

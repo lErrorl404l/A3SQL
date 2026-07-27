@@ -1,0 +1,118 @@
+n:true
+n:false
+n:pi
+n:nil
+u:sqrt
+    Type: Number
+u:sin
+    Type: Number
+u:cos
+    Type: Number
+u:tan
+    Type: Number
+u:abs
+    Type: Number
+u:exp
+    Type: Number
+u:ln
+    Type: Number
+u:log
+    Type: Number
+u:log10
+    Type: Number
+u:asin
+    Type: Number
+u:acos
+    Type: Number
+u:atan
+    Type: Number
+u:deg
+    Type: Number
+u:rad
+    Type: Number
+u:cosec
+    Type: Number
+u:sec
+    Type: Number
+u:cot
+    Type: Number
+u:round
+    Type: Number
+u:floor
+    Type: Number
+u:ceil
+    Type: Number
+u:trunc
+    Type: Number
+u:sign
+    Type: Number
+u:random
+    Type: Number
+b:min
+    Type: Number
+b:max
+    Type: Number
+b:atan2
+    Type: Number
+b:clamp
+    Type: Number
+u:str
+    Type: String
+u:toupper
+    Type: String
+u:tolower
+    Type: String
+u:typename
+    Type: String
+u:count
+    Type: Number
+u:parsenumber
+    Type: Number
+u:trim
+    Type: String
+b:find
+    Type: Number
+b:replace
+    Type: String
+b:select
+u:isnil
+    Type: Boolean
+b:isequalto
+    Type: Boolean
+b:in
+    Type: Boolean
+b:pushback
+    Type: Array
+b:deleteat
+u:vectormagnitude
+    Type: Number
+u:hint
+    Type: String
+u:diag_log
+    Type: Nothing
+n:player
+    Type: Object
+b:createVehicle
+    Type: Object
+u:typeOf
+    Type: String
+b:setPos
+    Type: Nothing
+u:getPos
+    Type: Array
+u:nearestObjects
+    Returns: Array
+b:addEventHandler
+    Type: Number
+u:removeAllEventHandlers
+    Returns: Nothing
+b:isEqualTo
+    Returns: Boolean
+u:parseNumber
+    Type: Number
+u:toUpper
+    Type: String
+u:toLower
+    Type: String
+b:selectRandom
+    Type: Array
