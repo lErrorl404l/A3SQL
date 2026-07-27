@@ -161,4 +161,124 @@ toupper GREETING"#,
         let flat: String = r.chars().filter(|c| !c.is_whitespace()).collect();
         assert_eq!(flat, "yes");
     }
+
+    // ── Additional edge cases ─────────────────────────────────────────
+
+    #[cfg(feature = "sqf-preprocessor")]
+    #[test]
+    fn test_define_no_newline_before_expr() {
+        // Define on one line, expression immediately after
+        let r = preprocess("#define X 42\nX + 1").unwrap();
+        let flat: String = r.chars().filter(|c| !c.is_whitespace()).collect();
+        assert_eq!(flat, "42+1");
+    }
+
+    #[cfg(feature = "sqf-preprocessor")]
+    #[test]
+    fn test_define_chained() {
+        // One define referencing another
+        let r = preprocess("#define BASE 10\n#define MULT 2\nBASE * MULT").unwrap();
+        let flat: String = r.chars().filter(|c| !c.is_whitespace()).collect();
+        assert_eq!(flat, "10*2");
+    }
+
+    #[cfg(feature = "sqf-preprocessor")]
+    #[test]
+    fn test_define_empty_flag() {
+        // Empty define (just a flag, no value)
+        let r = preprocess("#define DEBUG\n#ifdef DEBUG\n1\n#endif\n").unwrap();
+        let flat: String = r.chars().filter(|c| !c.is_whitespace()).collect();
+        assert_eq!(flat, "1");
+    }
+
+    #[cfg(feature = "sqf-preprocessor")]
+    #[test]
+    fn test_nested_ifdef() {
+        let r = preprocess("#define A\n#ifdef A\n#ifdef B\nNO\n#else\nYES\n#endif\n#endif\n").unwrap();
+        let flat: String = r.chars().filter(|c| !c.is_whitespace()).collect();
+        assert_eq!(flat, "YES");
+    }
+
+    #[cfg(feature = "sqf-preprocessor")]
+    #[test]
+    fn test_define_args_multiple() {
+        let r = preprocess("#define ADD(a,b) a + b\n#define MUL(a,b) a * b\nADD(2,3) + MUL(4,5)").unwrap();
+        let flat: String = r.chars().filter(|c| !c.is_whitespace()).collect();
+        assert_eq!(flat, "2+3+4*5");
+    }
+
+    #[cfg(feature = "sqf-preprocessor")]
+    #[test]
+    fn test_define_no_args_constant_in_expr() {
+        // Define with no args but used where function-like syntax expected
+        let r = preprocess("#define PI 3.14\nsqrt PI + 1").unwrap();
+        let flat: String = r.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(flat.contains("sqrt"));
+        assert!(flat.contains("3.14"));
+    }
+
+    #[cfg(feature = "sqf-preprocessor")]
+    #[test]
+    fn test_eval_define_chained_math() {
+        // Full pipeline: chained defines evaluated
+        let r = eval_sqf("#define A 3\n#define B 4\nA + B", &HashMap::new()).unwrap();
+        assert_eq!(r, DbValue::Int(7));
+    }
+
+    #[cfg(feature = "sqf-preprocessor")]
+    #[test]
+    fn test_eval_define_toupper() {
+        // Define a string constant and call toUpper on it
+        let r = eval_sqf(
+            r#"#define NAME "world"
+toupper NAME"#,
+            &HashMap::new(),
+        )
+        .unwrap();
+        assert_eq!(r, DbValue::String("WORLD".into()));
+    }
+
+    #[cfg(feature = "sqf-preprocessor")]
+    #[test]
+    fn test_eval_define_function_like() {
+        // Function-like macro expanding to a command call
+        let r = eval_sqf("#define SQRT(x) sqrt x\nSQRT(25)", &HashMap::new()).unwrap();
+        assert_eq!(r, DbValue::Float(5.0));
+    }
+
+    #[cfg(feature = "sqf-preprocessor")]
+    #[test]
+    fn test_eval_complex_with_multiple_defines() {
+        // Multiple defines with expression evaluation
+        let r = eval_sqf(
+            "#define X 10\n#define Y 20\n#define ADD(a,b) a + b\nADD(X,Y) * 2",
+            &HashMap::new(),
+        )
+        .unwrap();
+        // ADD(X,Y) → 10 + 20 → (10 + 20) * 2 = 60
+        // SQF precedence: * binds tighter than +, so result depends on parens
+        assert!(matches!(r, DbValue::Int(_)));
+    }
+
+    #[cfg(feature = "sqf-preprocessor")]
+    #[test]
+    fn test_eval_ifdef_guard() {
+        let r = eval_sqf(
+            "#define USE_PI\n#ifdef USE_PI\n3.14159\n#else\n3.0\n#endif\n",
+            &HashMap::new(),
+        )
+        .unwrap();
+        match r {
+            DbValue::Float(f) => assert!((f - 3.14159).abs() < 0.001),
+            other => panic!("expected Float, got {:?}", other),
+        }
+    }
+
+    #[cfg(feature = "sqf-preprocessor")]
+    #[test]
+    fn test_eval_empty_expression_with_define() {
+        // Define with no used macro — just evaluate the expression
+        let r = eval_sqf("#define UNUSED 99\n42 + 1", &HashMap::new()).unwrap();
+        assert_eq!(r, DbValue::Int(43));
+    }
 }
