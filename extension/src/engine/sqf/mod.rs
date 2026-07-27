@@ -3,6 +3,7 @@
 // Parses and evaluates SQF expressions in Rust (fast-path, no Arma callbacks).
 // Used by the SQF_EVAL() SQL function for row-level expression evaluation.
 
+pub(crate) mod commands;
 pub(crate) mod database;
 pub(crate) mod eval;
 pub(crate) mod lexer;
