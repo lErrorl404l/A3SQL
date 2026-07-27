@@ -1,4 +1,4 @@
-# Phase 4: Arma 3 Engine Command Sync
+# Arma 3 Engine Command Sync
 
 Syncs command metadata from the **actual game binary** (Arma 3 Profiling
 Branch dedicated server) via `supportInfo ""` dump. Produces structured JSON
