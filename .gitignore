@@ -14,6 +14,10 @@ Cargo.lock
 *.sqfc
 texHeaders.bin
 
+# Python
+__pycache__/
+*.pyc
+
 # Editor
 *.swp
 *.swo
