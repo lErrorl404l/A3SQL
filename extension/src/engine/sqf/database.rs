@@ -224,6 +224,76 @@ pub(crate) fn wiki_meta() -> &'static WikiMeta {
     &global_db().meta
 }
 
+// ── Native implementation commands ────────────────────────────────────
+
+static NATIVE_COMMANDS: &[(&str, Arity, ReturnType)] = &[
+    ("pi", Arity::Nular, ReturnType::Number),
+    ("true", Arity::Nular, ReturnType::Boolean),
+    ("false", Arity::Nular, ReturnType::Boolean),
+    ("nil", Arity::Nular, ReturnType::Nothing),
+    ("abs", Arity::Unary, ReturnType::Number),
+    ("acos", Arity::Unary, ReturnType::Number),
+    ("asin", Arity::Unary, ReturnType::Number),
+    ("atan", Arity::Unary, ReturnType::Number),
+    ("ceil", Arity::Unary, ReturnType::Number),
+    ("cos", Arity::Unary, ReturnType::Number),
+    ("deg", Arity::Unary, ReturnType::Number),
+    ("exp", Arity::Unary, ReturnType::Number),
+    ("floor", Arity::Unary, ReturnType::Number),
+    ("ln", Arity::Unary, ReturnType::Number),
+    ("log", Arity::Unary, ReturnType::Number),
+    ("log10", Arity::Unary, ReturnType::Number),
+    ("rad", Arity::Unary, ReturnType::Number),
+    ("round", Arity::Unary, ReturnType::Number),
+    ("sin", Arity::Unary, ReturnType::Number),
+    ("sqrt", Arity::Unary, ReturnType::Number),
+    ("tan", Arity::Unary, ReturnType::Number),
+    ("str", Arity::Unary, ReturnType::String),
+    ("to_string", Arity::Unary, ReturnType::String),
+    ("toupper", Arity::Unary, ReturnType::String),
+    ("to_upper", Arity::Unary, ReturnType::String),
+    ("tolower", Arity::Unary, ReturnType::String),
+    ("to_lower", Arity::Unary, ReturnType::String),
+    ("typename", Arity::Unary, ReturnType::String),
+    ("type_name", Arity::Unary, ReturnType::String),
+    ("count", Arity::Unary, ReturnType::Number),
+    ("parsenumber", Arity::Unary, ReturnType::Number),
+    ("parse_number", Arity::Unary, ReturnType::Number),
+    ("hint", Arity::Unary, ReturnType::String),
+    ("hintc", Arity::Unary, ReturnType::String),
+    ("min", Arity::Binary, ReturnType::Number),
+    ("max", Arity::Binary, ReturnType::Number),
+    ("atan2", Arity::Binary, ReturnType::Number),
+    ("random", Arity::Unary, ReturnType::Number),
+    ("trunc", Arity::Unary, ReturnType::Number),
+    ("sign", Arity::Unary, ReturnType::Number),
+    ("find", Arity::Binary, ReturnType::Number),
+    ("split", Arity::Binary, ReturnType::Array),
+    ("trim", Arity::Unary, ReturnType::String),
+    ("replace", Arity::Binary, ReturnType::String),
+    ("resize", Arity::Binary, ReturnType::Number),
+    ("select", Arity::Binary, ReturnType::Other),
+    ("in", Arity::Binary, ReturnType::Boolean),
+    ("isnil", Arity::Unary, ReturnType::Boolean),
+    ("is_null", Arity::Unary, ReturnType::Boolean),
+    ("isequalto", Arity::Binary, ReturnType::Boolean),
+    ("is_equal_to", Arity::Binary, ReturnType::Boolean),
+    ("isEqualTo", Arity::Binary, ReturnType::Boolean),
+    ("cosec", Arity::Unary, ReturnType::Number),
+    ("sec", Arity::Unary, ReturnType::Number),
+    ("cot", Arity::Unary, ReturnType::Number),
+    ("vectoradd", Arity::Binary, ReturnType::Array),
+    ("vectorsubtract", Arity::Binary, ReturnType::Array),
+    ("vectordotproduct", Arity::Binary, ReturnType::Number),
+    ("vectorcrossproduct", Arity::Binary, ReturnType::Array),
+    ("vectormagnitude", Arity::Unary, ReturnType::Number),
+    ("vectornormalized", Arity::Unary, ReturnType::Array),
+    ("pushback", Arity::Binary, ReturnType::Array),
+    ("deleteat", Arity::Binary, ReturnType::Array),
+    ("apply", Arity::Unary, ReturnType::Array),
+    ("clamp", Arity::Binary, ReturnType::Number),
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -266,87 +336,3 @@ mod tests {
         }
     }
 }
-
-// ── Native implementation commands ────────────────────────────────────
-// These are commands we have actual Rust eval implementations for.
-// (name, arity, return_type) — the eval implementations are in eval.rs.
-
-static NATIVE_COMMANDS: &[(&str, Arity, ReturnType)] = &[
-    // Nular constants
-    ("pi", Arity::Nular, ReturnType::Number),
-    ("true", Arity::Nular, ReturnType::Boolean),
-    ("false", Arity::Nular, ReturnType::Boolean),
-    ("nil", Arity::Nular, ReturnType::Nothing),
-    // Unary math
-    ("abs", Arity::Unary, ReturnType::Number),
-    ("acos", Arity::Unary, ReturnType::Number),
-    ("asin", Arity::Unary, ReturnType::Number),
-    ("atan", Arity::Unary, ReturnType::Number),
-    ("ceil", Arity::Unary, ReturnType::Number),
-    ("cos", Arity::Unary, ReturnType::Number),
-    ("deg", Arity::Unary, ReturnType::Number),
-    ("exp", Arity::Unary, ReturnType::Number),
-    ("floor", Arity::Unary, ReturnType::Number),
-    ("ln", Arity::Unary, ReturnType::Number),
-    ("log", Arity::Unary, ReturnType::Number),
-    ("log10", Arity::Unary, ReturnType::Number),
-    ("rad", Arity::Unary, ReturnType::Number),
-    ("round", Arity::Unary, ReturnType::Number),
-    ("sin", Arity::Unary, ReturnType::Number),
-    ("sqrt", Arity::Unary, ReturnType::Number),
-    ("tan", Arity::Unary, ReturnType::Number),
-    // Unary string
-    ("str", Arity::Unary, ReturnType::String),
-    ("to_string", Arity::Unary, ReturnType::String),
-    ("toupper", Arity::Unary, ReturnType::String),
-    ("to_upper", Arity::Unary, ReturnType::String),
-    ("tolower", Arity::Unary, ReturnType::String),
-    ("to_lower", Arity::Unary, ReturnType::String),
-    ("typename", Arity::Unary, ReturnType::String),
-    ("type_name", Arity::Unary, ReturnType::String),
-    ("count", Arity::Unary, ReturnType::Number),
-    ("parsenumber", Arity::Unary, ReturnType::Number),
-    ("parse_number", Arity::Unary, ReturnType::Number),
-    // Unary non-value (side-effect passthrough in eval)
-    ("hint", Arity::Unary, ReturnType::String),
-    ("hintc", Arity::Unary, ReturnType::String),
-    // --- New native implementations ---
-    // Math extensions
-    ("min", Arity::Binary, ReturnType::Number),
-    ("max", Arity::Binary, ReturnType::Number),
-    ("atan2", Arity::Binary, ReturnType::Number),
-    ("random", Arity::Unary, ReturnType::Number), // random [0, N) or random N
-    ("trunc", Arity::Unary, ReturnType::Number),
-    ("sign", Arity::Unary, ReturnType::Number),
-    // String extensions
-    ("find", Arity::Binary, ReturnType::Number), // string find substr → index
-    ("split", Arity::Binary, ReturnType::Array), // string split delimiter → array
-    ("trim", Arity::Unary, ReturnType::String),
-    ("replace", Arity::Binary, ReturnType::String),
-    ("resize", Arity::Binary, ReturnType::Number), // string resize → new string…
-    ("select", Arity::Binary, ReturnType::Other),  // array/string select index
-    ("in", Arity::Binary, ReturnType::Boolean),    // value in array
-    // Type helpers
-    ("isnil", Arity::Unary, ReturnType::Boolean),
-    ("is_null", Arity::Unary, ReturnType::Boolean),
-    ("isequalto", Arity::Binary, ReturnType::Boolean),
-    ("is_equal_to", Arity::Binary, ReturnType::Boolean),
-    ("isEqualTo", Arity::Binary, ReturnType::Boolean),
-    // Math - extra trig
-    ("cosec", Arity::Unary, ReturnType::Number),
-    ("sec", Arity::Unary, ReturnType::Number),
-    ("cot", Arity::Unary, ReturnType::Number),
-    // Math - vector (simplified: operate on scalars)
-    ("vectoradd", Arity::Binary, ReturnType::Array),
-    ("vectorsubtract", Arity::Binary, ReturnType::Array),
-    ("vectordotproduct", Arity::Binary, ReturnType::Number),
-    ("vectorcrossproduct", Arity::Binary, ReturnType::Array),
-    ("vectormagnitude", Arity::Unary, ReturnType::Number),
-    ("vectornormalized", Arity::Unary, ReturnType::Array),
-    // Array ops
-    ("pushback", Arity::Binary, ReturnType::Array),
-    ("deleteat", Arity::Binary, ReturnType::Array),
-    ("apply", Arity::Unary, ReturnType::Array), // simplified — returns the array
-    // Bounds checking
-    ("clamp", Arity::Binary, ReturnType::Number),
-];

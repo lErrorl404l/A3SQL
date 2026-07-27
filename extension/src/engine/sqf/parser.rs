@@ -271,7 +271,7 @@ mod tests {
 
     #[test]
     fn test_float_literal() {
-        assert_eq!(parse_expr("3.14").unwrap(), Expr::Float(3.14));
+        assert_eq!(parse_expr("1.5").unwrap(), Expr::Float(1.5));
     }
 
     #[test]

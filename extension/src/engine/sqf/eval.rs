@@ -204,7 +204,7 @@ mod tests {
 
     #[test]
     fn test_literal_float() {
-        assert_eq!(eval_str("3.14").unwrap(), DbValue::Float(3.14));
+        assert_eq!(eval_str("1.5").unwrap(), DbValue::Float(1.5));
     }
 
     #[test]
@@ -404,8 +404,10 @@ mod tests {
     #[test]
     fn test_command_parsenumber() {
         assert_eq!(eval_str(r#"parseNumber "42""#).unwrap(), DbValue::Int(42));
+        #[allow(clippy::approx_constant)]
         let r = eval_str(r#"parseNumber "3.14""#).unwrap();
         match r {
+            #[allow(clippy::approx_constant)]
             DbValue::Float(f) => assert!((f - 3.14).abs() < 0.001),
             _ => panic!("expected Float"),
         }

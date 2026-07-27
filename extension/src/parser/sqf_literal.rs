@@ -197,7 +197,7 @@ mod tests {
 
     #[test]
     fn test_float() {
-        assert_eq!(parse_sqf_literal("3.14").unwrap(), json!(3.14));
+        assert_eq!(parse_sqf_literal("1.5").unwrap(), json!(1.5));
     }
 
     #[test]

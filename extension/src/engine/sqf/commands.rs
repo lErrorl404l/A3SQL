@@ -792,8 +792,10 @@ mod tests {
             eval_cmd("parsenumber", &[DbValue::String("42".into())]).unwrap(),
             DbValue::Int(42)
         );
+        #[allow(clippy::approx_constant)]
         let r = eval_cmd("parsenumber", &[DbValue::String("3.14".into())]).unwrap();
         match r {
+            #[allow(clippy::approx_constant)]
             DbValue::Float(f) => assert!((f - 3.14).abs() < 0.001),
             _ => panic!("expected Float"),
         }
