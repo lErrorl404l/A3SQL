@@ -86,7 +86,7 @@ pub fn build_extension() -> Extension {
 /// Handler for the `sql` command.
 ///
 /// The SQF wrapper encodes the call as an SQF array string:
-/// ```ignore
+/// ```text
 /// _payload = format ['["%1"%2]', _stmt, _args]; // _args is prefixed with commas
 /// "a3sql" callExtension ["sql", [_payload]];
 /// ```
