@@ -24,7 +24,8 @@ _result = ["SELECT name, score FROM players WHERE score > 1000 ORDER BY score DE
 | **SQL** | CREATE/DROP TABLE/INDEX/VIEW, INSERT, SELECT, UPDATE, DELETE, REPLACE INTO, TRUNCATE, RENAME, VACUUM, REINDEX |
 | **Advanced SQL** | JOINs (CROSS/INNER/LEFT/FULL OUTER/NATURAL/USING), GROUP BY/HAVING, ORDER BY/LIMIT/OFFSET, UNION/EXCEPT/INTERSECT, CTE (WITH RECURSIVE), subqueries, window functions (ROWS BETWEEN) |
 | **Expressions** | `%%` fuzzy match, LIKE, BETWEEN, IN, IS NULL, CASE WHEN, EXISTS, CAST, `fn_*()` plugin functions |
-| **Functions** | COUNT(DISTINCT), SUM, AVG, MIN, MAX, UPPER/LOWER, LENGTH, SUBSTR, TRIM, CONCAT, COALESCE/IFNULL, ROUND, ABS, NOW()/CURRENT_TIMESTAMP |
+| **Functions** | COUNT(DISTINCT), SUM, AVG, MIN, MAX, UPPER/LOWER, LENGTH, SUBSTR, TRIM, CONCAT, COALESCE/IFNULL, ROUND, ABS, NOW()/CURRENT_TIMESTAMP, POW, SQRT, CEIL, FLOOR, SIGN, REPLACE |
+| **SQF Eval** | `SQF_EVAL()` SQL function evaluates in-line SQF expressions — math, string ops, type checks, 55+ native commands, fallback to NULL for game-engine commands |
 | **Constraints** | PRIMARY KEY, NOT NULL, DEFAULT, CHECK (enforced), FOREIGN KEY (enforced), AUTO_INCREMENT |
 | **Indices** | BTREE (exact/range), TRIGRAM (fuzzy GIN-style), FTS (full-text trigram) |
 | **Transactions** | BEGIN/COMMIT/ROLLBACK (no-op when idle), SAVEPOINT/RELEASE |
@@ -83,7 +84,7 @@ s.close()
 ```bash
 cargo build --release -p a3sql   # extension
 hemtt build                      # addon PBOs
-cargo test --lib -p a3sql         # 230+ tests
+cargo test -p a3sql                # 378+ tests
 ```
 
 See the [Building page](https://github.com/lErrorl404l/a3sql/wiki/Building) for cross-compilation, code signing, and CI details.

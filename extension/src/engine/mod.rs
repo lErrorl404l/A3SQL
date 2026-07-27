@@ -15,6 +15,7 @@ pub(crate) mod optimizer;
 pub(crate) mod plugin;
 pub(crate) mod prelude;
 pub(crate) mod serialize;
+pub(crate) mod sqf;
 pub(crate) mod stmts;
 pub(crate) mod table;
 #[cfg(test)]
