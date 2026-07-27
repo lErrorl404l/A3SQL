@@ -461,3 +461,88 @@ fn prepare_and_cursor_clear_on_reset() {
     let r = dispatch("execute_prepared rc_get x", &[]);
     assert_err(&r, "execute_prepared after reset");
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 13. sqf_eval_in_sql
+//     SQF_EVAL() evaluates SQF expressions through the SQL function dispatch.
+// ─────────────────────────────────────────────────────────────────────────────
+#[test]
+fn sqf_eval_in_sql() {
+    let _g = setup();
+
+    // Scalar result
+    let r = dispatch("SELECT SQF_EVAL('1 + 2 * 3')", &[]);
+    assert_ok(&r, "SQF_EVAL(1+2*3)");
+    assert!(r.contains("7"), "expected 7 in: {}", r);
+
+    // Boolean comparison
+    let r = dispatch("SELECT SQF_EVAL('2 > 1')", &[]);
+    assert_ok(&r, "SQF_EVAL(2>1)");
+    assert!(r.contains("true"), "expected true in: {}", r);
+
+    // String concat
+    let r = dispatch(r#"SELECT SQF_EVAL('"hello" + " world"')"#, &[]);
+    assert_ok(&r, "SQF_EVAL concat");
+    assert!(r.contains("hello world"), "expected concat in: {}", r);
+
+    // SQF_EVAL in WHERE clause with table data
+    dispatch("CREATE TABLE sqf_filter (id STRING PRIMARY KEY, val INT)", &[]);
+    dispatch("INSERT INTO sqf_filter VALUES ('a', 10), ('b', 20), ('c', 30)", &[]);
+
+    // Filter using SQF_EVAL — can't reference columns directly in the expression string
+    // but we can use it for computed conditions
+    let r = dispatch("SELECT id FROM sqf_filter WHERE SQF_EVAL('10 + 10') = 20", &[]);
+    assert_ok(&r, "SQF_EVAL in WHERE");
+    assert!(r.contains("a"), "expected 'a' (all rows match): {}", r);
+    assert!(r.contains("b"), "expected 'b': {}", r);
+    assert!(r.contains("c"), "expected 'c': {}", r);
+
+    // Error case: undefined variable → SQL NULL
+    let r = dispatch("SELECT SQF_EVAL('_undefined')", &[]);
+    assert_ok(&r, "SQF_EVAL undefined variable returns NULL");
+    assert!(r.contains("null"), "expected null for undefined variable: {}", r);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 14. sqf_eval_with_commands
+//     SQF_EVAL() with SQF commands (sqrt, abs, etc.) through SQL.
+// ─────────────────────────────────────────────────────────────────────────────
+#[test]
+fn sqf_eval_with_commands() {
+    let _g = setup();
+
+    // sqrt
+    let r = dispatch("SELECT SQF_EVAL('sqrt 25')", &[]);
+    assert_ok(&r, "SQF_EVAL sqrt");
+    assert!(r.contains("5"), "expected 5: {}", r);
+
+    // abs
+    let r = dispatch("SELECT SQF_EVAL('abs -9')", &[]);
+    assert_ok(&r, "SQF_EVAL abs");
+    assert!(r.contains("9"), "expected 9: {}", r);
+
+    // pi
+    let r = dispatch("SELECT SQF_EVAL('pi')", &[]);
+    assert_ok(&r, "SQF_EVAL pi");
+
+    // Combined: sqrt(abs(-9)) + round(3.7) = 3 + 4 = 7
+    let r = dispatch("SELECT SQF_EVAL('sqrt abs -9 + round 3.7')", &[]);
+    assert_ok(&r, "SQF_EVAL chained commands");
+    assert!(r.contains("7"), "expected 7 in result: {}", r);
+
+    // Command in WHERE with comparison
+    dispatch("CREATE TABLE sqf_cmd (id STRING PRIMARY KEY, val INT)", &[]);
+    dispatch("INSERT INTO sqf_cmd VALUES ('large', 20), ('small', 3)", &[]);
+    // sqrt(20) > 4 → only 'large' has sqrt(20) > 4
+    // Actually sqrt(20) ≈ 4.47, and sqrt(3) ≈ 1.73
+    // We can test: SQF_EVAL('sqrt ' || val || ' > 4') — no, SQF_EVAL takes a literal
+    // Use a computed WHERE: only rows where val > 10 pass
+    let r = dispatch("SELECT SQF_EVAL('sqrt 20 > 4')", &[]);
+    assert_ok(&r, "SQF_EVAL sqrt comparison");
+    assert!(r.contains("true"), "expected true: {}", r);
+
+    // typeName via SQF_EVAL
+    let r = dispatch(r#"SELECT SQF_EVAL('typename 42')"#, &[]);
+    assert_ok(&r, "SQF_EVAL typename");
+    assert!(r.contains("SCALAR"), "expected SCALAR: {}", r);
+}

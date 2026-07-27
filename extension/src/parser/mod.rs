@@ -4,6 +4,7 @@
 
 pub mod dialect;
 pub mod preprocessor;
+pub mod sqf_literal;
 
 use sqlparser::ast::Statement;
 use sqlparser::parser::ParserError;

@@ -83,6 +83,17 @@ pub(crate) fn values_equal(a: &DbValue, b: &DbValue) -> bool {
     }
 }
 
+// ── Numeric helpers ─────────────────────────────────────────────────────
+
+/// Convert a DbValue to f64 if it's numeric.
+fn to_f64(v: &DbValue) -> Option<f64> {
+    match v {
+        DbValue::Int(n) => Some(*n as f64),
+        DbValue::Float(f) => Some(*f),
+        _ => None,
+    }
+}
+
 // ── Date/time helpers ──────────────────────────────────────────────────
 
 /// Return current date as YYYY-MM-DD string.
@@ -449,6 +460,89 @@ pub(crate) fn exec_std_function(
             let msg = vals.last().map(value_to_string).unwrap_or_default();
             RAISE_ABORTED.with(|r| r.set(true));
             Err(EngineError::Exec(format!("RAISE: {}", msg)))
+        }
+        // SQF_EVAL(expr) — evaluate an SQF expression
+        "sqf_eval" => {
+            let vals = eval_args(1)?;
+            let expr_str = value_to_string(&vals[0]);
+            match crate::engine::sqf::eval_sqf(&expr_str, &HashMap::new()) {
+                Ok(v) => Ok(v),
+                Err(e) => Err(EngineError::Exec(format!("SQF_EVAL error: {}", e))),
+            }
+        }
+        // POW(base, exp) — exponentiation
+        "pow" | "power" => {
+            let vals = eval_args(2)?;
+            let base = to_f64(&vals[0]);
+            let exp = to_f64(&vals[1]);
+            match (base, exp) {
+                (Some(b), Some(e)) => Ok(DbValue::Float(b.powf(e))),
+                (None, _) => Err(EngineError::TypeError {
+                    expected: "numeric".into(),
+                    actual: format!("{:?}", vals[0]),
+                }),
+                _ => Err(EngineError::TypeError {
+                    expected: "numeric".into(),
+                    actual: format!("{:?}", vals[1]),
+                }),
+            }
+        }
+        // SQRT(x) — square root
+        "sqrt" => {
+            let vals = eval_args(1)?;
+            let x = to_f64(&vals[0]).ok_or_else(|| EngineError::TypeError {
+                expected: "numeric".into(),
+                actual: format!("{:?}", vals[0]),
+            })?;
+            if x < 0.0 {
+                return Err(EngineError::Exec("SQRT: negative argument".into()));
+            }
+            Ok(DbValue::Float(x.sqrt()))
+        }
+        // CEIL(x) — ceiling
+        "ceil" | "ceiling" => {
+            let vals = eval_args(1)?;
+            let x = to_f64(&vals[0]).ok_or_else(|| EngineError::TypeError {
+                expected: "numeric".into(),
+                actual: format!("{:?}", vals[0]),
+            })?;
+            Ok(DbValue::Float(x.ceil()))
+        }
+        // FLOOR(x) — floor
+        "floor" => {
+            let vals = eval_args(1)?;
+            let x = to_f64(&vals[0]).ok_or_else(|| EngineError::TypeError {
+                expected: "numeric".into(),
+                actual: format!("{:?}", vals[0]),
+            })?;
+            Ok(DbValue::Float(x.floor()))
+        }
+        // SIGN(x) — signum (-1, 0, 1)
+        "sign" => {
+            let vals = eval_args(1)?;
+            let x = to_f64(&vals[0]).ok_or_else(|| EngineError::TypeError {
+                expected: "numeric".into(),
+                actual: format!("{:?}", vals[0]),
+            })?;
+            Ok(DbValue::Int(if x > 0.0 {
+                1
+            } else if x < 0.0 {
+                -1
+            } else {
+                0
+            }))
+        }
+        // REPLACE(s, from, to) — string replace
+        "replace" => {
+            let vals = eval_args(3).or_else(|_| eval_args(2))?;
+            let s = value_to_string(&vals[0]);
+            let from = value_to_string(&vals[1]);
+            let to = if vals.len() >= 3 {
+                value_to_string(&vals[2])
+            } else {
+                String::new()
+            };
+            Ok(DbValue::String(s.replace(&from, &to)))
         }
         _ => Err(EngineError::Exec(format!("Unknown function '{}'", name))),
     }

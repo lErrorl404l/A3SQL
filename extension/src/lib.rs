@@ -11,10 +11,11 @@
 // ponytail: unused items kept for phased implementation
 #![allow(dead_code)]
 
+pub(crate) mod config;
 pub(crate) mod dispatch;
 mod engine;
-pub(crate) mod ffi;
-mod parser;
+pub mod ffi;
+pub mod parser;
 pub(crate) mod server;
 
 // Re-exports for standalone binary
