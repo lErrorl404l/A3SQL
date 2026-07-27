@@ -1,4 +1,4 @@
-# Phase 4: Arma 3 Engine Command Sync
+# Arma 3 Engine Command Sync
 #
 # Syncs command metadata from the actual game binary (Profiling Branch) via
 # supportInfo dump, bypassing the community-maintained arma3-wiki crate.
