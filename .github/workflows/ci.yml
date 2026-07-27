@@ -58,11 +58,35 @@ jobs:
           name: a3sql-i686-unknown-linux-gnu
           path: extension/target/release/a3sql_*.so
 
+  # ── i686 Windows cross-compile ───────────────────────────────────────
+  build-windows-i686:
+    name: build i686-pc-windows-gnu
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
+        with:
+          target: i686-pc-windows-gnu
+      - name: Install cross-compile deps
+        run: sudo apt-get update && sudo apt-get install -y mingw-w64
+      - name: Build
+        run: cargo build --release --manifest-path extension/Cargo.toml --target i686-pc-windows-gnu
+      - name: Rename artifact
+        run: |
+          mkdir -p extension/target/release
+          mv target/i686-pc-windows-gnu/release/a3sql.dll extension/target/release/a3sql_x86.dll 2>/dev/null || true
+      - name: Upload artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: a3sql-i686-pc-windows-gnu
+          path: extension/target/release/a3sql_*.dll
+
   # ── Addon build (depends on all build jobs) ─────────────────────────
   build-addon:
     name: HEMTT build
     runs-on: ubuntu-latest
-    needs: [ci, build-linux-i686]
+    needs: [ci, build-linux-i686, build-windows-i686]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install HEMTT
