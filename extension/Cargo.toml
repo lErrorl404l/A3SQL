@@ -53,6 +53,16 @@ toml = "0.8"
 # Vendored OpenSSL for reliable cross-compilation (i686, Windows)
 openssl-sys = { version = "0.9", features = ["vendored"] }
 
+# SQF preprocessor — macro expansion (#define, #include, #ifdef) for the
+# slow-path SQF expression evaluator. Optional — falls back to direct lexing
+# when disabled (no macros needed).
+hemtt-preprocessor = { version = "1", optional = true }
+hemtt-tokens = { version = "1", optional = true }
+
+[features]
+default = ["sqf-preprocessor"]
+sqf-preprocessor = ["hemtt-preprocessor", "hemtt-tokens"]
+
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
