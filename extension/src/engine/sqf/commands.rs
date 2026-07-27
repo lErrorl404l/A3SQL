@@ -90,9 +90,15 @@ static NATIVE_CMD_FNS: &[(&str, CmdFn)] = &[
     ("hintc", cmd_hint),
 ];
 
-// ── Public entry point ──────────────────────────────────────────────────
+// ── Public entry points ────────────────────────────────────────────────
 
 static NATIVE_IMPLS: std::sync::LazyLock<HashMap<&'static str, CmdFn>> = std::sync::LazyLock::new(build_native_impls);
+
+/// Return all natively implemented command names. Used by database.rs to
+/// auto-register commands without a separate static list.
+pub(crate) fn native_command_names() -> Vec<&'static str> {
+    NATIVE_CMD_FNS.iter().map(|&(n, _)| n).collect()
+}
 
 /// Evaluate a named SQF command with pre-evaluated arguments.
 ///
