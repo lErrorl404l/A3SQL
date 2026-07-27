@@ -68,6 +68,7 @@ pub(crate) fn verify_signature(_public_key: &[u8; 32], _payload: &str, _signatur
 // ── Internal helpers ─────────────────────────────────────────────────────
 
 /// Decode a hex string into `Vec<u8>`. Returns `None` on invalid input.
+#[allow(clippy::manual_is_multiple_of)]
 fn decode_hex(s: &str) -> Option<Vec<u8>> {
     if s.len() % 2 != 0 || s.is_empty() {
         return None;
