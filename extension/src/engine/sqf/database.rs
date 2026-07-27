@@ -101,20 +101,7 @@ impl Database {
     fn load() -> Self {
         let mut commands: HashMap<String, CmdInfo> = HashMap::new();
 
-        // Pre-populate with native implementation commands so they're always
-        // present even when the wiki cache fails.
-        for &(name, arity, ret) in NATIVE_COMMANDS {
-            commands.insert(
-                name.to_string(),
-                CmdInfo {
-                    arity,
-                    ret,
-                    groups: vec!["Native".into()],
-                },
-            );
-        }
-
-        // Load arma3-wiki data
+        // Load arma3-wiki data FIRST (primary source)
         let wiki = std::panic::catch_unwind(|| arma3_wiki::Wiki::load(false)).ok();
         let meta = match &wiki {
             Some(w) => {
@@ -122,7 +109,6 @@ impl Database {
                 let source = if w.updated() { "git" } else { "cache" };
                 let n = w.commands().iter().count();
 
-                let n0 = commands.len();
                 for (name, cmd) in w.commands().iter() {
                     let groups: Vec<String> = cmd.groups().to_vec();
                     // Pick the "best" syntax (prefer nular > unary > binary, prefer Number return)
@@ -155,16 +141,6 @@ impl Database {
                     }
                 }
 
-                let n1 = commands.len();
-                eprintln!(
-                    "[a3sql] SQF DB: {} commands (+{} from arma3-wiki v{}.{} {})",
-                    n1,
-                    n1 - n0,
-                    v.major(),
-                    v.minor(),
-                    source,
-                );
-
                 WikiMeta {
                     source,
                     major: v.major(),
@@ -179,6 +155,32 @@ impl Database {
                 command_count: 0,
             },
         };
+
+        // Ensure native commands with Rust implementations are present.
+        // Runs regardless of whether wiki data loaded successfully.
+        let n0 = commands.len();
+        for &(name, _) in crate::engine::sqf::commands::NATIVE_CMD_FNS {
+            commands.entry(name.to_string()).or_insert_with(|| {
+                // Use correct metadata from fallback static
+                let (arity, ret) = NATIVE_META
+                    .iter()
+                    .find(|&&(n, _, _)| n == name)
+                    .map(|&(_, a, r)| (a, r))
+                    .unwrap_or((Arity::Unary, ReturnType::Other));
+                CmdInfo {
+                    arity,
+                    ret,
+                    groups: vec!["Native".into()],
+                }
+            });
+        }
+
+        eprintln!(
+            "[a3sql] SQF DB: {} commands (+{} wiki, +{} native-only)",
+            commands.len(),
+            n0,
+            commands.len() - n0,
+        );
 
         // Version drift check
         if let Some(cfg) = crate::config::Config::load().game_version {
@@ -224,9 +226,11 @@ pub(crate) fn wiki_meta() -> &'static WikiMeta {
     &global_db().meta
 }
 
-// ── Native implementation commands ────────────────────────────────────
+// ── Native fallback metadata ──────────────────────────────────────────
+// Correct arity/return-type for every native command, used when wiki data
+// is unavailable (e.g. offline CI).
 
-static NATIVE_COMMANDS: &[(&str, Arity, ReturnType)] = &[
+static NATIVE_META: &[(&str, Arity, ReturnType)] = &[
     ("pi", Arity::Nular, ReturnType::Number),
     ("true", Arity::Nular, ReturnType::Boolean),
     ("false", Arity::Nular, ReturnType::Boolean),
@@ -248,50 +252,41 @@ static NATIVE_COMMANDS: &[(&str, Arity, ReturnType)] = &[
     ("sin", Arity::Unary, ReturnType::Number),
     ("sqrt", Arity::Unary, ReturnType::Number),
     ("tan", Arity::Unary, ReturnType::Number),
+    ("cosec", Arity::Unary, ReturnType::Number),
+    ("sec", Arity::Unary, ReturnType::Number),
+    ("cot", Arity::Unary, ReturnType::Number),
     ("str", Arity::Unary, ReturnType::String),
     ("to_string", Arity::Unary, ReturnType::String),
     ("toupper", Arity::Unary, ReturnType::String),
     ("to_upper", Arity::Unary, ReturnType::String),
     ("tolower", Arity::Unary, ReturnType::String),
     ("to_lower", Arity::Unary, ReturnType::String),
+    ("trim", Arity::Unary, ReturnType::String),
     ("typename", Arity::Unary, ReturnType::String),
     ("type_name", Arity::Unary, ReturnType::String),
     ("count", Arity::Unary, ReturnType::Number),
     ("parsenumber", Arity::Unary, ReturnType::Number),
     ("parse_number", Arity::Unary, ReturnType::Number),
-    ("hint", Arity::Unary, ReturnType::String),
-    ("hintc", Arity::Unary, ReturnType::String),
-    ("min", Arity::Binary, ReturnType::Number),
-    ("max", Arity::Binary, ReturnType::Number),
-    ("atan2", Arity::Binary, ReturnType::Number),
     ("random", Arity::Unary, ReturnType::Number),
     ("trunc", Arity::Unary, ReturnType::Number),
     ("sign", Arity::Unary, ReturnType::Number),
-    ("find", Arity::Binary, ReturnType::Number),
-    ("split", Arity::Binary, ReturnType::Array),
-    ("trim", Arity::Unary, ReturnType::String),
-    ("replace", Arity::Binary, ReturnType::String),
-    ("resize", Arity::Binary, ReturnType::Number),
-    ("select", Arity::Binary, ReturnType::Other),
-    ("in", Arity::Binary, ReturnType::Boolean),
+    ("hint", Arity::Unary, ReturnType::String),
+    ("hintc", Arity::Unary, ReturnType::String),
+    ("vectormagnitude", Arity::Unary, ReturnType::Number),
     ("isnil", Arity::Unary, ReturnType::Boolean),
     ("is_null", Arity::Unary, ReturnType::Boolean),
+    ("min", Arity::Binary, ReturnType::Number),
+    ("max", Arity::Binary, ReturnType::Number),
+    ("atan2", Arity::Binary, ReturnType::Number),
+    ("clamp", Arity::Binary, ReturnType::Number),
+    ("find", Arity::Binary, ReturnType::Number),
+    ("select", Arity::Binary, ReturnType::Other),
+    ("in", Arity::Binary, ReturnType::Boolean),
+    ("replace", Arity::Binary, ReturnType::String),
     ("isequalto", Arity::Binary, ReturnType::Boolean),
     ("is_equal_to", Arity::Binary, ReturnType::Boolean),
-    ("isEqualTo", Arity::Binary, ReturnType::Boolean),
-    ("cosec", Arity::Unary, ReturnType::Number),
-    ("sec", Arity::Unary, ReturnType::Number),
-    ("cot", Arity::Unary, ReturnType::Number),
-    ("vectoradd", Arity::Binary, ReturnType::Array),
-    ("vectorsubtract", Arity::Binary, ReturnType::Array),
-    ("vectordotproduct", Arity::Binary, ReturnType::Number),
-    ("vectorcrossproduct", Arity::Binary, ReturnType::Array),
-    ("vectormagnitude", Arity::Unary, ReturnType::Number),
-    ("vectornormalized", Arity::Unary, ReturnType::Array),
     ("pushback", Arity::Binary, ReturnType::Array),
     ("deleteat", Arity::Binary, ReturnType::Array),
-    ("apply", Arity::Unary, ReturnType::Array),
-    ("clamp", Arity::Binary, ReturnType::Number),
 ];
 
 #[cfg(test)]
