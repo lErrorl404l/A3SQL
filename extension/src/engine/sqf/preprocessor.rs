@@ -269,6 +269,7 @@ toupper NAME"#,
         )
         .unwrap();
         match r {
+            #[allow(clippy::approx_constant)]
             DbValue::Float(f) => assert!((f - 3.14159).abs() < 0.001),
             other => panic!("expected Float, got {:?}", other),
         }
