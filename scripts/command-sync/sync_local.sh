@@ -24,21 +24,34 @@
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-OUTPUT_DIR="${OUTPUT_DIR:-/tmp/sync_output}"
-STEAMCMD_DIR="${STEAMCMD_DIR:-/opt/steamcmd}"
-ARMA_DIR="${ARMA_DIR:-/opt/arma3}"
 ARMA_APP_ID="${ARMA_APP_ID:-233780}"  # Arma 3 Dedicated Server
 
+# ── Auto-detect paths via Steam library VDF ─────────────────────────────
+echo "[sync] Discovering Steam install paths..."
+PATHS=$(python3 "$SCRIPT_DIR/discover_paths.py" 2>/dev/null || echo '{"steamcmd":null,"arma3":null,"output":"/tmp/sync_output"}')
+STEAMCMD="${STEAMCMD:-$(echo "$PATHS" | python3 -c "import sys,json; print(json.load(sys.stdin).get('steamcmd') or '')" 2>/dev/null)}"
+ARMA_DIR="${ARMA_DIR:-$(echo "$PATHS" | python3 -c "import sys,json; print(json.load(sys.stdin).get('arma3') or '')" 2>/dev/null)}"
+OUTPUT_DIR="${OUTPUT_DIR:-$(echo "$PATHS" | python3 -c "import sys,json; print(json.load(sys.stdin).get('output') or '/tmp/sync_output')" 2>/dev/null)}"
+
+# Fallback defaults if VDF discovery returned nothing
+ARMA_DIR="${ARMA_DIR:-$HOME/arma3}"
+OUTPUT_DIR="${OUTPUT_DIR:-/tmp/sync_output}"
 mkdir -p "$OUTPUT_DIR"
 
 # ── 1. Install SteamCMD if missing ─────────────────────────────────────
-if ! command -v steamcmd &>/dev/null && [ ! -x "$STEAMCMD_DIR/steamcmd.sh" ]; then
-    echo "[sync] SteamCMD not found — installing to $STEAMCMD_DIR"
-    sudo mkdir -p "$STEAMCMD_DIR"
-    curl -fsSL "https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz" \
-        | sudo tar -xz -C "$STEAMCMD_DIR"
+if [ -z "$STEAMCMD" ]; then
+    if command -v steamcmd &>/dev/null; then
+        STEAMCMD="steamcmd"
+    elif [ -x "$HOME/steamcmd/steamcmd.sh" ]; then
+        STEAMCMD="$HOME/steamcmd/steamcmd.sh"
+    else
+        echo "[sync] SteamCMD not found — installing to $HOME/steamcmd"
+        mkdir -p "$HOME/steamcmd"
+        curl -fsSL "https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz" \
+            | tar -xz -C "$HOME/steamcmd"
+        STEAMCMD="$HOME/steamcmd/steamcmd.sh"
+    fi
 fi
-STEAMCMD="$(command -v steamcmd 2>/dev/null || echo "$STEAMCMD_DIR/steamcmd.sh")"
 
 # ── 2. Login — try cached session first, fall back to env credentials ──
 LOGIN_CMD=""
