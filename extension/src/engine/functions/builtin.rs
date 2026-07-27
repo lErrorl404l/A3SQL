@@ -450,6 +450,15 @@ pub(crate) fn exec_std_function(
             RAISE_ABORTED.with(|r| r.set(true));
             Err(EngineError::Exec(format!("RAISE: {}", msg)))
         }
+        // SQF_EVAL(expr) — evaluate an SQF expression
+        "sqf_eval" => {
+            let vals = eval_args(1)?;
+            let expr_str = value_to_string(&vals[0]);
+            match crate::engine::sqf::eval_sqf(&expr_str, &HashMap::new()) {
+                Ok(v) => Ok(v),
+                Err(e) => Err(EngineError::Exec(format!("SQF_EVAL error: {}", e))),
+            }
+        }
         _ => Err(EngineError::Exec(format!("Unknown function '{}'", name))),
     }
 }
