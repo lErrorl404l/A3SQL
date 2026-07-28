@@ -1,4 +1,4 @@
-#include "..\script_component.hpp"
+#include "../script_component.hpp"
 
 /*
     Applies modulo to a value by a numeric parameter. Returns 0 on modulo by zero.

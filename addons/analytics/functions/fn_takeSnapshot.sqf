@@ -1,4 +1,4 @@
-#include "..\script_component.hpp"
+#include "../script_component.hpp"
 
 // Record positions of all playable entities
 // Uses allUnits + vehicles only (NOT allMissionObjects "All")

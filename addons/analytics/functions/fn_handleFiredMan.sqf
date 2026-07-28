@@ -1,4 +1,4 @@
-#include "..\script_component.hpp"
+#include "../script_component.hpp"
 
 params [["_unit", objNull, [objNull]], ["_weapon", "", [""]], ["_muzzle", "", [""]], ["_mode", "", [""]], ["_ammo", "", [""]], ["_magazine", "", [""]], ["_projectile", objNull, [objNull]], ["_vehicle", objNull, [objNull]], ["_global", false, [false]], ["_fireGunner", false, [false]]];
 

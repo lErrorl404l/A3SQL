@@ -1,4 +1,4 @@
-#include "..\script_component.hpp"
+#include "../script_component.hpp"
 
 private _buffer = GVAR(shot_buffer);
 if (_buffer isEqualTo []) exitWith {};

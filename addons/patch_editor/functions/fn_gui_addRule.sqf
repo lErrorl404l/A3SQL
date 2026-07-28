@@ -1,4 +1,4 @@
-#include "..\script_component.hpp"
+#include "../script_component.hpp"
 
 private _display = findDisplay 12300;
 if (isNull _display) exitWith {};
@@ -12,7 +12,7 @@ private _operator = lbText (lbCurSel (_display displayCtrl 206));
 private _value = ctrlText (_display displayCtrl 207);
 
 if (_name isEqualTo "") exitWith {
-    systemChat "[A3SQL Patch] Rule name is required";
+    ["A3SQL Patch", "Rule name is required"] call CBA_fnc_notify;
 };
 
 // ── Validation ─────────────────────────────────────────────────────
@@ -24,7 +24,7 @@ _ruleHash set ["value", _value];
 
 private _validation = [_ruleHash] call FUNC(validateRule);
 if (!(_validation select 0)) exitWith {
-    systemChat format ["[A3SQL Patch] Validation failed: %1", _validation select 1];
+    ["A3SQL Patch", format ["Validation failed: %1", _validation select 1]] call CBA_fnc_notify;
 };
 
 private _activeInt = if (_active) then { 1 } else { 0 };
@@ -46,11 +46,11 @@ if (_isUpdate) then {
     _result = [_sql] call a3sql_fnc_execute;
 
     if ((_result select 0) == 0) then {
-        systemChat format ["[A3SQL Patch] Rule %1 updated", _ruleId];
+        ["A3SQL Patch", format ["Rule %1 updated", _ruleId]] call CBA_fnc_notify;
         call FUNC(gui_listRules);
         [true] call a3sql_patch_core_fnc_setDirty;
     } else {
-        systemChat format ["[A3SQL Patch] Failed to update rule: %1", _result select 2];
+        ["A3SQL Patch", format ["Failed to update rule: %1", _result select 2]] call CBA_fnc_notify;
     };
 } else {
     private _sql = format [
@@ -60,7 +60,7 @@ if (_isUpdate) then {
     _result = [_sql] call a3sql_fnc_execute;
 
     if ((_result select 0) == 0) then {
-        systemChat format ["[A3SQL Patch] Rule '%1' added", _name];
+        ["A3SQL Patch", format ["Rule '%1' added", _name]] call CBA_fnc_notify;
         call FUNC(gui_listRules);
 
         // Clear fields for next entry
@@ -71,6 +71,6 @@ if (_isUpdate) then {
 
         [true] call a3sql_patch_core_fnc_setDirty;
     } else {
-        systemChat format ["[A3SQL Patch] Failed to add rule: %1", _result select 2];
+        ["A3SQL Patch", format ["Failed to add rule: %1", _result select 2]] call CBA_fnc_notify;
     };
 };

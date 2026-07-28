@@ -1,4 +1,4 @@
-#include "..\script_component.hpp"
+#include "../script_component.hpp"
 
 private _display = findDisplay 12300;
 if (isNull _display) exitWith {};
@@ -8,7 +8,7 @@ private _presetName = ctrlText (_display displayCtrl 201);
 if (_presetName isEqualTo "") then {
     _presetName = ["A3SQL Patch", "Preset name:", ""] call CBA_fnc_inputBox;
     if (_presetName isEqualTo "") exitWith {
-        systemChat "[A3SQL Patch] Save cancelled — no preset name provided";
+        ["A3SQL Patch", "Save cancelled — no preset name provided"] call CBA_fnc_notify;
     };
 };
 
@@ -16,7 +16,7 @@ if (_presetName isEqualTo "") then {
 private _rules = ["SELECT * FROM patch_rules ORDER BY priority DESC, id ASC"] call a3sql_fnc_selectMap;
 
 if (_rules isEqualTo []) exitWith {
-    systemChat "[A3SQL Patch] No rules to save";
+    ["A3SQL Patch", "No rules to save"] call CBA_fnc_notify;
 };
 
 // Strip the id / created_at fields — presets store definition only
@@ -43,7 +43,7 @@ if (_existing isNotEqualTo []) then {
         _data, _presetName
     ];
     [_sql] call a3sql_fnc_execute;
-    systemChat format ["[A3SQL Patch] Preset '%1' updated (%2 rules)", _presetName, count _stripped];
+    ["A3SQL Patch", format ["Preset '%1' updated (%2 rules)", _presetName, count _stripped]] call CBA_fnc_notify;
 } else {
     // Insert new preset
     private _sql = format [
@@ -51,7 +51,7 @@ if (_existing isNotEqualTo []) then {
         _presetName, _data
     ];
     [_sql] call a3sql_fnc_execute;
-    systemChat format ["[A3SQL Patch] Preset '%1' saved (%2 rules)", _presetName, count _stripped];
+    ["A3SQL Patch", format ["Preset '%1' saved (%2 rules)", _presetName, count _stripped]] call CBA_fnc_notify;
 };
 
 true

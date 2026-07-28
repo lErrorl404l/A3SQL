@@ -1,10 +1,10 @@
-#include "..\script_component.hpp"
+#include "../script_component.hpp"
 
 params [
     ["_extension", "a3sql", [""]]
 ];
 
-private _log_level = missionNamespace getVariable ["a3sql_patch_log_level", 2];
+private _log_level = ["a3sql_patch_log_level"] call CBA_fnc_getSetting;
 private _applied = 0;
 private _errors  = 0;
 private _offset  = 0;
@@ -45,30 +45,31 @@ while {true} do {
         private _ruleId = _rule getOrDefault ["id", "?"];
 
         // ── Stream output (real-time) ───────────────────────────────
-        if (missionNamespace getVariable ["a3sql_patch_stream_output", false]) then {
-            systemChat format ["[A3SQL Patch] Applying rule %1 (%2 — %3 %4 %5)",
+        if (["a3sql_patch_stream_output"] call CBA_fnc_getSetting) then {
+            ["A3SQL Patch", format ["Applying rule %1 (%2 — %3 %4 %5)",
                 _ruleId,
                 _rule getOrDefault ["name", ""],
                 _rule getOrDefault ["target_type", ""],
                 _rule getOrDefault ["property", ""],
                 _rule getOrDefault ["operator", "set"]
-            ];
+            ]] call CBA_fnc_notify;
         };
 
         try {
             private _result = [_rule, _extension] call FUNC(applyRule);
             if ((_result select 0) == 0) then {
                 _applied = _applied + 1;
+                ["a3sql_patch_applied", [_ruleId, _rule getOrDefault ["target_type", ""], _rule getOrDefault ["property", ""], _rule getOrDefault ["value", ""]]] call CBA_fnc_globalEvent;
             } else {
                 _errors = _errors + 1;
-                if (_log_level >= 1) then {
-                    diag_log text format ["[A3SQL Patch] Rule %1 error: %2", _ruleId, _result select 2];
+                if (_log_level >= 3) then {
+                    ["A3SQL Patch", "Rule %1 error: %2", _ruleId, _result select 2] call CBA_fnc_error;
                 };
             };
         } catch {
             _errors = _errors + 1;
-            if (_log_level >= 1) then {
-                diag_log text format ["[A3SQL Patch] Rule %1 exception: %2", _ruleId, _exception];
+            if (_log_level >= 3) then {
+                ["A3SQL Patch", "Rule %1 exception: %2", _ruleId, _exception] call CBA_fnc_error;
             };
         };
     } forEach _rows;
@@ -76,8 +77,8 @@ while {true} do {
     _offset = _offset + _pageSize;
 };
 
-if (_log_level >= 2) then {
-    diag_log text format ["[A3SQL Patch] applyAll: %1 applied, %2 errors", _applied, _errors];
+if (_log_level >= 3) then {
+    ["A3SQL Patch", "applyAll: %1 applied, %2 errors", _applied, _errors] call CBA_fnc_info;
 };
 
 [0, "OK", [_applied, _errors]]

@@ -9,7 +9,7 @@ params [["_extension", "a3sql", [""]]];
 "CREATE TABLE IF NOT EXISTS replay_snapshots (id INTEGER PRIMARY KEY, timestamp TEXT, entity_type TEXT, pos_x FLOAT, pos_y FLOAT, pos_z FLOAT, health FLOAT, group_id TEXT, mission_name TEXT)" call a3sql_fnc_execute;
 
 // ── PerFrame handler (server-only) ─────────────────────────────────
-private _sampleInterval = missionNamespace getVariable ["a3sql_analytics_sample_interval", 60];
+private _sampleInterval = ["a3sql_analytics_sample_interval"] call CBA_fnc_getSetting;
 if (_sampleInterval <= 0) then { _sampleInterval = 60; };
 
 [{  // PerFrame code: fires every _sampleInterval seconds
@@ -30,8 +30,8 @@ if (_sampleInterval <= 0) then { _sampleInterval = 60; };
     ];
     _sql call a3sql_fnc_execute;
 
-    if (missionNamespace getVariable ["a3sql_analytics_debug", false]) then {
-        diag_log text format ["[A3SQL Analytics] Perf sample: FPS=%1, Entities=%2, Players=%3", _fps, _entities, _players];
+    if (["a3sql_analytics_debug"] call CBA_fnc_getSetting) then {
+        ["A3SQL Analytics", "Perf sample: FPS=%1, Entities=%2, Players=%3", _fps, _entities, _players] call CBA_fnc_debug;
     };
 }, _sampleInterval, []] call CBA_fnc_addPerFrameHandler;
 
@@ -43,12 +43,12 @@ addMissionEventHandler ["EntityKilled", { _this call a3sql_analytics_fnc_handleK
 addMissionEventHandler ["FiredMan", { _this call a3sql_analytics_fnc_handleFiredMan; }];
 
 // ── PerFrame handler for shot buffer flush ──────────────────────
-[{  // Check buffer every 5 seconds
+[{  // Flush buffer when threshold reached
     private _buffer = GVAR(shot_buffer);
     if (count _buffer >= 10) then {
         call a3sql_analytics_fnc_flushShotBuffer;
     };
-}, 5, []] call CBA_fnc_addPerFrameHandler;
+}, _sampleInterval, []] call CBA_fnc_addPerFrameHandler;
 
 // ── Mission-end flush ──────────────────────────────────────────
 addMissionEventHandler ["Ended", {

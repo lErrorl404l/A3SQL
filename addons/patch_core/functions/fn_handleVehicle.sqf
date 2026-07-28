@@ -1,4 +1,4 @@
-#include "..\script_component.hpp"
+#include "../script_component.hpp"
 
 params [["_matchValue", "", [""]], ["_property", "", [""]], ["_value", "", [""]]];
 private _targets = vehicles select { typeOf _x == _matchValue };

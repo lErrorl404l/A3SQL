@@ -1,4 +1,4 @@
-#include "..\script_component.hpp"
+#include "../script_component.hpp"
 
 params ["_faction", "_role", "_name", "_uniform", "_vest", "_helmet", "_backpack", "_primaryWeapon", "_secondaryWeapon", "_handgunWeapon", "_itemsJson", "_magazinesJson"];
 

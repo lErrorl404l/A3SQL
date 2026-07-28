@@ -1,4 +1,4 @@
-#include "..\script_component.hpp"
+#include "../script_component.hpp"
 
 params [
     ["_ruleId", 0, [0]],
@@ -13,9 +13,10 @@ private _parsed = parseSimpleArray _response;
 
 if ((_parsed select 0) == 0) then {
     // Mark dirty so applyAll picks up the change
-    missionNamespace setVariable ["a3sql_patch_dirty", true];
-    if (missionNamespace getVariable ["a3sql_patch_log_level", 2] >= 2) then {
-        diag_log text format ["[A3SQL Patch] Rule %1 deleted", _ruleId];
+    if (isNil QGVAR(namespace)) then { GVAR(namespace) = [] call CBA_fnc_createNamespace; };
+    GVAR(namespace) setVariable ["dirty", true];
+    if (["a3sql_patch_log_level"] call CBA_fnc_getSetting >= 3) then {
+        ["A3SQL Patch", "Rule %1 deleted", _ruleId] call CBA_fnc_info;
     };
 };
 

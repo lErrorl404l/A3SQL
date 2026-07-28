@@ -287,6 +287,71 @@ fn bench_window(c: &mut Criterion) {
     a3sql::dispatch("DROP TABLE bench_win", &[]);
 }
 
+fn bench_patch_rules(c: &mut Criterion) {
+    let create = "CREATE TABLE bench_patch (id INTEGER PRIMARY KEY, name STRING, active INT, priority INT, match_type STRING, match_value STRING, target_type STRING, property STRING, operator STRING, value STRING)";
+    let insert_single = "INSERT INTO bench_patch VALUES (%d, 'rule_%d', 1, %d, 'exact', '%s', '%s', '%s', 'set', '%d')";
+    let select_active = "SELECT * FROM bench_patch WHERE active=1 ORDER BY priority LIMIT 100";
+
+    a3sql::dispatch("DROP TABLE IF EXISTS bench_patch", &[]);
+    a3sql::dispatch(create, &[]);
+    for i in 0..1000i64 {
+        let sql = format!("INSERT INTO bench_patch VALUES ({}, 'rule_{}', 1, {}, 'exact', 'M4A1', 'weapon', 'reloadTime', 'set', '{}')", i, i, i % 10, i);
+        a3sql::dispatch(&sql, &[]);
+    }
+
+    let mut group = c.benchmark_group("patch");
+    group.sample_size(50);
+
+    group.bench_function("select_active_1000", |b| b.iter(|| a3sql::dispatch(select_active, &[])));
+    group.bench_function("select_by_target_type", |b| {
+        b.iter(|| {
+            a3sql::dispatch(
+                "SELECT * FROM bench_patch WHERE target_type='weapon' AND active=1 ORDER BY priority LIMIT 50",
+                &[],
+            )
+        })
+    });
+    group.bench_function("count_by_type", |b| {
+        b.iter(|| {
+            a3sql::dispatch(
+                "SELECT target_type, COUNT(*) FROM bench_patch WHERE active=1 GROUP BY target_type",
+                &[],
+            )
+        })
+    });
+    group.bench_function("insert_single", |b| {
+        let mut i = 1000i64;
+        b.iter(|| {
+            let sql = format!("INSERT INTO bench_patch VALUES ({}, 'rule_{}', 1, 0, 'exact', 'target', 'weapon', 'prop', 'set', 'val')", i, i);
+            a3sql::dispatch(&sql, &[]);
+            i += 1;
+        })
+    });
+    group.bench_function("insert_batch_50", |b| {
+        b.iter(|| {
+            let vals: Vec<String> = (0..50i64)
+                .map(|j| format!("({}, 'batch_{}', 1, 0, 'exact', 't', 'w', 'p', 'set', 'v')", j, j))
+                .collect();
+            a3sql::dispatch(&format!("INSERT INTO bench_patch VALUES {}", vals.join(",")), &[]);
+        })
+    });
+    group.bench_function("update_activate_all", |b| {
+        b.iter(|| a3sql::dispatch("UPDATE bench_patch SET active=1", &[]))
+    });
+    group.bench_function("delete_all", |b| {
+        b.iter(|| {
+            a3sql::dispatch("DELETE FROM bench_patch", &[]);
+            for i in 0..1000i64 {
+                let sql = format!("INSERT INTO bench_patch VALUES ({}, 'rule_{}', 1, {}, 'exact', 'M4A1', 'weapon', 'reloadTime', 'set', '{}')", i, i, i % 10, i);
+                a3sql::dispatch(&sql, &[]);
+            }
+        })
+    });
+
+    group.finish();
+    a3sql::dispatch("DROP TABLE bench_patch", &[]);
+}
+
 criterion_group!(
     benches,
     bench_full_scan,
@@ -297,5 +362,6 @@ criterion_group!(
     bench_fuzzy,
     bench_cte,
     bench_window,
+    bench_patch_rules,
 );
 criterion_main!(benches);
