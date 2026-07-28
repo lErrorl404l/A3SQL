@@ -1,17 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project name="A3SQL">
     <Package name="Patch_Editor">
-        <Key ID="STR_a3sql_patch_EditorKey_Description">
-            <English>Open the dynamic patch rule editor dialog.</English>
-            <French>Ouvrir la boîte de dialogue de l'éditeur de règles de patch dynamique.</French>
-            <German>Öffnet den Dialog des dynamischen Patch-Regel-Editors.</German>
-        </Key>
-        <Key ID="STR_a3sql_patch_EditorKey_DisplayName">
+        <Key ID="STR_a3sql_patch_editor_EditorKey_DisplayName">
             <English>Open Patch Editor</English>
-            <French>Ouvrir l'éditeur de patch</French>
+            <French>Ouvrir l'éditeur de patchs</French>
             <German>Patch-Editor öffnen</German>
         </Key>
-        <Key ID="STR_a3sql_patch_Editor_Category">
+        <Key ID="STR_a3sql_patch_editor_EditorKey_Description">
+            <English>Keybind to open the patch editor dialog.</English>
+            <French>Touche pour ouvrir le dialogue de l'éditeur de patchs.</French>
+            <German>Tastenkombination zum Öffnen des Patch-Editor-Dialogs.</German>
+        </Key>
+        <Key ID="STR_a3sql_patch_editor_Editor_Category">
             <English>A3SQL Patch Editor</English>
             <French>A3SQL Patch Editor</French>
             <German>A3SQL Patch Editor</German>
