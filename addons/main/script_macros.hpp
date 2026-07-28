@@ -4,6 +4,7 @@
 #include "\x\cba\addons\main\script_macros_common.hpp"
 
 // a3sql-specific macros — unique names to avoid PW1 redefinition warnings
+#define ADDON DOUBLES(PREFIX,COMPONENT)
 #define A3FUNC(var1) TRIPLES(PREFIX,COMPONENT,fnc_##var1)
 #define A3DEFUNC(var1,var2) TRIPLES(DOUBLES(PREFIX,var1),fnc,var2)
 #define A3QFUNC(var1) QUOTE(A3FUNC(var1))
