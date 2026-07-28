@@ -4,11 +4,6 @@ options.allow_no_extension = true
 [config.cfgpatches_scope]
 enabled = true
 
-[PW1]
-level = "off"
-["L-S02IC"]
-level = "off"
-
 [sqf.banned_commands]
 enabled = true
 
