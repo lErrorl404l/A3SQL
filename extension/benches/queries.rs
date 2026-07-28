@@ -289,7 +289,6 @@ fn bench_window(c: &mut Criterion) {
 
 fn bench_patch_rules(c: &mut Criterion) {
     let create = "CREATE TABLE bench_patch (id INTEGER PRIMARY KEY, name STRING, active INT, priority INT, match_type STRING, match_value STRING, target_type STRING, property STRING, operator STRING, value STRING)";
-    let insert_single = "INSERT INTO bench_patch VALUES (%d, 'rule_%d', 1, %d, 'exact', '%s', '%s', '%s', 'set', '%d')";
     let select_active = "SELECT * FROM bench_patch WHERE active=1 ORDER BY priority LIMIT 100";
 
     a3sql::dispatch("DROP TABLE IF EXISTS bench_patch", &[]);
