@@ -1,18 +1,40 @@
 import os
 import sys
+import sysconfig
+import platform
 import subprocess
 import concurrent.futures
 import tomllib
 
 addon_base_path = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 
-sqfvm_exe = os.path.join(addon_base_path, "sqfvm.exe")
+# Platform-aware SQF-VM binary detection
+_is_linux = platform.system() == "Linux"
+sqfvm_exe = None
+if _is_linux:
+    # Check PATH first (common on Linux), then project root
+    sqfvm_in_path = subprocess.run(
+        ["which", "sqfvm"], capture_output=True, text=True
+    ).stdout.strip()
+    if sqfvm_in_path:
+        sqfvm_exe = sqfvm_in_path
+    else:
+        sqfvm_exe = os.path.join(addon_base_path, "sqfvm")
+else:
+    sqfvm_exe = os.path.join(addon_base_path, "sqfvm.exe")
+
+# If still not found and a known install location works, use it
+if not sqfvm_exe or not os.path.isfile(sqfvm_exe):
+    alt_path = "/home/matt/.local/bin/sqfvm" if _is_linux else None
+    if alt_path and os.path.isfile(alt_path):
+        sqfvm_exe = alt_path
 virtual_paths = [
-    # would need to add more even more to /include to use it
-    "P:/a3|/a3",  # "{}|/a3".format(os.path.join(addon_base_path, "include", "a3")),
+    "P:/a3|/a3",
     "P:/a3|/A3",
     "P:/x/cba|/x/cba",
     "{}|/z/a3sql".format(addon_base_path),
+    "{}|/".format(addon_base_path),  # resolve \ prefixed includes
+    "{}|".format(addon_base_path),  # resolve bare path includes
 ]
 
 
