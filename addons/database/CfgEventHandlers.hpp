@@ -1,10 +1,10 @@
 class Extended_PreInit_EventHandlers {
     class ADDON {
-        init = "call a3sql_database_fnc_preInit";
+        init = "call compileScript ['z\a3sql\addons\database\XEH_preInit.sqf']";
     };
 };
 class Extended_PostInit_EventHandlers {
     class ADDON {
-        init = "call a3sql_database_fnc_postInit";
+        init = "call compileScript ['z\a3sql\addons\database\XEH_postInit.sqf']";
     };
 };
