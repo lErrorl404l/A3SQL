@@ -3,6 +3,12 @@
 #endif
 #include "\x\cba\addons\main\script_macros_common.hpp"
 
+// Explicit ADDON — CBA's #ifndef guard in script_macros_common.hpp may not
+// always fire in HEMTT's cpp preprocessor context, so define it ourselves.
+#ifndef ADDON
+#define ADDON DOUBLES(PREFIX,COMPONENT)
+#endif
+
 // a3sql-specific macros — unique names to avoid PW1 redefinition warnings
 #define A3FUNC(var1) TRIPLES(PREFIX,COMPONENT,fnc_##var1)
 #define A3DEFUNC(var1,var2) TRIPLES(DOUBLES(PREFIX,var1),fnc,var2)

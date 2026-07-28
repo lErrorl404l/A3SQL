@@ -1,5 +1,7 @@
 #include "script_component.hpp"
 
+diag_log "[a3sql] XEH_postInit.sqf ENTERED";
+
 params [["_extension", "a3sql"]];
 
 if (!isServer) exitWith {};
