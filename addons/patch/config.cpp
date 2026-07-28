@@ -52,6 +52,11 @@ class CfgFunctions {
             class opMod {};
             class opCat {};
             class opDefault {};
+            class opRound {};
+            class opClamp {};
+            class opNegate {};
+            class opReplace {};
+            class opFormat {};
         };
     };
 };

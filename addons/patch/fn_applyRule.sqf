@@ -37,15 +37,63 @@ if (_property isEqualTo "") exitWith { [1, "ERR_PARAM", "No property specified"]
 
 // ── Gather candidate targets ──
 private _targets = [];
+private _handlerApplied = false;
+
 switch (toLower _targetType) do {
-    case "all":     { _targets = allMissionObjects "All"; };
-    case "object":  { _targets = allMissionObjects "All"; };
-    case "vehicle": { _targets = vehicles; };
-    case "man":
-    case "unit":    { _targets = allUnits; };
-    case "group":   { _targets = allGroups apply { _x }; };
-    default         { _targets = allMissionObjects "All"; };
+    case "weapon": {
+        try {
+            _targets = [_matchValue, _property, _value] call FUNC(handleWeapon);
+            _handlerApplied = true;
+        } catch {};
+    };
+    case "magazine": {
+        try {
+            _targets = [_matchValue, _property, _value] call FUNC(handleMagazine);
+            _handlerApplied = true;
+        } catch {};
+    };
+    case "texture": {
+        try {
+            _targets = [_matchValue, _property, _value] call FUNC(handleTexture);
+            _handlerApplied = true;
+        } catch {};
+    };
+    case "material": {
+        try {
+            _targets = [_matchValue, _property, _value] call FUNC(handleMaterial);
+            _handlerApplied = true;
+        } catch {};
+    };
+    case "entity": {
+        try {
+            _targets = [_matchValue, _property, _value] call FUNC(handleEntity);
+            _handlerApplied = true;
+        } catch {};
+    };
+    default {
+        private _customHandler = missionNamespace getVariable [format [QGVAR(handler_%1), toLower _targetType], nil];
+        if (!isNil "_customHandler") then {
+            try {
+                _targets = [_matchValue, _property, _value] call _customHandler;
+                _handlerApplied = true;
+            } catch {};
+        } else {
+            // ── Generic target collection ──
+            switch (toLower _targetType) do {
+                case "all":     { _targets = allMissionObjects "All"; };
+                case "object":  { _targets = allMissionObjects "All"; };
+                case "vehicle": { _targets = vehicles; };
+                case "man":
+                case "unit":    { _targets = allUnits; };
+                case "group":   { _targets = allGroups apply { _x }; };
+                default         { _targets = allMissionObjects "All"; };
+            };
+        };
+    };
 };
+
+// ── Handler-routed types skip generic operator logic ──
+if (_handlerApplied) exitWith { [0, "OK", count _targets] };
 
 if (_targets isEqualTo []) exitWith { [0, "OK", "No targets found for type"] };
 
@@ -201,6 +249,42 @@ private _failed  = 0;
             try {
                 private _current = _target getVariable [_property];
                 _target setVariable [_property, [_current, _value] call FUNC(opDefault)];
+                _success = true;
+            } catch {};
+        };
+        // ── Value-transformer operators (5 new) ──
+        case "round": {
+            try {
+                private _current = _target getVariable [_property, 0];
+                _target setVariable [_property, [_current, _value, _target, _property] call FUNC(opRound)];
+                _success = true;
+            } catch {};
+        };
+        case "clamp": {
+            try {
+                private _current = _target getVariable [_property, 0];
+                _target setVariable [_property, [_current, _value, _target, _property] call FUNC(opClamp)];
+                _success = true;
+            } catch {};
+        };
+        case "negate": {
+            try {
+                private _current = _target getVariable [_property, 0];
+                _target setVariable [_property, [_current, _value, _target, _property] call FUNC(opNegate)];
+                _success = true;
+            } catch {};
+        };
+        case "replace": {
+            try {
+                private _current = _target getVariable [_property, ""];
+                _target setVariable [_property, [_current, _value, _target, _property] call FUNC(opReplace)];
+                _success = true;
+            } catch {};
+        };
+        case "format": {
+            try {
+                private _current = _target getVariable [_property, ""];
+                _target setVariable [_property, [_current, _value, _target, _property] call FUNC(opFormat)];
                 _success = true;
             } catch {};
         };
