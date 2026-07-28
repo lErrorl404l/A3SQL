@@ -1,0 +1,1 @@
+fnc_opnegate.sqf

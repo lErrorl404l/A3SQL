@@ -1,0 +1,1 @@
+fnc_opadd.sqf
