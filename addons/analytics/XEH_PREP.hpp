@@ -4,6 +4,5 @@ PREP(flushShotBuffer);
 PREP(getSnapshotCount);
 PREP(handleFiredMan);
 PREP(handleKilled);
-PREP(init);
 PREP(queryKills);
 PREP(takeSnapshot);

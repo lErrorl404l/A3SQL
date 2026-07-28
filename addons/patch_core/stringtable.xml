@@ -1,60 +1,60 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project name="A3SQL">
     <Package name="Patch_Core">
-        <Key ID="STR_a3sql_patch_core_Enabled_DisplayName">
-            <English>Enable Patching</English>
-            <French>Activer le patching</French>
-            <German>Patchen aktivieren</German>
-        </Key>
-        <Key ID="STR_a3sql_patch_core_Enabled_Description">
-            <English>Enable dynamic patching system.</English>
-            <French>Activer le système de patching dynamique.</French>
-            <German>Dynamisches Patchen aktivieren.</German>
-        </Key>
-        <Key ID="STR_a3sql_patch_core_Category">
-            <English>A3SQL Patch Core</English>
-            <French>A3SQL Patch Core</French>
-            <German>A3SQL Patch Core</German>
-        </Key>
-        <Key ID="STR_a3sql_patch_core_LogLevel_DisplayName">
-            <English>Log Level</English>
-            <French>Niveau de journalisation</French>
-            <German>Protokollstufe</German>
-        </Key>
-        <Key ID="STR_a3sql_patch_core_LogLevel_Description">
-            <English>Verbosity of diagnostic messages for patching.</English>
-            <French>Niveau de détail des messages de diagnostic pour le patching.</French>
-            <German>Ausführlichkeit der Diagnosemeldungen für das Patchen.</German>
-        </Key>
-        <Key ID="STR_a3sql_patch_core_CheckIntervalHz_DisplayName">
-            <English>Check Interval (Hz)</English>
-            <French>Intervalle de vérification (Hz)</French>
-            <German>Prüfintervall (Hz)</German>
-        </Key>
-        <Key ID="STR_a3sql_patch_core_CheckIntervalHz_Description">
-            <English>How often to check for new patch rules.</English>
-            <French>Fréquence de vérification des nouvelles règles de patch.</French>
-            <German>Wie oft nach neuen Patch-Regeln gesucht wird.</German>
+        <Key ID="STR_a3sql_patch_core_AllowSqfExec_Description">
+            <English>WARNING: Enables arbitrary SQF execution via sqf_exec operator. RCE risk.</English>
+            <French>ATTENTION : Permet l'exécution arbitraire de SQF via l'opérateur sqf_exec. Risque de sécurité.</French>
+            <German>WARNUNG: Ermöglicht beliebige SQF-Ausführung über den sqf_exec-Operator.</German>
         </Key>
         <Key ID="STR_a3sql_patch_core_AllowSqfExec_DisplayName">
             <English>Allow SQF Exec Operator</English>
             <French>Autoriser l'opérateur SQF Exec</French>
             <German>SQF-Exec-Operator erlauben</German>
         </Key>
-        <Key ID="STR_a3sql_patch_core_AllowSqfExec_Description">
-            <English>WARNING: Enables arbitrary SQF execution via sqf_exec operator. RCE risk.</English>
-            <French>ATTENTION : Permet l'exécution arbitraire de SQF via l'opérateur sqf_exec. Risque de sécurité.</French>
-            <German>WARNUNG: Ermöglicht beliebige SQF-Ausführung über den sqf_exec-Operator.</German>
+        <Key ID="STR_a3sql_patch_core_Category">
+            <English>A3SQL Patch Core</English>
+            <French>A3SQL Patch Core</French>
+            <German>A3SQL Patch Core</German>
         </Key>
-        <Key ID="STR_a3sql_patch_core_StreamOutput_DisplayName">
-            <English>Stream Output</English>
-            <French>Sortie en flux</French>
-            <German>Stream-Ausgabe</German>
+        <Key ID="STR_a3sql_patch_core_CheckIntervalHz_Description">
+            <English>How often to check for new patch rules.</English>
+            <French>Fréquence de vérification des nouvelles règles de patch.</French>
+            <German>Wie oft nach neuen Patch-Regeln gesucht wird.</German>
+        </Key>
+        <Key ID="STR_a3sql_patch_core_CheckIntervalHz_DisplayName">
+            <English>Check Interval (Hz)</English>
+            <French>Intervalle de vérification (Hz)</French>
+            <German>Prüfintervall (Hz)</German>
+        </Key>
+        <Key ID="STR_a3sql_patch_core_Enabled_Description">
+            <English>Enable dynamic patching system.</English>
+            <French>Activer le système de patching dynamique.</French>
+            <German>Dynamisches Patchen aktivieren.</German>
+        </Key>
+        <Key ID="STR_a3sql_patch_core_Enabled_DisplayName">
+            <English>Enable Patching</English>
+            <French>Activer le patching</French>
+            <German>Patchen aktivieren</German>
+        </Key>
+        <Key ID="STR_a3sql_patch_core_LogLevel_Description">
+            <English>Verbosity of diagnostic messages for patching.</English>
+            <French>Niveau de détail des messages de diagnostic pour le patching.</French>
+            <German>Ausführlichkeit der Diagnosemeldungen für das Patchen.</German>
+        </Key>
+        <Key ID="STR_a3sql_patch_core_LogLevel_DisplayName">
+            <English>Log Level</English>
+            <French>Niveau de journalisation</French>
+            <German>Protokollstufe</German>
         </Key>
         <Key ID="STR_a3sql_patch_core_StreamOutput_Description">
             <English>Show systemChat messages for each rule applied in real-time.</English>
             <French>Afficher les messages systemChat pour chaque règle appliquée en temps réel.</French>
             <German>systemChat-Nachrichten für jede angewendete Regel in Echtzeit anzeigen.</German>
+        </Key>
+        <Key ID="STR_a3sql_patch_core_StreamOutput_DisplayName">
+            <English>Stream Output</English>
+            <French>Sortie en flux</French>
+            <German>Stream-Ausgabe</German>
         </Key>
     </Package>
 </Project>

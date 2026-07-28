@@ -5,7 +5,6 @@ PREP(executeTimed);
 PREP(exportCSV);
 PREP(exportJSON);
 PREP(exportSQL);
-PREP(init);
 PREP(load);
 PREP(loadJSON);
 PREP(prepare);

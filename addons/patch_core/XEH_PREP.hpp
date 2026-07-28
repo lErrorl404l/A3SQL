@@ -6,7 +6,6 @@ PREP(applyRule);
 PREP(deactivateGroup);
 PREP(deleteRule);
 PREP(getRule);
-PREP(init);
 PREP(listRules);
 PREP(opAdd);
 PREP(opCat);

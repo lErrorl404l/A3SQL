@@ -3,7 +3,6 @@ PREP(banPlayer);
 PREP(clearExecuted);
 PREP(executeCommand);
 PREP(getPlayer);
-PREP(init);
 PREP(kickPlayer);
 PREP(listCommands);
 PREP(listPlayers);
