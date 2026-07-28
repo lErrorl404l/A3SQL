@@ -37,7 +37,15 @@ pub(crate) static REMOTE: LazyLock<Mutex<Option<std::net::TcpStream>>> = LazyLoc
 pub(crate) const OUTPUT_BUF_SIZE: u32 = 10240;
 
 /// Version string — max 32 bytes including null terminator.
-const VERSION: &[u8] = b"a3sql 0.1.0\0";
+/// Derived from Cargo.toml so they stay in sync.
+static VERSION: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
+fn version_bytes() -> &'static [u8] {
+    VERSION.get_or_init(|| {
+        let mut v = format!("a3sql {}\0", env!("CARGO_PKG_VERSION")).into_bytes();
+        v.truncate(32);
+        v
+    })
+}
 
 // ── Arma-rs Extension ─────────────────────────────────────────────────────────
 
@@ -78,7 +86,7 @@ where
 /// Public so integration tests can create a [`testing::Extension`](arma_rs::testing::Extension).
 pub fn build_extension() -> Extension {
     Extension::build()
-        .version("a3sql 0.1.0".to_string())
+        .version(concat!("a3sql ", env!("CARGO_PKG_VERSION")).to_string())
         .command("sql", sql_handler)
         .finish()
 }
@@ -114,8 +122,9 @@ fn sql_handler(payload: Vec<String>) -> String {
 #[no_mangle]
 pub unsafe extern "C" fn RVExtensionVersion(output: *mut c_char, output_size: u32) {
     with_extension(|_| {}); // ensure extension + plugins are initialised
-    let len = (output_size as usize).min(VERSION.len());
-    std::ptr::copy_nonoverlapping(VERSION.as_ptr(), output as *mut u8, len);
+    let version = version_bytes();
+    let len = (output_size as usize).min(version.len());
+    std::ptr::copy_nonoverlapping(version.as_ptr(), output as *mut u8, len);
 }
 
 /// STRING callExtension STRING — compatibility entry point.
