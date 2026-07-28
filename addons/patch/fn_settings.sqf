@@ -24,6 +24,11 @@
     "A3SQL Patch", false, false
 ] call CBA_fnc_addSetting;
 
+["a3sql_patch_stream_output", "CHECKBOX",
+    ["Stream Output", "Show systemChat messages for each rule applied in real-time."],
+    "A3SQL Patch", false, false
+] call CBA_fnc_addSetting;
+
 // ── Keybinding ────────────────────────────────────────────────────
 ["a3sql_patch_editor_key", "EDITOR",
     ["Open Patch Editor", "Open the dynamic patch rule editor dialog."],

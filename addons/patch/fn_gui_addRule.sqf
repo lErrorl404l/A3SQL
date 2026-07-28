@@ -14,11 +14,17 @@ private _value = ctrlText (_display displayCtrl 207);
 if (_name isEqualTo "") exitWith {
     systemChat "[A3SQL Patch] Rule name is required";
 };
-if (_property isEqualTo "") exitWith {
-    systemChat "[A3SQL Patch] Property is required";
-};
-if (_value isEqualTo "" && _operator != "default") exitWith {
-    systemChat "[A3SQL Patch] Value is required";
+
+// ── Validation ─────────────────────────────────────────────────────
+private _ruleHash = createHashMap;
+_ruleHash set ["target_type", _targetType];
+_ruleHash set ["property", _property];
+_ruleHash set ["operator", _operator];
+_ruleHash set ["value", _value];
+
+private _validation = [_ruleHash] call a3sql_patch_fnc_validateRule;
+if (!(_validation select 0)) exitWith {
+    systemChat format ["[A3SQL Patch] Validation failed: %1", _validation select 1];
 };
 
 private _activeInt = if (_active) then { 1 } else { 0 };

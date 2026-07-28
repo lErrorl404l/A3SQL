@@ -66,6 +66,10 @@ class CfgFunctions {
             class gui_listRules {};
             class gui_savePreset {};
             class gui_loadPreset {};
+            class validateRule {};
+            class applyGroup {};
+            class activateGroup {};
+            class deactivateGroup {};
         };
     };
 };
