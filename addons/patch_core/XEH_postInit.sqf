@@ -27,7 +27,7 @@ if (_log_level >= 2) then {
 
 // ── Auto-load saved rules ──────────────────────────────────────────
 private _loadResult = _extension callExtension "load patch_rules";
-if (_loadResult find '[0,"OK"' > -1) then {
+if ('[0,"OK"' in _loadResult) then {
     if (_log_level >= 2) then {
         ["A3SQL Patch", "Loaded saved patch rules"] call CBA_fnc_info;
     };
@@ -39,7 +39,7 @@ if (_enabled) then {
     private _interval = ["a3sql_patch_check_interval_hz"] call CBA_fnc_getSetting;
     if (_interval <= 0) then { _interval = 0; };
     private _hz = if (_interval > 0) then { 1 / _interval } else { 0 };
-    private _maxTicks = round(60 / (if (_hz > 0) then { _hz } else { 0.05 }));
+    private _maxTicks = round(60 / ([0.05, _hz] select (_hz > 0)));
 
     [_hz, [0, _maxTicks], {
         params ["_args"];

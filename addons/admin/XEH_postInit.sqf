@@ -60,7 +60,7 @@ addMissionEventHandler ["HandleDisconnect", {
         private _fullCmd = if (_params == "" || isNil "_params") then { _cmd } else { format ["%1 %2", _cmd, _params] };
         private _result = str (serverCommand _fullCmd);
 
-        private _status = if (_result == "true") then { "executed" } else { "failed" };
+        private _status = ["failed", "executed"] select (_result == "true");
         private _sql = format ["UPDATE server_commands SET status='%1', result='%2', executed_at=datetime('now') WHERE id=%3", _status, _result, _id];
         _sql call a3sql_fnc_execute;
 

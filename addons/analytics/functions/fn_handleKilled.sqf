@@ -12,7 +12,7 @@ private _victimUID = getPlayerUID _unit;
 private _victimUnit = typeOf _unit;
 private _victimWeapon = currentWeapon _unit;
 private _distance = _killerPos distance2D (getPosASL _unit);
-private _headshot = if (_useEffects) then { 1 } else { 0 };
+private _headshot = parseNumber _useEffects;
 
 private _sql = format [
     "INSERT INTO events_kills (timestamp, killer_uid, killer_unit, killer_weapon, killer_pos_x, killer_pos_y, killer_pos_z, victim_uid, victim_unit, victim_weapon, distance, headshot, mission_name) VALUES ('%1', '%2', '%3', '%4', %5, %6, %7, '%8', '%9', '%10', %11, %12, '%13')",

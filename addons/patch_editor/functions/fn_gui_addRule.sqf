@@ -6,9 +6,11 @@ if (isNull _display) exitWith {};
 private _name = ctrlText (_display displayCtrl 201);
 private _active = cbChecked (_display displayCtrl 202);
 private _priority = sliderPosition (_display displayCtrl 203);
-private _targetType = lbText (lbCurSel (_display displayCtrl 204));
+private _targetTypeCtrl = _display displayCtrl 204;
+private _targetType = _targetTypeCtrl lbText (lbCurSel _targetTypeCtrl);
 private _property = ctrlText (_display displayCtrl 205);
-private _operator = lbText (lbCurSel (_display displayCtrl 206));
+private _operatorCtrl = _display displayCtrl 206;
+private _operator = _operatorCtrl lbText (lbCurSel _operatorCtrl);
 private _value = ctrlText (_display displayCtrl 207);
 
 if (_name isEqualTo "") exitWith {
@@ -27,7 +29,7 @@ if (!(_validation select 0)) exitWith {
     ["A3SQL Patch", format ["Validation failed: %1", _validation select 1]] call CBA_fnc_notify;
 };
 
-private _activeInt = if (_active) then { 1 } else { 0 };
+private _activeInt = parseNumber _active;
 private _priorityInt = round _priority;
 
 // Check if updating an existing rule or adding a new one
