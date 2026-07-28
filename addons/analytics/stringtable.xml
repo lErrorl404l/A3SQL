@@ -3,38 +3,38 @@
     <Package name="Analytics">
         <Key ID="STR_a3sql_analytics_Category">
             <English>A3SQL Analytics</English>
-            <German>A3SQL Analytics</German>
             <French>A3SQL Analytics</French>
-        </Key>
-        <Key ID="STR_a3sql_analytics_SampleInterval_DisplayName">
-            <English>Sample Interval (s)</English>
-            <German>Abtastintervall (s)</German>
-            <French>Intervalle d'échantillonnage (s)</French>
-        </Key>
-        <Key ID="STR_a3sql_analytics_SampleInterval_Description">
-            <English>How often to sample server performance metrics.</English>
-            <German>Wie häufig Server-Leistungsmetriken erfasst werden.</German>
-            <French>À quelle fréquence échantillonner les métriques de performance du serveur.</French>
-        </Key>
-        <Key ID="STR_a3sql_analytics_Debug_DisplayName">
-            <English>Debug</English>
-            <German>Debug</German>
-            <French>Débogage</French>
+            <German>A3SQL Analytics</German>
         </Key>
         <Key ID="STR_a3sql_analytics_Debug_Description">
             <English>Enable verbose logging.</English>
-            <German>Ausführliche Protokollierung aktivieren.</German>
             <French>Activer la journalisation détaillée.</French>
+            <German>Ausführliche Protokollierung aktivieren.</German>
         </Key>
-        <Key ID="STR_a3sql_analytics_StreamOutput_DisplayName">
-            <English>Stream Output</English>
-            <German>Stream-Ausgabe</German>
-            <French>Sortie en flux</French>
+        <Key ID="STR_a3sql_analytics_Debug_DisplayName">
+            <English>Debug</English>
+            <French>Débogage</French>
+            <German>Debug</German>
+        </Key>
+        <Key ID="STR_a3sql_analytics_SampleInterval_Description">
+            <English>How often to sample server performance metrics.</English>
+            <French>À quelle fréquence échantillonner les métriques de performance du serveur.</French>
+            <German>Wie häufig Server-Leistungsmetriken erfasst werden.</German>
+        </Key>
+        <Key ID="STR_a3sql_analytics_SampleInterval_DisplayName">
+            <English>Sample Interval (s)</English>
+            <French>Intervalle d'échantillonnage (s)</French>
+            <German>Abtastintervall (s)</German>
         </Key>
         <Key ID="STR_a3sql_analytics_StreamOutput_Description">
             <English>Show analytics notifications via systemChat.</English>
-            <German>Analytics-Benachrichtigungen über systemChat anzeigen.</German>
             <French>Afficher les notifications d'analytique via systemChat.</French>
+            <German>Analytics-Benachrichtigungen über systemChat anzeigen.</German>
+        </Key>
+        <Key ID="STR_a3sql_analytics_StreamOutput_DisplayName">
+            <English>Stream Output</English>
+            <French>Sortie en flux</French>
+            <German>Stream-Ausgabe</German>
         </Key>
     </Package>
 </Project>

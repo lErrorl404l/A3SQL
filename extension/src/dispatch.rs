@@ -50,7 +50,7 @@ pub fn dispatch(input: &str, args: &[&str]) -> String {
         return ok_response("\"OK\"");
     }
     if lowered == "version" {
-        return ok_response("\"a3sql 0.1.0\"");
+        return ok_response(concat!("\"a3sql ", env!("CARGO_PKG_VERSION"), "\""));
     }
     if lowered == "dump_sql" || lowered == "export_sql" {
         return handle_dump_sql();

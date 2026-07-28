@@ -1,3 +1,3 @@
-PREP(applyOverrides);
-PREP(listOverrides);
-PREP(registerOverride);
+A3PREP(applyOverrides);
+A3PREP(listOverrides);
+A3PREP(registerOverride);

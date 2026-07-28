@@ -1,4 +1,44 @@
-// a3sql save/load verification test
+// a3sql save/load + TCP listener verification test
+
+#[test]
+fn test_tcp_listener() {
+    // Start the TCP listener on a test port
+    let r = a3sql::dispatch("listen 33307", &[]);
+    assert!(r.contains("\"OK\""), "listen start: {}", r);
+    println!("✅ TCP listener started on 33307");
+
+    // Allow listener thread to start
+    std::thread::sleep(std::time::Duration::from_millis(500));
+
+    // Connect via TCP and send a version command
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpStream;
+
+    let mut stream = TcpStream::connect("127.0.0.1:33307").expect("Failed to connect to TCP listener");
+    println!("✅ TCP connection established");
+
+    // Write + read helper: scoped BufReader to avoid borrow conflict
+    let mut buf = String::new();
+    macro_rules! tcp_cmd {
+        ($cmd:expr, $expect:literal) => {{
+            stream.write_all(concat!($cmd, "\n").as_bytes()).expect("write failed");
+            buf.clear();
+            let mut reader = BufReader::new(&stream);
+            reader.read_line(&mut buf).expect("read failed");
+            assert!(buf.contains($expect), "{}: {}", stringify!($cmd), buf);
+            println!("✅ TCP: {}", stringify!($cmd));
+        }};
+    }
+
+    tcp_cmd!("CREATE TABLE tcp_test (id STRING PRIMARY KEY, val STRING)", "\"OK\"");
+    tcp_cmd!("INSERT INTO tcp_test VALUES ('1', 'hello')", "\"OK\"");
+    tcp_cmd!("SELECT * FROM tcp_test", "hello");
+    tcp_cmd!("version", "a3sql");
+
+    // Cleanup
+    a3sql::dispatch("DROP TABLE IF EXISTS tcp_test", &[]);
+    println!("✅ All TCP tests passed");
+}
 
 #[test]
 fn test_save_load_cycle() {
