@@ -1,149 +1,174 @@
-# A3SQL — Arma 3 Database Engine
+# A3SQL — Live Database Engine for Arma 3
 
 [![CI](https://github.com/lErrorl404l/a3sql/actions/workflows/ci.yml/badge.svg)](https://github.com/lErrorl404l/a3sql/actions)
-[![Tests](https://github.com/lErrorl404l/a3sql/actions/workflows/test.yml/badge.svg)](https://github.com/lErrorl404l/a3sql/actions/workflows/test.yml)
-[![Lint](https://github.com/lErrorl404l/a3sql/actions/workflows/lint.yml/badge.svg)](https://github.com/lErrorl404l/a3sql/actions/workflows/lint.yml)
-[![Build](https://github.com/lErrorl404l/a3sql/actions/workflows/build.yml/badge.svg)](https://github.com/lErrorl404l/a3sql/actions/workflows/build.yml)
-[![Rust](https://img.shields.io/badge/rust-stable-orange)](https://rustup.rs/)
-[![HEMTT](https://img.shields.io/badge/HEMTT-1.20+-blue)](https://hemtt.dev/)
-[![License](https://img.shields.io/badge/license-APL--SA-red)](LICENSE)
 [![Wiki](https://img.shields.io/badge/docs-wiki-green)](https://github.com/lErrorl404l/a3sql/wiki)
+[![License](https://img.shields.io/badge/license-APL--SA-red)](LICENSE)
 
-An embeddable SQL database engine for Arma 3 mods. Like **SQLite for Arma** — a
-Rust `callExtension` that lets modders write SQL directly in SQF.
+**A3SQL** is an embeddable SQL database engine for Arma 3. It runs as a `callExtension` in-process on your server, storing and querying mission data without external tools. Think of it as **SQLite for Arma**.
 
-```sqf
-["CREATE TABLE players (uid STRING PRIMARY KEY, name STRING, score INT)"] call a3sql_fnc_execute;
-_result = ["SELECT name, score FROM players WHERE score > 1000 ORDER BY score DESC"] call a3sql_fnc_execute;
+---
+
+## What you can do with it
+
+| Feature | What it means for your server |
+|---------|-------------------------------|
+| **Live patching** | Change weapon stats, vehicle values, textures mid-mission — no PBO repacking or restart needed. Edit rules from the in-game dialog or remotely over TCP. |
+| **Player loadouts** | Store faction/role loadout templates in SQL. Apply them on spawn — no more massive `init.sqf` blocks. |
+| **Cross-session progression** | Track player rank, score, kills, and playtime across missions using Arma's built-in rank system. |
+| **Mission state persistence** | Auto-save player loadout and position on disconnect, restore on JIP reconnect. |
+| **Performance monitoring** | Log server FPS, entity counts, and player counts to SQL every 60s. Identify which missions cause lag. |
+| **Kill tracking** | Log every kill event with weapon, distance, headshot status. Export as CSV for after-action review. |
+| **Admin commands via TCP** | Kick, ban, change missions, lock the server — all from an external tool or Discord webhook. |
+| **Replay data** | Record position snapshots every 30s. Export for external mission analysis. |
+| **Mod-to-mod data sharing** | Mod A writes to SQL, Mod B reads it — no cross-dependency needed. |
+
+---
+
+## Getting Started
+
+### 1. Install
+
+Download from the [Releases page](https://github.com/lErrorl404l/a3sql/releases) or build from source. Place `@a3sql` in your Arma 3 directory.
+
+**Required**: CBA_A3 (any version).
+
+### 2. Configure via CBA Settings
+
+Open CBA Settings in-game or in your server config:
+
+| Setting | What it controls |
+|---------|-----------------|
+| `a3sql_database_enabled` | Enable/disable the database engine |
+| `a3sql_database_host` | TCP listener bind address (default: `0.0.0.0`) |
+| `a3sql_database_port` | TCP listener port (default: `33306`) |
+| `a3sql_database_tcp_enabled` | Enable remote TCP access |
+| `a3sql_database_password` | TCP listener password (leave blank for no auth) |
+| `a3sql_patch_core_enabled` | Enable dynamic patching |
+
+### 3. Deploy to your server
+
+```
+-mod=@cba_a3;@a3sql
 ```
 
-## Features
+### 4. Manage from in-game
 
-| Category | What it does |
-|----------|-------------|
-| **SQL** | CREATE/DROP TABLE/INDEX/VIEW, INSERT, SELECT, UPDATE, DELETE, REPLACE INTO, TRUNCATE, RENAME, VACUUM, REINDEX |
-| **Advanced SQL** | JOINs (CROSS/INNER/LEFT/FULL OUTER/NATURAL/USING), GROUP BY/HAVING, ORDER BY/LIMIT/OFFSET, UNION/EXCEPT/INTERSECT, CTE (WITH RECURSIVE), subqueries, window functions (ROWS BETWEEN) |
-| **Expressions** | `%%` fuzzy match, LIKE, BETWEEN, IN, IS NULL, CASE WHEN, EXISTS, CAST, `fn_*()` plugin functions |
-| **Functions** | COUNT(DISTINCT), SUM, AVG, MIN, MAX, UPPER/LOWER, LENGTH, SUBSTR, TRIM, CONCAT, COALESCE/IFNULL, ROUND, ABS, NOW()/CURRENT_TIMESTAMP, POW, SQRT, CEIL, FLOOR, SIGN, REPLACE |
-| **SQF Eval** | `SQF_EVAL()` SQL function evaluates in-line SQF expressions — math, string ops, type checks, 55+ native commands, fallback to NULL for game-engine commands |
-| **Constraints** | PRIMARY KEY, NOT NULL, DEFAULT, CHECK (enforced), FOREIGN KEY (enforced), AUTO_INCREMENT |
-| **Indices** | BTREE (exact/range), TRIGRAM (fuzzy GIN-style), FTS (full-text trigram) |
-| **Transactions** | BEGIN/COMMIT/ROLLBACK (no-op when idle), SAVEPOINT/RELEASE |
-| **RETURNING** | `INSERT/UPDATE/DELETE ... RETURNING *` |
-| **EXPLAIN** | `EXPLAIN SELECT ...` — prints query plan as JSON |
-| **Persistence** | SAVE/LOAD (binary), export/import JSON/CSV/SQL, export_to_file |
-| **Security** | Parameterized queries (`$1`, `$2`), TCP LOGIN auth, CBA credential settings |
-| **Plugins** | Rust trait, C ABI dynamic `.so`/`.dll`, SQF `register_function` |
-| **Network** | TCP listener (auto-start), standalone server (`a3sql-server`), remote connect mode |
-| **Multi-dialect** | Accepts PostgreSQL, MySQL/MariaDB, SQLite, DataFusion-style SQL |
+Press the editor keybind (default: Ctrl+Shift+E) to open the Patch Editor dialog — add, edit, or delete patch rules visually.
 
-## Quick Start
+### 5. Manage remotely
 
-### 1. Add a3sql as a dependency
+```bash
+# List all patch rules
+python tools/a3sql-patch.py list
+
+# Add a rule
+python tools/a3sql-patch.py add weapon reloadTime 2.5 --name "M4 buff"
+
+# Kick a player
+python tools/a3sql-patch.py rcon kick 76561198000000001
+
+# See who's online
+python tools/a3sql-patch.py rcon players
+
+# Live-updating admin dashboard
+python tools/a3sql-webhook.py --webhook-url "https://discord.com/api/webhooks/..."
+```
+
+---
+
+## Modules
+
+A3SQL is modular — remove any PBO you don't need:
+
+| Addon | Function prefix | What it does | Remove if... |
+|-------|----------------|-------------|--------------|
+| `a3sql_main` | — | Core mod definition, version, macros | — |
+| `a3sql_database` | `a3sql_fnc_*` | SQL engine, query execution, persistence | You don't need SQL |
+| `a3sql_patch_core` | `a3sql_patch_core_fnc_*` | Dynamic patching engine, PerFrame handler | You don't use live patching |
+| `a3sql_patch_editor` | `a3sql_patch_editor_fnc_*` | In-game rule editor dialog | You manage rules via SQL |
+| `a3sql_patch_operators` | `a3sql_patch_operators_fnc_*` | Value transformer functions | You don't use custom operators |
+| `a3sql_admin` | `a3sql_admin_fnc_*` | Player tracking, admin command execution | You use built-in admin tools |
+| `a3sql_analytics` | `a3sql_analytics_fnc_*` | Perf monitoring, kill tracking, replay snapshots | You don't need analytics |
+| `a3sql_loadouts` | `a3sql_loadouts_fnc_*` | Loadout templates with faction/role CRUD | You use a different loadout system |
+| `a3sql_persistence` | `a3sql_persistence_fnc_*` | Player state save/restore on DC/JIP | Your mission handles respawn |
+| `a3sql_progression` | `a3sql_progression_fnc_*` | Rank/score tracking across sessions | You don't need persistence |
+
+---
+
+## Server Commands (RCON)
+
+Integrates with Arma 3's built-in `serverCommand` system. Commands are queued via SQL and executed by the PerFrame handler:
+
+```bash
+# Kick a player
+python tools/a3sql-patch.py rcon kick 76561198000000001 --reason "Team killing"
+
+# List available missions
+python tools/a3sql-patch.py rcon missions
+
+# Lock the server
+python tools/a3sql-patch.py rcon lock
+
+# Say something in chat
+python tools/a3sql-patch.py rcon say "Server restart in 5 minutes"
+```
+
+See the [Admin Commands](https://github.com/lErrorl404l/a3sql/wiki/Admin-Commands) wiki page for all available commands.
+
+---
+
+## For Modders
+
+### Add a3sql as a dependency
 
 ```cpp
-requiredAddons[] = {"cba_main", "a3sql_main", "a3sql_sql"};
+requiredAddons[] = {"a3sql_main", "a3sql_database"};
 ```
 
-### 2. Call from SQF
+### Execute SQL from SQF
 
 ```sqf
-private _result = ["SELECT * FROM players WHERE score > 1000"] call a3sql_fnc_execute;
+_result = ["SELECT * FROM players WHERE score > 1000"] call a3sql_fnc_selectMap;
 ```
 
-### 3. Run the standalone server
+### Example: Loading a loadout template on spawn
+
+```sqf
+if (!isNil "a3sql_loadouts_fnc_applyLoadout") then {
+    [player, "NATO", "rifleman"] call a3sql_loadouts_fnc_applyLoadout;
+};
+```
+
+See the [Module Integration Guide](https://github.com/lErrorl404l/a3sql/wiki/Module-Guide) for full documentation.
+
+---
+
+## Tools
+
+A3SQL ships with Python CLI tools (stdlib only, no dependencies):
+
+| Tool | Purpose |
+|------|---------|
+| `tools/a3sql-patch.py` | Manage patch rules, players, and admin commands over TCP |
+| `tools/a3sql-webhook.py` | Forward admin commands to Discord/Slack webhooks |
+| `tools/a3sql-sync.py` | Sync tables between a3sql servers (hub-and-spoke) |
+| `tools/sqf_validator.py` | Validate SQF file syntax |
+| `tools/sqfvmChecker.py` | Full SQF parse check with SQF-VM |
+
+---
+
+## Building from Source
 
 ```bash
-cargo run --bin a3sql-server -- --port 33307
-echo "SELECT * FROM players" | nc localhost 33307
+cargo build --release -p a3sql          # Extension binary
+hemtt build                              # Addon PBOs (10 addons)
+cargo test -p a3sql                       # 420+ tests
 ```
 
-### 4. Or connect from Python
+See the [Building wiki page](https://github.com/lErrorl404l/a3sql/wiki/Building) for cross-compilation, code signing, and CI details.
 
-```python
-import socket
-s = socket.socket()
-s.connect(("127.0.0.1", 33306))
-s.sendall(b"SELECT name, score FROM players ORDER BY score DESC LIMIT 5\n")
-print(s.recv(65536).decode())
-s.close()
-```
-
-## Documentation
-
-- [Getting Started](https://github.com/lErrorl404l/a3sql/wiki/Getting-Started) — Full worked example
-- [SQL Dialect](https://github.com/lErrorl404l/a3sql/wiki/SQL-Dialect) — Supported SQL syntax
-- [CBA Settings](https://github.com/lErrorl404l/a3sql/wiki/CBA-Settings) — Addon configuration
-- [Standalone Server](https://github.com/lErrorl404l/a3sql/wiki/Standalone-Server) — Run without Arma
-- [Plugins](https://github.com/lErrorl404l/a3sql/wiki/Plugins) — Extend with Rust/C/SQF
-- [Building](https://github.com/lErrorl404l/a3sql/wiki/Building) — Compiling from source
-- [Development Setup](https://github.com/lErrorl404l/a3sql/wiki/Development-Setup) — Dev environment guide
-
-## Building
-
-```bash
-cargo build --release -p a3sql   # extension
-hemtt build                      # addon PBOs
-cargo test -p a3sql                # 378+ tests
-```
-
-See the [Building page](https://github.com/lErrorl404l/a3sql/wiki/Building) for cross-compilation, code signing, and CI details.
-
-## Project Structure
-
-```
-a3sql/
-├── extension/           # Rust crate (cdylib + rlib)
-│   ├── Cargo.toml
-│   ├── .cargo/config.toml   # Cross-compilation linkers
-│   └── src/
-│       ├── lib.rs            # C ABI entry point (~80 lines)
-│       ├── dispatch.rs       # Command routing + SQL execution
-│       ├── server.rs         # TCP server (start_server, serve_client)
-│       ├── ffi/              # C ABI extern functions + statics
-│       ├── parser/           # SQL parser + dialect + preprocessor
-│       ├── engine/           # Core database engine
-│       │   ├── prelude.rs    # Common imports
-│       │   ├── execute.rs    # Statement dispatcher + format helpers
-│       │   ├── execute/      # select.rs (exec_select, exec_subquery)
-│       │   ├── database/     # Database struct, persistence
-│       │   ├── error.rs      # thiserror EngineError enum
-│       │   ├── functions/    # SQL functions + expression eval
-│       │   ├── index.rs      # BTree + Trigram indices
-│       │   ├── optimizer/    # OptimizerRule trait + passes
-│       │   ├── plugin.rs     # Rust/C ABI/SQF plugin system
-│       │   ├── serialize/    # JSON/CSV/Binary/SQL export/import
-│       │   ├── stmts/        # Statement executors (ddl/, select/, etc.)
-│       │   ├── table/        # Table struct, row ops, schema
-│       │   ├── test.rs       # Test helpers with fresh DB state
-│       │   ├── trigger.rs    # Trigger execution + recursion guard
-│       │   └── value.rs      # Column types, DbValue enum
-│       ├── bin/              # Standalone a3sql-server binary
-│       └── tests/            # Integration tests (abi, audit, bugs, gaps, plugins)
-├── addons/{main,sql}/   # Arma 3 addon PBOs (SQF API + CBA settings)
-├── include/             # CBA build-time headers + plugin.h
-├── tools/               # Python dev tools (UV-managed)
-├── .hemtt/              # HEMTT config + hooks
-├── .github/workflows/   # CI: test, lint, build, release, wiki-sync
-├── keys/                # BI signing keys
-├── docs/wiki/           # GitHub Wiki source (auto-synced on push to main)
-└── plugins/             # Example C ABI plugin (C source)
-```
-
-## Status
-
-| Component | Status |
-|-----------|--------|
-| **Tests** | [![Tests](https://github.com/lErrorl404l/a3sql/actions/workflows/test.yml/badge.svg)](https://github.com/lErrorl404l/a3sql/actions/workflows/test.yml) |
-| **Lint** | [![Lint](https://github.com/lErrorl404l/a3sql/actions/workflows/lint.yml/badge.svg)](https://github.com/lErrorl404l/a3sql/actions/workflows/lint.yml) |
-| **Build** | [![Build](https://github.com/lErrorl404l/a3sql/actions/workflows/build.yml/badge.svg)](https://github.com/lErrorl404l/a3sql/actions/workflows/build.yml) |
-| **CI** | [![CI](https://github.com/lErrorl404l/a3sql/actions/workflows/ci.yml/badge.svg)](https://github.com/lErrorl404l/a3sql/actions/workflows/ci.yml) |
-| **Coverage** | SQL, JOINs, CTE, window functions, triggers, FK cascade, UPSERT |
-| **Security** | Parameterized queries, TCP LOGIN |
-| **Plugins** | Rust trait, C ABI dynamic, SQF registration |
-| **License** | APL-SA — Arma Public License Share Alike |
+---
 
 ## License
 
-[Arma Public License Share Alike (APL-SA)](LICENSE) — as required by Bohemia Interactive for
-Arma 3 mods. See [LICENSE](LICENSE) for full terms.
+[Arma Public License Share Alike (APL-SA)](LICENSE) — as required by Bohemia Interactive for Arma 3 mods.
