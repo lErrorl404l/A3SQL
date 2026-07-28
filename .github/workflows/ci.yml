@@ -89,6 +89,16 @@ jobs:
     needs: [ci, build-linux-i686, build-windows-i686]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+      - name: Install HEMTT
+        uses: arma-actions/hemtt@a0570ddd80d2b7be9c0f052494c0f700b42668dd # v1
+      - name: Cache HEMTT
+        uses: actions/cache@v4
+        with:
+          path: ~/.hemtt/cache
+          key: hemtt-${{ hashFiles('.hemtt/**/*') }}
+          restore-keys: hemtt-
       - name: Install HEMTT
         uses: arma-actions/hemtt@a0570ddd80d2b7be9c0f052494c0f700b42668dd # v1
       - name: Download all artifacts
