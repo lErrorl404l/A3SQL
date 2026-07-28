@@ -1,4 +1,4 @@
-#include "..\script_component.hpp"
+#include "../script_component.hpp"
 
 params [
     ["_unit", objNull, [objNull]],
@@ -37,8 +37,8 @@ private _loadout = [
 
 _unit setUnitLoadout _loadout;
 
-if (missionNamespace getVariable ["a3sql_loadouts_debug", false]) then {
-    systemChat format ["[A3SQL Loadouts] Applied %1 / %2 to %3", _faction, _role, name _unit];
+if (["a3sql_loadouts_debug"] call CBA_fnc_getSetting) then {
+    ["A3SQL Loadouts", format ["Applied %1 / %2 to %3", _faction, _role, name _unit]] call CBA_fnc_notify;
 };
 
 [0, "OK", _loadout]

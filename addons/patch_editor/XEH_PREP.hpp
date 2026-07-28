@@ -1,3 +1,4 @@
+PREP(applyToTarget);
 PREP(gui_addRule);
 PREP(gui_deleteRule);
 PREP(gui_editRule);

@@ -1,4 +1,4 @@
-#include "..\script_component.hpp"
+#include "../script_component.hpp"
 
 params [["_unit", objNull, [objNull]], ["_killer", objNull, [objNull]], ["_instigator", objNull, [objNull]], ["_useEffects", false, [false]]];
 
@@ -31,3 +31,5 @@ private _sql = format [
     _mission
 ];
 _sql call a3sql_fnc_execute;
+
+["a3sql_kill", [_killerUID, _killerWeapon, _victimUID, _distance, _headshot]] call CBA_fnc_globalEvent;

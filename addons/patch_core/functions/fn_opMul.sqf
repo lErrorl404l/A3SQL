@@ -1,4 +1,4 @@
-#include "..\script_component.hpp"
+#include "../script_component.hpp"
 
 /*
     Multiplies a value by a numeric parameter.

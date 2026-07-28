@@ -1,4 +1,4 @@
-#include "..\script_component.hpp"
+#include "../script_component.hpp"
 
 params [
     ["_sql", "", [""]],
@@ -12,7 +12,7 @@ private _result = [_sql, _extension] call FUNC(execute);
 private _elapsed = diag_tickTime - _start;
 
 if (_elapsed > 0.01) then {
-    diag_log text format ["[A3SQL] SLOW QUERY (%1 ms): %2", round (_elapsed * 1000), _sql];
+    ["A3SQL", "SLOW QUERY (%1 ms): %2", round (_elapsed * 1000), _sql] call CBA_fnc_error;
 };
 
 _result

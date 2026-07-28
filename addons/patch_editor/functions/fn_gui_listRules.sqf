@@ -1,4 +1,4 @@
-#include "..\script_component.hpp"
+#include "../script_component.hpp"
 
 private _display = findDisplay 12300;
 if (isNull _display) exitWith {};

@@ -1,4 +1,4 @@
-#include "..\script_component.hpp"
+#include "../script_component.hpp"
 
 /*
     Rounds a numeric value to the specified decimal places.

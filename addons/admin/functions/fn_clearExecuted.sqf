@@ -1,4 +1,4 @@
-#include "..\script_component.hpp"
+#include "../script_component.hpp"
 
 "DELETE FROM server_commands WHERE status='executed'" call a3sql_fnc_execute;
 

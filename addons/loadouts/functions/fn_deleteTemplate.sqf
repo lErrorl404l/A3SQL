@@ -1,4 +1,4 @@
-#include "..\script_component.hpp"
+#include "../script_component.hpp"
 
 params [
     ["_id", 0, [0]]
@@ -10,8 +10,8 @@ private _sql = format ["DELETE FROM loadout_templates WHERE id = %1", _id];
 private _response = "a3sql" callExtension _sql;
 private _parsed = parseSimpleArray _response;
 
-if (missionNamespace getVariable ["a3sql_loadouts_debug", false] && {(count _parsed) >= 1 && {(_parsed select 0) == 0}}) then {
-    diag_log text format ["[A3SQL Loadouts] Template %1 deleted", _id];
+if (["a3sql_loadouts_debug"] call CBA_fnc_getSetting && {(count _parsed) >= 1 && {(_parsed select 0) == 0}}) then {
+    ["A3SQL Loadouts", "Template %1 deleted", _id] call CBA_fnc_info;
 };
 
 _parsed

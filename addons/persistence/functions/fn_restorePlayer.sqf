@@ -1,4 +1,4 @@
-#include "..\script_component.hpp"
+#include "../script_component.hpp"
 
 params [["_uid", "", [""]]];
 
@@ -23,7 +23,7 @@ _data params ["_unitType", "_posX", "_posY", "_posZ", "_dir", "_damage", "_loado
 // but guard against edge cases)
 private _unit = missionNamespace getVariable [format ["player_%1", _uid], objNull];
 if (isNull _unit) exitWith {
-    diag_log text format ["[A3SQL Persistence] Restore failed: player unit null for UID %1", _uid];
+    ["A3SQL Persistence", "Restore failed: player unit null for UID %1", _uid] call CBA_fnc_error;
 };
 
 // Restore loadout
@@ -65,6 +65,6 @@ if (_vehicle != "") then {
     };
 };
 
-if (missionNamespace getVariable ["a3sql_persistence_debug", false]) then {
-    systemChat format ["[A3SQL Persistence] Restored player %1", _uid];
+if (["a3sql_persistence_debug"] call CBA_fnc_getSetting) then {
+    ["A3SQL Persistence", format ["Restored player %1", _uid]] call CBA_fnc_notify;
 };
