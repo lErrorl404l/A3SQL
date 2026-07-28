@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project name="A3SQL">
+    <Package name="Progression">
+        <Key ID="STR_a3sql_progression_Category">
+            <English>A3SQL Progression</English>
+            <German>A3SQL Progression</German>
+            <French>A3SQL Progression</French>
+        </Key>
+        <Key ID="STR_a3sql_progression_Enabled_DisplayName">
+            <English>Enable Progression</English>
+            <German>Fortschritt aktivieren</German>
+            <French>Activer la progression</French>
+        </Key>
+        <Key ID="STR_a3sql_progression_Enabled_Description">
+            <English>Enable persistent rank/score tracking across sessions.</English>
+            <German>Persistente Verfolgung von Rang/Punkten über Sitzungen hinweg aktivieren.</German>
+            <French>Activer le suivi persistant du rang/score entre les sessions.</French>
+        </Key>
+        <Key ID="STR_a3sql_progression_VerboseLogging_DisplayName">
+            <English>Verbose Logging</English>
+            <German>Ausführliche Protokollierung</German>
+            <French>Journalisation détaillée</French>
+        </Key>
+        <Key ID="STR_a3sql_progression_VerboseLogging_Description">
+            <English>Enable verbose logging for progression operations.</English>
+            <German>Ausführliche Protokollierung für Fortschrittsoperationen aktivieren.</German>
+            <French>Activer la journalisation détaillée pour les opérations de progression.</French>
+        </Key>
+    </Package>
+</Project>

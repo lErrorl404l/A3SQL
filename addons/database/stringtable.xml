@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project name="A3SQL">
+    <Package name="Database">
+        <Key ID="STR_a3sql_database_Category">
+            <English>A3SQL Database</English>
+            <German>A3SQL Database</German>
+            <French>A3SQL Database</French>
+        </Key>
+        <Key ID="STR_a3sql_database_AutoLoad_DisplayName">
+            <English>Auto-Load on Mission Start</English>
+            <German>Automatisches Laden beim Missionsstart</German>
+            <French>Chargement automatique au début de mission</French>
+        </Key>
+        <Key ID="STR_a3sql_database_AutoLoad_Description">
+            <English>Restore database from file when mission starts.</English>
+            <German>Datenbank beim Missionsstart aus Datei wiederherstellen.</German>
+            <French>Restaurer la base de données depuis un fichier au début de la mission.</French>
+        </Key>
+        <Key ID="STR_a3sql_database_AutoSave_DisplayName">
+            <English>Auto-Save on Mission End</English>
+            <German>Automatisches Speichern bei Missionsende</German>
+            <French>Sauvegarde automatique à la fin de mission</French>
+        </Key>
+        <Key ID="STR_a3sql_database_AutoSave_Description">
+            <English>Save database to file when mission ends.</English>
+            <German>Datenbank bei Missionsende in Datei speichern.</German>
+            <French>Sauvegarder la base de données dans un fichier à la fin de la mission.</French>
+        </Key>
+        <Key ID="STR_a3sql_database_AutoSavePath_DisplayName">
+            <English>Auto-Save File Path</English>
+            <German>Autosave-Dateipfad</German>
+            <French>Chemin du fichier de sauvegarde automatique</French>
+        </Key>
+        <Key ID="STR_a3sql_database_AutoSavePath_Description">
+            <English>File path relative to Arma 3 directory, or absolute path.</English>
+            <German>Dateipfad relativ zum Arma-3-Verzeichnis oder absoluter Pfad.</German>
+            <French>Chemin relatif au répertoire d'Arma 3, ou chemin absolu.</French>
+        </Key>
+        <Key ID="STR_a3sql_database_ListenerBind_DisplayName">
+            <English>Listener Bind Address</English>
+            <German>Listener-Bind-Adresse</German>
+            <French>Adresse de liaison du récepteur</French>
+        </Key>
+        <Key ID="STR_a3sql_database_ListenerBind_Description">
+            <English>IP to bind to: 127.0.0.1 (localhost) or 0.0.0.0 (network).</English>
+            <German>IP, an die gebunden werden soll: 127.0.0.1 (localhost) oder 0.0.0.0 (Netzwerk).</German>
+            <French>Adresse IP de liaison : 127.0.0.1 (localhost) ou 0.0.0.0 (réseau).</French>
+        </Key>
+        <Key ID="STR_a3sql_database_ListenerEnabled_DisplayName">
+            <English>Enable TCP Listener</English>
+            <German>TCP-Listener aktivieren</German>
+            <French>Activer le récepteur TCP</French>
+        </Key>
+        <Key ID="STR_a3sql_database_ListenerEnabled_Description">
+            <English>Start TCP listener on mission start for external queries.</English>
+            <German>TCP-Listener beim Missionsstart für externe Abfragen starten.</German>
+            <French>Démarrer le récepteur TCP au début de la mission pour les requêtes externes.</French>
+        </Key>
+        <Key ID="STR_a3sql_database_ListenerPassword_DisplayName">
+            <English>Listener Password</English>
+            <German>Listener-Passwort</German>
+            <French>Mot de passe du récepteur</French>
+        </Key>
+        <Key ID="STR_a3sql_database_ListenerPassword_Description">
+            <English>Password required for TCP login. Leave empty for anonymous access.</English>
+            <German>Für TCP-Login erforderliches Passwort. Für anonymen Zugriff leer lassen.</German>
+            <French>Mot de passe requis pour la connexion TCP. Laisser vide pour un accès anonyme.</French>
+        </Key>
+        <Key ID="STR_a3sql_database_ListenerPort_DisplayName">
+            <English>Listener Port</English>
+            <German>Listener-Port</German>
+            <French>Port du récepteur</French>
+        </Key>
+        <Key ID="STR_a3sql_database_ListenerPort_Description">
+            <English>TCP port for external query listener.</English>
+            <German>TCP-Port für den externen Abfrage-Listener.</German>
+            <French>Port TCP pour le récepteur de requêtes externes.</French>
+        </Key>
+        <Key ID="STR_a3sql_database_ListenerUser_DisplayName">
+            <English>Listener Username</English>
+            <German>Listener-Benutzername</German>
+            <French>Nom d'utilisateur du récepteur</French>
+        </Key>
+        <Key ID="STR_a3sql_database_ListenerUser_Description">
+            <English>Username required for TCP login. Leave empty for anonymous access.</English>
+            <German>Für TCP-Login erforderlicher Benutzername. Für anonymen Zugriff leer lassen.</German>
+            <French>Nom d'utilisateur requis pour la connexion TCP. Laisser vide pour un accès anonyme.</French>
+        </Key>
+        <Key ID="STR_a3sql_database_LogLevel_DisplayName">
+            <English>Log Level</English>
+            <German>Protokollstufe</German>
+            <French>Niveau de journalisation</French>
+        </Key>
+        <Key ID="STR_a3sql_database_LogLevel_Description">
+            <English>Verbosity of .rpt diagnostic messages.</English>
+            <German>Ausführlichkeit der .rpt-Diagnosemeldungen.</German>
+            <French>Niveau de détail des messages de diagnostic .rpt.</French>
+        </Key>
+    </Package>
+</Project>
