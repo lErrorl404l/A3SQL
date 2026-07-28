@@ -9,7 +9,7 @@ class CfgPatches {
         name = COMPONENT_NAME;
         author = "ABE Team";
         requiredVersion = 2.02;
-        requiredAddons[] = {"a3sql_sql", "cba_xeh"};
+        requiredAddons[] = {"a3sql_database", "cba_xeh"};
         units[] = {};
         weapons[] = {};
     };
