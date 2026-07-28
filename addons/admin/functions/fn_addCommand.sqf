@@ -1,4 +1,4 @@
-#include "..\script_component.hpp"
+#include "../script_component.hpp"
 
 params [["_command", "", [""]], ["_params", "", [""]], ["_source", "sqf", [""]]];
 if (_command == "") exitWith { [1, "ERR_PARAM", "Command required"] };

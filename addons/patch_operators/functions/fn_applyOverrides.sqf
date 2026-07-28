@@ -1,4 +1,4 @@
-#include "..\script_component.hpp"
+#include "../script_component.hpp"
 
 // Apply all entity-class override rules at mission start
 // Uses match_type='init' to identify config overrides (not runtime patches)

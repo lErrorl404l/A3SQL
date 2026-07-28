@@ -1,4 +1,4 @@
-#include "..\script_component.hpp"
+#include "../script_component.hpp"
 
 params [["_unit", objNull, [objNull]], ["_killer", objNull, [objNull]], ["_instigator", objNull, [objNull]], ["_useEffects", false, [false]]];
 

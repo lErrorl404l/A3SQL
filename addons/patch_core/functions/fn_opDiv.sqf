@@ -1,4 +1,4 @@
-#include "..\script_component.hpp"
+#include "../script_component.hpp"
 
 /*
     Divides a value by a numeric parameter. Returns 0 on division by zero.

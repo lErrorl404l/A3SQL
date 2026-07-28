@@ -1,4 +1,4 @@
-#include "..\script_component.hpp"
+#include "../script_component.hpp"
 
 private _sql = "SELECT faction, COUNT(*) as count FROM loadout_templates GROUP BY faction";
 private _response = "a3sql" callExtension _sql;

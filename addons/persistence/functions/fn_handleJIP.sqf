@@ -1,4 +1,4 @@
-#include "..\script_component.hpp"
+#include "../script_component.hpp"
 
 params ["_id", "_uid", "_name", "_jip", "_owner", "_idStr"];
 

@@ -33,8 +33,10 @@ virtual_paths = [
     "P:/a3|/A3",
     "P:/x/cba|/x/cba",
     "{}|/z/a3sql".format(addon_base_path),
-    "{}|/".format(addon_base_path),  # resolve \ prefixed includes
-    "{}|".format(addon_base_path),  # resolve bare path includes
+    "{}|/".format(addon_base_path),
+    "{}|".format(addon_base_path),
+    # Backslash variants for SQF-VM on Linux
+    "{}|\\z\\a3sql".format(addon_base_path),
 ]
 
 

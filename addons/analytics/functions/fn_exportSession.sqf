@@ -1,4 +1,4 @@
-#include "..\script_component.hpp"
+#include "../script_component.hpp"
 params [["_mission", "", [""]]];
 private _sql = if (_mission == "") then {
     "SELECT * FROM replay_snapshots ORDER BY timestamp"

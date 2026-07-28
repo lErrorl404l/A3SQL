@@ -1,4 +1,4 @@
-#include "..\script_component.hpp"
+#include "../script_component.hpp"
 
 params [["_include_pending", true, [true]], ["_include_executed", true, [true]], ["_limit", 50, [0]]];
 

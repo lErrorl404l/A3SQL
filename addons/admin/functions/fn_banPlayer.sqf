@@ -1,4 +1,4 @@
-#include "..\script_component.hpp"
+#include "../script_component.hpp"
 
 params ["_uid", "_duration", "_reason"];
 if (_uid == "") exitWith { [1, "ERR_PARAM", "UID required"] };
