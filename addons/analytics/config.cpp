@@ -7,37 +7,19 @@ class CfgPatches {
         name = COMPONENT_NAME;
         author = "ABE Team";
         requiredVersion = 2.02;
-        requiredAddons[] = {"a3sql_sql", "cba_xeh"};
+        requiredAddons[] = {"a3sql_database", "cba_xeh"};
         units[] = {};
         weapons[] = {};
     };
 };
 
-class CfgEventHandlers {
-    class ADDON {
-        init = "call a3sql_analytics_fnc_init";
-    };
-};
-
-class Extended_PreInit_EventHandlers {
-    class ADDON {
-        init = "call a3sql_analytics_fnc_settings";
-    };
-};
-
-class Extended_PostInit_EventHandlers {
-    class ADDON {
-        init = "call a3sql_analytics_fnc_postInit";
-    };
-};
+#include "CfgEventHandlers.hpp"
 
 class CfgFunctions {
     class a3sql {
         class analytics {
-            file = "z\a3sql\addons\analytics";
+            file = "z\a3sql\addons\analytics\functions";
             class init {};
-            class settings {};
-            class postInit {};
             class handleKilled {};
             class handleFiredMan {};
             class flushShotBuffer {};

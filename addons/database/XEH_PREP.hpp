@@ -1,0 +1,15 @@
+PREP(dumpSQL);
+PREP(execute);
+PREP(executePrepared);
+PREP(executeTimed);
+PREP(exportCSV);
+PREP(exportJSON);
+PREP(exportSQL);
+PREP(init);
+PREP(load);
+PREP(loadJSON);
+PREP(prepare);
+PREP(save);
+PREP(selectAll);
+PREP(selectArray);
+PREP(selectMap);

@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project name="A3SQL">
+    <Package name="Analytics">
+        <Key ID="STR_a3sql_analytics_Category">
+            <English>A3SQL Analytics</English>
+            <German>A3SQL Analytics</German>
+            <French>A3SQL Analytics</French>
+        </Key>
+        <Key ID="STR_a3sql_analytics_SampleInterval_DisplayName">
+            <English>Sample Interval (s)</English>
+            <German>Abtastintervall (s)</German>
+            <French>Intervalle d'échantillonnage (s)</French>
+        </Key>
+        <Key ID="STR_a3sql_analytics_SampleInterval_Description">
+            <English>How often to sample server performance metrics.</English>
+            <German>Wie häufig Server-Leistungsmetriken erfasst werden.</German>
+            <French>À quelle fréquence échantillonner les métriques de performance du serveur.</French>
+        </Key>
+        <Key ID="STR_a3sql_analytics_Debug_DisplayName">
+            <English>Debug</English>
+            <German>Debug</German>
+            <French>Débogage</French>
+        </Key>
+        <Key ID="STR_a3sql_analytics_Debug_Description">
+            <English>Enable verbose logging.</English>
+            <German>Ausführliche Protokollierung aktivieren.</German>
+            <French>Activer la journalisation détaillée.</French>
+        </Key>
+        <Key ID="STR_a3sql_analytics_StreamOutput_DisplayName">
+            <English>Stream Output</English>
+            <German>Stream-Ausgabe</German>
+            <French>Sortie en flux</French>
+        </Key>
+        <Key ID="STR_a3sql_analytics_StreamOutput_Description">
+            <English>Show analytics notifications via systemChat.</English>
+            <German>Analytics-Benachrichtigungen über systemChat anzeigen.</German>
+            <French>Afficher les notifications d'analytique via systemChat.</French>
+        </Key>
+    </Package>
+</Project>
