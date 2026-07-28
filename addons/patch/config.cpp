@@ -45,6 +45,13 @@ class CfgFunctions {
             class listRules {};
             class deleteRule {};
             class setDirty {};
+            class opAdd {};
+            class opSub {};
+            class opMul {};
+            class opDiv {};
+            class opMod {};
+            class opCat {};
+            class opDefault {};
         };
     };
 };

@@ -154,6 +154,56 @@ private _failed  = 0;
                 };
             } catch {};
         };
+        // ── Value-transformer operators ──
+        case "inc": {
+            try {
+                private _current = _target getVariable [_property, 0];
+                _target setVariable [_property, [_current, _value] call FUNC(opAdd)];
+                _success = true;
+            } catch {};
+        };
+        case "sub": {
+            try {
+                private _current = _target getVariable [_property, 0];
+                _target setVariable [_property, [_current, _value] call FUNC(opSub)];
+                _success = true;
+            } catch {};
+        };
+        case "mul": {
+            try {
+                private _current = _target getVariable [_property, 0];
+                _target setVariable [_property, [_current, _value] call FUNC(opMul)];
+                _success = true;
+            } catch {};
+        };
+        case "div": {
+            try {
+                private _current = _target getVariable [_property, 0];
+                _target setVariable [_property, [_current, _value] call FUNC(opDiv)];
+                _success = true;
+            } catch {};
+        };
+        case "mod": {
+            try {
+                private _current = _target getVariable [_property, 0];
+                _target setVariable [_property, [_current, _value] call FUNC(opMod)];
+                _success = true;
+            } catch {};
+        };
+        case "cat": {
+            try {
+                private _current = _target getVariable [_property, ""];
+                _target setVariable [_property, [_current, _value] call FUNC(opCat)];
+                _success = true;
+            } catch {};
+        };
+        case "default": {
+            try {
+                private _current = _target getVariable [_property];
+                _target setVariable [_property, [_current, _value] call FUNC(opDefault)];
+                _success = true;
+            } catch {};
+        };
     };
 
     if (_success) then {
