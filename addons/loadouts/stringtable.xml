@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project name="A3SQL">
+    <Package name="Loadouts">
+        <Key ID="STR_a3sql_loadouts_setting_debug">
+            <Original>Debug Mode</Original>
+            <English>Debug Mode</English>
+        </Key>
+        <Key ID="STR_a3sql_loadouts_setting_debug_desc">
+            <Original>Enable debug output for loadout operations.</Original>
+            <English>Enable debug output for loadout operations.</English>
+        </Key>
+    </Package>
+</Project>

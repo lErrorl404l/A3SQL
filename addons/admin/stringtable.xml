@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project name="A3SQL">
+    <Package name="Admin">
+        <Key ID="STR_a3sql_admin_setting_enabled">
+            <Original>Enable Admin Module</Original>
+            <English>Enable Admin Module</English>
+        </Key>
+        <Key ID="STR_a3sql_admin_setting_enabled_desc">
+            <Original>Enable server command execution via SQL queue.</Original>
+            <English>Enable server command execution via SQL queue.</English>
+        </Key>
+        <Key ID="STR_a3sql_admin_setting_log_level">
+            <Original>Log Level</Original>
+            <English>Log Level</English>
+        </Key>
+        <Key ID="STR_a3sql_admin_setting_log_level_desc">
+            <Original>Verbosity of .rpt diagnostic messages for admin commands.</Original>
+            <English>Verbosity of .rpt diagnostic messages for admin commands.</English>
+        </Key>
+    </Package>
+</Project>

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project name="A3SQL">
+    <Package name="Persistence">
+        <Key ID="STR_a3sql_persistence_setting_debug">
+            <Original>Debug</Original>
+            <English>Debug</English>
+        </Key>
+        <Key ID="STR_a3sql_persistence_setting_debug_desc">
+            <Original>Enable verbose logging and systemChat for restore operations.</Original>
+            <English>Enable verbose logging and systemChat for restore operations.</English>
+        </Key>
+        <Key ID="STR_a3sql_persistence_setting_enabled">
+            <Original>Enable Persistence</Original>
+            <English>Enable Persistence</English>
+        </Key>
+        <Key ID="STR_a3sql_persistence_setting_enabled_desc">
+            <Original>Enable player state persistence on disconnect/join.</Original>
+            <English>Enable player state persistence on disconnect/join.</English>
+        </Key>
+        <Key ID="STR_a3sql_persistence_setting_restore_on_jip">
+            <Original>Restore on JIP</Original>
+            <English>Restore on JIP</English>
+        </Key>
+        <Key ID="STR_a3sql_persistence_setting_restore_on_jip_desc">
+            <Original>Restore player state when they JIP back into the mission.</Original>
+            <English>Restore player state when they JIP back into the mission.</English>
+        </Key>
+    </Package>
+</Project>

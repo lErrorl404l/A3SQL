@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project name="A3SQL">
+    <Package name="Patch">
+        <Key ID="STR_a3sql_patch_setting_allow_sqf_exec">
+            <Original>Allow SQF Exec Operator</Original>
+            <English>Allow SQF Exec Operator</English>
+        </Key>
+        <Key ID="STR_a3sql_patch_setting_allow_sqf_exec_desc">
+            <Original>WARNING: Enables arbitrary SQF execution via sqf_exec operator. RCE risk.</Original>
+            <English>WARNING: Enables arbitrary SQF execution via sqf_exec operator. RCE risk.</English>
+        </Key>
+        <Key ID="STR_a3sql_patch_setting_check_interval_hz">
+            <Original>Check Interval (Hz)</Original>
+            <English>Check Interval (Hz)</English>
+        </Key>
+        <Key ID="STR_a3sql_patch_setting_check_interval_hz_desc">
+            <Original>How often PerFrame handler checks for new patch rules. 0 = every frame.</Original>
+            <English>How often PerFrame handler checks for new patch rules. 0 = every frame.</English>
+        </Key>
+        <Key ID="STR_a3sql_patch_setting_enabled">
+            <Original>Enable Patching</Original>
+            <English>Enable Patching</English>
+        </Key>
+        <Key ID="STR_a3sql_patch_setting_enabled_desc">
+            <Original>Enable dynamic patching system.</Original>
+            <English>Enable dynamic patching system.</English>
+        </Key>
+        <Key ID="STR_a3sql_patch_setting_log_level">
+            <Original>Log Level</Original>
+            <English>Log Level</English>
+        </Key>
+        <Key ID="STR_a3sql_patch_setting_log_level_desc">
+            <Original>Verbosity of .rpt diagnostic messages for patching.</Original>
+            <English>Verbosity of .rpt diagnostic messages for patching.</English>
+        </Key>
+        <Key ID="STR_a3sql_patch_setting_stream_output">
+            <Original>Stream Output</Original>
+            <English>Stream Output</English>
+        </Key>
+        <Key ID="STR_a3sql_patch_setting_stream_output_desc">
+            <Original>Show systemChat messages for each rule applied in real-time.</Original>
+            <English>Show systemChat messages for each rule applied in real-time.</English>
+        </Key>
+    </Package>
+</Project>

@@ -1,31 +1,31 @@
 #include "script_component.hpp"
 
 ["a3sql_patch_enabled", "CHECKBOX",
-    ["Enable Patching", "Enable dynamic patching system."],
+    [["STR_a3sql_patch_setting_enabled", "STR_a3sql_patch_setting_enabled_desc"]],
     "A3SQL Patch", true, false
 ] call CBA_fnc_addSetting;
 
 ["a3sql_patch_log_level", "LIST",
-    ["Log Level", "Verbosity of .rpt diagnostic messages for patching."],
+    [["STR_a3sql_patch_setting_log_level", "STR_a3sql_patch_setting_log_level_desc"]],
     "A3SQL Patch",
     [[0, 1, 2, 3], ["ERROR", "WARN", "INFO", "DEBUG"], 2],
     false
 ] call CBA_fnc_addSetting;
 
 ["a3sql_patch_check_interval_hz", "SLIDER",
-    ["Check Interval (Hz)", "How often PerFrame handler checks for new patch rules. 0 = every frame."],
+    [["STR_a3sql_patch_setting_check_interval_hz", "STR_a3sql_patch_setting_check_interval_hz_desc"]],
     "A3SQL Patch",
     [0, 20, 5, 0],
     false
 ] call CBA_fnc_addSetting;
 
 ["a3sql_patch_allow_sqf_exec", "CHECKBOX",
-    ["Allow SQF Exec Operator", "WARNING: Enables arbitrary SQF execution via sqf_exec operator. RCE risk."],
+    [["STR_a3sql_patch_setting_allow_sqf_exec", "STR_a3sql_patch_setting_allow_sqf_exec_desc"]],
     "A3SQL Patch", false, false
 ] call CBA_fnc_addSetting;
 
 ["a3sql_patch_stream_output", "CHECKBOX",
-    ["Stream Output", "Show systemChat messages for each rule applied in real-time."],
+    [["STR_a3sql_patch_setting_stream_output", "STR_a3sql_patch_setting_stream_output_desc"]],
     "A3SQL Patch", false, false
 ] call CBA_fnc_addSetting;
 

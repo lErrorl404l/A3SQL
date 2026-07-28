@@ -1,49 +1,49 @@
 #include "script_component.hpp"
 
 ["a3sql_listener_enabled", "CHECKBOX",
-    ["Enable TCP Listener", "Start TCP listener on mission start for external queries."],
+    [["STR_a3sql_sql_setting_listener_enabled", "STR_a3sql_sql_setting_listener_enabled_desc"]],
     "A3SQL", true, false
 ] call CBA_fnc_addSetting;
 
 ["a3sql_listener_port", "EDIT",
-    ["Listener Port", "TCP port for external query listener."],
+    [["STR_a3sql_sql_setting_listener_port", "STR_a3sql_sql_setting_listener_port_desc"]],
     "A3SQL", "33306", false
 ] call CBA_fnc_addSetting;
 
 ["a3sql_listener_bind", "EDIT",
-    ["Listener Bind Address", "IP to bind to: 127.0.0.1 (localhost) or 0.0.0.0 (network)."],
+    [["STR_a3sql_sql_setting_listener_bind", "STR_a3sql_sql_setting_listener_bind_desc"]],
     "A3SQL", "127.0.0.1", false
 ] call CBA_fnc_addSetting;
 
 ["a3sql_auto_save", "CHECKBOX",
-    ["Auto-Save on Mission End", "Save database to file when mission ends."],
+    [["STR_a3sql_sql_setting_auto_save", "STR_a3sql_sql_setting_auto_save_desc"]],
     "A3SQL", false, false
 ] call CBA_fnc_addSetting;
 
 ["a3sql_auto_load", "CHECKBOX",
-    ["Auto-Load on Mission Start", "Restore database from file when mission starts."],
+    [["STR_a3sql_sql_setting_auto_load", "STR_a3sql_sql_setting_auto_load_desc"]],
     "A3SQL", false, false
 ] call CBA_fnc_addSetting;
 
 ["a3sql_auto_save_path", "EDIT",
-    ["Auto-Save File Path", "File path relative to Arma 3 directory, or absolute path."],
+    [["STR_a3sql_sql_setting_auto_save_path", "STR_a3sql_sql_setting_auto_save_path_desc"]],
     "A3SQL", "a3sql_autosave.bin", false
 ] call CBA_fnc_addSetting;
 
 ["a3sql_log_level", "LIST",
-    ["Log Level", "Verbosity of .rpt diagnostic messages."],
+    [["STR_a3sql_sql_setting_log_level", "STR_a3sql_sql_setting_log_level_desc"]],
     "A3SQL",
     [[0, 1, 2, 3], ["ERROR", "WARN", "INFO", "DEBUG"], 2],
     false
 ] call CBA_fnc_addSetting;
 
 ["a3sql_listener_user", "EDIT",
-    ["Listener Username", "Username required for TCP login. Leave empty for anonymous access."],
+    [["STR_a3sql_sql_setting_listener_user", "STR_a3sql_sql_setting_listener_user_desc"]],
     "A3SQL", "", false
 ] call CBA_fnc_addSetting;
 
 ["a3sql_listener_password", "EDIT",
-    ["Listener Password", "Password required for TCP login. Leave empty for anonymous access."],
+    [["STR_a3sql_sql_setting_listener_password", "STR_a3sql_sql_setting_listener_password_desc"]],
     "A3SQL", "", false
 ] call CBA_fnc_addSetting;
 

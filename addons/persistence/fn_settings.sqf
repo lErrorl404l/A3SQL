@@ -1,16 +1,16 @@
 #include "script_component.hpp"
 
 ["a3sql_persistence_enabled", "CHECKBOX",
-    ["Enable Persistence", "Enable player state persistence on disconnect/join."],
+    [["STR_a3sql_persistence_setting_enabled", "STR_a3sql_persistence_setting_enabled_desc"]],
     "A3SQL Persistence", true, false
 ] call CBA_fnc_addSetting;
 
 ["a3sql_persistence_restore_on_jip", "CHECKBOX",
-    ["Restore on JIP", "Restore player state when they JIP back into the mission."],
+    [["STR_a3sql_persistence_setting_restore_on_jip", "STR_a3sql_persistence_setting_restore_on_jip_desc"]],
     "A3SQL Persistence", true, false
 ] call CBA_fnc_addSetting;
 
 ["a3sql_persistence_debug", "CHECKBOX",
-    ["Debug", "Enable verbose logging and systemChat for restore operations."],
+    [["STR_a3sql_persistence_setting_debug", "STR_a3sql_persistence_setting_debug_desc"]],
     "A3SQL Persistence", false, false
 ] call CBA_fnc_addSetting;
