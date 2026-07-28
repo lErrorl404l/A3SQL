@@ -23,3 +23,12 @@
     ["Allow SQF Exec Operator", "WARNING: Enables arbitrary SQF execution via sqf_exec operator. RCE risk."],
     "A3SQL Patch", false, false
 ] call CBA_fnc_addSetting;
+
+// ── Keybinding ────────────────────────────────────────────────────
+["a3sql_patch_editor_key", "EDITOR",
+    ["Open Patch Editor", "Open the dynamic patch rule editor dialog."],
+    "A3SQL Patch",
+    { call a3sql_patch_fnc_openEditor; },
+    {},
+    []
+] call CBA_fnc_addKeybind;

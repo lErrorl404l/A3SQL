@@ -11,6 +11,13 @@ if (_log_level >= 2) then {
     diag_log text format ["[A3SQL Patch] Table init: %1", _result];
 };
 
+// ── Auto-create patch_presets table ───────────────────────────────
+private _createPresets = "CREATE TABLE IF NOT EXISTS patch_presets (id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL, data TEXT NOT NULL, created_at TEXT DEFAULT '')";
+private _presetResult = _extension callExtension _createPresets;
+if (_log_level >= 2) then {
+    diag_log text format ["[A3SQL Patch] Presets table init: %1", _presetResult];
+};
+
 // ── PerFrame handler ───────────────────────────────────────────────
 if (_enabled) then {
     private _interval = missionNamespace getVariable ["a3sql_patch_check_interval_hz", 5];
