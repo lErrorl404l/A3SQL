@@ -26,5 +26,3 @@
 #else
     #define COMPONENT_NAME QUOTE(A3SQL - COMPONENT_BEAUTIFIED)
 #endif
-
-#include "\x\cba\addons\main\script_mod.hpp"
