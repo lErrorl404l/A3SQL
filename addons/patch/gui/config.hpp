@@ -67,7 +67,7 @@ class a3sql_patch_editor {
             x = 0.15;
             y = 0.15;
             w = 0.7;
-            h = 0.72;
+            h = 0.78;
             colorBackground[] = {0.1, 0.1, 0.12, 0.95};
         };
 
@@ -89,10 +89,10 @@ class a3sql_patch_editor {
         // ── Rule List ────────────────────────────────────────────────
         class RuleList: RscListBox_custom {
             idc = 100;
-            x = 0.02;
-            y = 0.09;
-            w = 0.04;
-            h = 0.55;
+            x = 0.16;
+            y = 0.22;
+            w = 0.68;
+            h = 0.35;
             onLBSelChanged = "_this call a3sql_patch_fnc_gui_editRule";
         };
 
@@ -183,6 +183,42 @@ class a3sql_patch_editor {
             x = 0.44;
             y = 0.72;
             w = 0.35;
+            h = 0.04;
+        };
+
+        // ── Group Name ────────────────────────────────────────────────
+        class GroupLabel: RscText_custom {
+            idc = -1;
+            text = "Group:";
+            x = 0.02;
+            y = 0.755;
+            w = 0.07;
+            h = 0.04;
+            colorText[] = {0.8, 0.8, 0.8, 1};
+        };
+        class GroupEdit: RscEdit_custom {
+            idc = 208;
+            x = 0.1;
+            y = 0.755;
+            w = 0.2;
+            h = 0.04;
+        };
+
+        // ── Notes ─────────────────────────────────────────────────────
+        class NotesLabel: RscText_custom {
+            idc = -1;
+            text = "Notes:";
+            x = 0.35;
+            y = 0.755;
+            w = 0.06;
+            h = 0.04;
+            colorText[] = {0.8, 0.8, 0.8, 1};
+        };
+        class NotesEdit: RscEdit_custom {
+            idc = 209;
+            x = 0.42;
+            y = 0.755;
+            w = 0.37;
             h = 0.04;
         };
 

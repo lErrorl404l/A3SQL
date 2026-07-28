@@ -850,3 +850,108 @@ _rule = (["mbt_fuel_boost"] call a3sql_patch_fnc_listRules);
   intentional for visual patches (textures, materials) but can cause
   side-effects if your handler is not idempotent (e.g. stacking event
   handlers or incrementing values).
+
+---
+
+## Remote CLI Client (`tools/a3sql-patch.py`)
+
+A Python 3 script for managing patch rules from outside the game via the TCP listener.
+
+### Requirements
+- Python 3.10+ (stdlib only — no pip dependencies)
+- TCP listener running on the target Arma 3 server (default port 33306)
+
+### Usage
+```
+python tools/a3sql-patch.py [--host HOST] [--port PORT] [--user USER] [--password PASS] <command> [args]
+```
+
+### Commands
+
+| Command | Description |
+|---------|-------------|
+| `list` | List all patch rules |
+| `get <id>` | Show details for a single rule |
+| `add <target_type> <property> <value>` | Add a new rule |
+| `update <id> [--name ...] [--value ...]` | Update rule fields |
+| `delete <id>` | Delete a rule |
+| `group <name>` | List rules in a group |
+| `group-activate <name>` | Activate a rule group |
+| `group-deactivate <name>` | Deactivate a rule group |
+| `presets` | List saved presets |
+| `save-preset <name>` | Save current rules as a preset |
+| `load-preset <name>` | Load rules from a preset |
+| `delete-preset <name>` | Delete a preset |
+| `query <sql>` | Execute arbitrary SQL |
+| `watch` | Stream rule changes live (poll every 2s) |
+| `version` | Print client + server version |
+
+### Examples
+```bash
+# List rules
+python tools/a3sql-patch.py list
+
+# Add a rule with full control
+python tools/a3sql-patch.py add weapon reloadTime 2.5 --name "M4 buff" --operator set --priority 10 --group balance
+
+# Watch changes in real-time
+python tools/a3sql-patch.py watch
+
+# Execute custom query
+python tools/a3sql-patch.py query "SELECT COUNT(*) FROM patch_rules"
+
+# JSON output for scripting
+python tools/a3sql-patch.py --json list
+
+# Remote server with auth
+python tools/a3sql-patch.py --host 192.168.1.100 --user admin --password mypass list
+```
+
+## Rule Groups
+
+Rules can be organized into named groups for batch activation/deactivation. Groups are stored in the `group_name` column of the `patch_rules` table.
+
+### SQF Functions
+
+| Function | Description |
+|----------|-------------|
+| `a3sql_patch_fnc_applyGroup` | Apply all active rules in a group by name |
+| `a3sql_patch_fnc_activateGroup` | Activate a group and apply its rules |
+| `a3sql_patch_fnc_deactivateGroup` | Deactivate all rules in a group |
+
+### Example
+```sqf
+["balance"] call a3sql_patch_fnc_activateGroup;
+["balance"] call a3sql_patch_fnc_deactivateGroup;
+["balance"] call a3sql_patch_fnc_applyGroup;
+```
+
+## Real-time Streaming
+
+When debugging, enable live patch notifications to see each rule application as it happens:
+
+1. Open CBA Settings → A3SQL Patch → **Stream Output** → Enable
+2. Every rule application will emit a `systemChat` message showing the rule ID, target type, property, and value
+3. Configure via `a3sql_patch_stream_output` CBA setting
+
+## Rule Validation
+
+Rules inserted via the in-game editor or SQL are validated before acceptance:
+
+| Field | Validation |
+|-------|-----------|
+| `target_type` | Must be `weapon`, `vehicle`, `magazine`, `unit`, `texture`, `material`, `entity`, or a registered custom type |
+| `property` | Must be non-empty |
+| `operator` | Must be one of: `set`, `inc`, `sub`, `mul`, `div`, `mod`, `cat`, `default`, `round`, `clamp`, `negate`, `replace`, `format`, `sqf_exec` |
+| `value` | Must be non-empty |
+
+Validation errors are shown via `systemChat` when using the in-game editor. Invalid rules are skipped (with a warning in RPT) during application.
+
+## Auto-Save/Load
+
+The patch system automatically persists rules across mission restarts:
+
+- **On mission end**: `patch_rules` table is saved to binary file via `save patch_rules`
+- **On mission start**: Saved rules are restored via `load patch_rules` and automatically re-applied
+
+This ensures your patch rules survive between sessions without manual re-insertion.
