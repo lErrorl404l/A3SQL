@@ -14,11 +14,4 @@ class CfgPatches {
 
 #include "CfgEventHandlers.hpp"
 
-class CfgFunctions {
-    class a3sql {
-        class loadouts {
-            file = "z\a3sql\addons\loadouts\functions";
-            class init {};
-            class createtemplate {};            class gettemplate {};            class listtemplates {};            class listbyfaction {};            class deletetemplate {};            class applyloadout {};        };
-    };
-};
+#include "CfgFunctions.hpp"

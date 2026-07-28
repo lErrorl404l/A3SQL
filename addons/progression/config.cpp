@@ -14,11 +14,4 @@ class CfgPatches {
 
 #include "CfgEventHandlers.hpp"
 
-class CfgFunctions {
-    class a3sql {
-        class progression {
-            file = "z\a3sql\addons\progression\functions";
-            class init {};
-            class getprogression {};            class updaterank {};            class gethighestrank {};            class processmissionend {};            class querystats {};        };
-    };
-};
+#include "CfgFunctions.hpp"

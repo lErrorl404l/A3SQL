@@ -14,11 +14,4 @@ class CfgPatches {
 
 #include "CfgEventHandlers.hpp"
 
-class CfgFunctions {
-    class a3sql {
-        class persistence {
-            file = "z\a3sql\addons\persistence\functions";
-            class init {};
-            class saveplayer {};            class restoreplayer {};            class handledisconnect {};            class handlejip {};        };
-    };
-};
+#include "CfgFunctions.hpp"

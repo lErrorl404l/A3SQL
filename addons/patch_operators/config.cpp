@@ -14,10 +14,4 @@ class CfgPatches {
 
 #include "CfgEventHandlers.hpp"
 
-class CfgFunctions {
-    class a3sql {
-        class patch_operators {
-            file = "z\a3sql\addons\patch_operators\functions";
-            class applyoverrides {};            class registeroverride {};            class listoverrides {};        };
-    };
-};
+#include "CfgFunctions.hpp"

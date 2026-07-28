@@ -12,11 +12,4 @@ class CfgPatches {
 
 #include "CfgEventHandlers.hpp"
 
-class CfgFunctions {
-    class a3sql {
-        class analytics {
-            file = "z\a3sql\addons\analytics\functions";
-            class init {};
-            class handlekilled {};            class handlefiredman {};            class flushshotbuffer {};            class exportanalytics {};            class querykills {};            class takesnapshot {};            class exportsession {};            class getsnapshotcount {};        };
-    };
-};
+#include "CfgFunctions.hpp"

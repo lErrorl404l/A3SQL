@@ -14,11 +14,4 @@ class CfgPatches {
 
 #include "CfgEventHandlers.hpp"
 
-class CfgFunctions {
-            class a3sql {
-        class admin {
-            file = "z\a3sql\addons\admin\functions";
-            class init {};
-            class executecommand {};            class addcommand {};            class listcommands {};            class clearexecuted {};            class listplayers {};            class getplayer {};            class kickplayer {};            class banplayer {};        };
-    };
-};
+#include "CfgFunctions.hpp"

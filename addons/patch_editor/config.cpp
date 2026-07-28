@@ -14,13 +14,7 @@ class CfgPatches {
 
 #include "CfgEventHandlers.hpp"
 
-class CfgFunctions {
-    class a3sql {
-        class patch_editor {
-            file = "z\a3sql\addons\patch_editor\functions";
-            class openeditor {};            class gui_addrule {};            class gui_editrule {};            class gui_deleterule {};            class gui_listrules {};            class gui_savepreset {};            class gui_loadpreset {};            class validaterule {};        };
-    };
-};
+#include "CfgFunctions.hpp"
 
 // Include dialog definition
 #include "ui\config.hpp"
