@@ -62,4 +62,4 @@ class CfgFunctions {
 };
 
 // Include dialog definition
-#include "gui\config.hpp"
+#include "ui\config.hpp"
