@@ -18,20 +18,6 @@ class CfgFunctions {
         class a3sql {
             file = "z\a3sql\addons\database\functions";
             class init {};
-            class execute {};
-            class loadJSON {};
-            class dumpSQL {};
-            class exportJSON {};
-            class exportCSV {};
-            class exportSQL {};
-            class save {};
-            class load {};
-            class executePrepared {};
-            class executeTimed {};
-            class prepare {};
-            class selectAll {};
-            class selectArray {};
-            class selectMap {};
-        };
+            class execute {};            class loadjson {};            class dumpsql {};            class exportjson {};            class exportcsv {};            class exportsql {};            class save {};            class load {};            class executeprepared {};            class executetimed {};            class prepare {};            class selectall {};            class selectarray {};            class selectmap {};        };
     };
 };

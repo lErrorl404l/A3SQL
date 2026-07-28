@@ -19,10 +19,6 @@ class CfgFunctions {
         class persistence {
             file = "z\a3sql\addons\persistence\functions";
             class init {};
-            class savePlayer {};
-            class restorePlayer {};
-            class handleDisconnect {};
-            class handleJIP {};
-        };
+            class saveplayer {};            class restoreplayer {};            class handledisconnect {};            class handlejip {};        };
     };
 };

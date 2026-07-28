@@ -17,14 +17,6 @@ class CfgFunctions {
         class analytics {
             file = "z\a3sql\addons\analytics\functions";
             class init {};
-            class handleKilled {};
-            class handleFiredMan {};
-            class flushShotBuffer {};
-            class exportAnalytics {};
-            class queryKills {};
-            class takeSnapshot {};
-            class exportSession {};
-            class getSnapshotCount {};
-        };
+            class handlekilled {};            class handlefiredman {};            class flushshotbuffer {};            class exportanalytics {};            class querykills {};            class takesnapshot {};            class exportsession {};            class getsnapshotcount {};        };
     };
 };

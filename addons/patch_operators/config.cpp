@@ -18,9 +18,6 @@ class CfgFunctions {
     class a3sql {
         class patch_operators {
             file = "z\a3sql\addons\patch_operators\functions";
-            class applyOverrides {};
-            class registerOverride {};
-            class listOverrides {};
-        };
+            class applyoverrides {};            class registeroverride {};            class listoverrides {};        };
     };
 };

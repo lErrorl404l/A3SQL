@@ -19,14 +19,6 @@ class CfgFunctions {
         class admin {
             file = "z\a3sql\addons\admin\functions";
             class init {};
-            class executeCommand {};
-            class addCommand {};
-            class listCommands {};
-            class clearExecuted {};
-            class listPlayers {};
-            class getPlayer {};
-            class kickPlayer {};
-            class banPlayer {};
-        };
+            class executecommand {};            class addcommand {};            class listcommands {};            class clearexecuted {};            class listplayers {};            class getplayer {};            class kickplayer {};            class banplayer {};        };
     };
 };

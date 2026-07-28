@@ -19,11 +19,6 @@ class CfgFunctions {
         class progression {
             file = "z\a3sql\addons\progression\functions";
             class init {};
-            class getProgression {};
-            class updateRank {};
-            class getHighestRank {};
-            class processMissionEnd {};
-            class queryStats {};
-        };
+            class getprogression {};            class updaterank {};            class gethighestrank {};            class processmissionend {};            class querystats {};        };
     };
 };

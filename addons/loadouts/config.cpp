@@ -19,12 +19,6 @@ class CfgFunctions {
         class loadouts {
             file = "z\a3sql\addons\loadouts\functions";
             class init {};
-            class createTemplate {};
-            class getTemplate {};
-            class listTemplates {};
-            class listByFaction {};
-            class deleteTemplate {};
-            class applyLoadout {};
-        };
+            class createtemplate {};            class gettemplate {};            class listtemplates {};            class listbyfaction {};            class deletetemplate {};            class applyloadout {};        };
     };
 };

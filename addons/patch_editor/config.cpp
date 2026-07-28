@@ -18,15 +18,7 @@ class CfgFunctions {
     class a3sql {
         class patch_editor {
             file = "z\a3sql\addons\patch_editor\functions";
-            class openEditor {};
-            class gui_addRule {};
-            class gui_editRule {};
-            class gui_deleteRule {};
-            class gui_listRules {};
-            class gui_savePreset {};
-            class gui_loadPreset {};
-            class validateRule {};
-        };
+            class openeditor {};            class gui_addrule {};            class gui_editrule {};            class gui_deleterule {};            class gui_listrules {};            class gui_savepreset {};            class gui_loadpreset {};            class validaterule {};        };
     };
 };
 
