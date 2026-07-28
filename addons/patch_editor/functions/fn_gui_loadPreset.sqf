@@ -7,7 +7,7 @@ if (isNull _display) exitWith {};
 private _presets = ["SELECT name, id FROM patch_presets ORDER BY id ASC"] call a3sql_fnc_selectMap;
 
 if (_presets isEqualTo []) exitWith {
-    systemChat "[A3SQL Patch] No saved presets found";
+    ["A3SQL Patch", "No saved presets found"] call CBA_fnc_notify;
 };
 
 // Use the name field as preset name input, or show list if empty
@@ -17,29 +17,29 @@ if (_presetName isEqualTo "") then {
     // Show available presets
     private _names = _presets apply { _x getOrDefault ["name", "?"] };
     private _msg = "Available presets:\n\n" + (_names joinString "\n") + "\n\nType a preset name in the Name field and click Load Preset again.";
-    systemChat "[A3SQL Patch] Type a preset name in the Name field, then click Load Preset";
+    ["A3SQL Patch", "Type a preset name in the Name field, then click Load Preset"] call CBA_fnc_notify;
     hint _msg;
 } else {
     // Find the preset
     private _match = _presets select { (_x getOrDefault ["name", ""]) == _presetName };
     if (_match isEqualTo []) exitWith {
-        systemChat format ["[A3SQL Patch] Preset '%1' not found", _presetName];
+        ["A3SQL Patch", format ["Preset '%1' not found", _presetName]] call CBA_fnc_notify;
     };
 
     private _row = [format ["SELECT data FROM patch_presets WHERE name = '%1'", _presetName]] call a3sql_fnc_selectMap;
     if (_row isEqualTo []) exitWith {
-        systemChat format ["[A3SQL Patch] Could not load preset '%1'", _presetName];
+        ["A3SQL Patch", format ["Could not load preset '%1'", _presetName]] call CBA_fnc_notify;
     };
 
     private _data = (_row select 0) getOrDefault ["data", ""];
     if (_data isEqualTo "") exitWith {
-        systemChat format ["[A3SQL Patch] Preset '%1' is empty", _presetName];
+        ["A3SQL Patch", format ["Preset '%1' is empty", _presetName]] call CBA_fnc_notify;
     };
 
     // Parse the preset data (stored as SQF array serialization)
     private _rules = call compile _data;
     if !(_rules isEqualType []) exitWith {
-        systemChat "[A3SQL Patch] Invalid preset data format";
+        ["A3SQL Patch", "Invalid preset data format"] call CBA_fnc_notify;
     };
 
     // Delete all existing rules
@@ -73,7 +73,7 @@ if (_presetName isEqualTo "") then {
     call FUNC(gui_listRules);
     [true] call a3sql_patch_core_fnc_setDirty;
 
-    systemChat format ["[A3SQL Patch] Preset '%1' loaded (%2 rules)", _presetName, _inserted];
+    ["A3SQL Patch", format ["Preset '%1' loaded (%2 rules)", _presetName, _inserted]] call CBA_fnc_notify;
 };
 
 true

@@ -5,12 +5,12 @@ params [
 ];
 
 if (isNull _target) exitWith {
-    systemChat "[A3SQL Patch] No target object under crosshair";
+    ["A3SQL Patch", "No target object under crosshair"] call CBA_fnc_notify;
 };
 
 // Fire event so all matching rules apply to this target type
 ["a3sql_patch_applied_from_menu", [typeOf _target]] call CBA_fnc_serverEvent;
 
-systemChat format ["[A3SQL Patch] Rules applied to %1", typeOf _target];
+["A3SQL Patch", format ["Rules applied to %1", typeOf _target]] call CBA_fnc_notify;
 
 [0, "OK", typeOf _target]

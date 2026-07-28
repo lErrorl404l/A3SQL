@@ -170,7 +170,7 @@ private _failed  = 0;
         case "sqf_exec": {
             if !(["a3sql_patch_allow_sqf_exec"] call CBA_fnc_getSetting) then {
                 if (["a3sql_patch_log_level"] call CBA_fnc_getSetting >= 3) then {
-                    diag_log text "[A3SQL Patch] sqf_exec blocked — a3sql_patch_allow_sqf_exec is disabled";
+                    ["A3SQL Patch", "sqf_exec blocked — a3sql_patch_allow_sqf_exec is disabled"] call CBA_fnc_error;
                 };
             } else {
                 try {

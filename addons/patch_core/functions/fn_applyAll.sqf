@@ -46,30 +46,30 @@ while {true} do {
 
         // ── Stream output (real-time) ───────────────────────────────
         if (["a3sql_patch_stream_output"] call CBA_fnc_getSetting) then {
-            systemChat format ["[A3SQL Patch] Applying rule %1 (%2 — %3 %4 %5)",
+            ["A3SQL Patch", format ["Applying rule %1 (%2 — %3 %4 %5)",
                 _ruleId,
                 _rule getOrDefault ["name", ""],
                 _rule getOrDefault ["target_type", ""],
                 _rule getOrDefault ["property", ""],
                 _rule getOrDefault ["operator", "set"]
-            ];
+            ]] call CBA_fnc_notify;
         };
 
         try {
             private _result = [_rule, _extension] call FUNC(applyRule);
             if ((_result select 0) == 0) then {
                 _applied = _applied + 1;
-                ["a3sql_patch_applied", [_ruleId, _rule getOrDefault ["target_type", ""], _rule getOrDefault ["property", ""], _rule getOrDefault ["value", ""]]] call CBA_fnc_serverEvent;
+                ["a3sql_patch_applied", [_ruleId, _rule getOrDefault ["target_type", ""], _rule getOrDefault ["property", ""], _rule getOrDefault ["value", ""]]] call CBA_fnc_globalEvent;
             } else {
                 _errors = _errors + 1;
                 if (_log_level >= 3) then {
-                    diag_log text format ["[A3SQL Patch] Rule %1 error: %2", _ruleId, _result select 2];
+                    ["A3SQL Patch", "Rule %1 error: %2", _ruleId, _result select 2] call CBA_fnc_error;
                 };
             };
         } catch {
             _errors = _errors + 1;
             if (_log_level >= 3) then {
-                diag_log text format ["[A3SQL Patch] Rule %1 exception: %2", _ruleId, _exception];
+                ["A3SQL Patch", "Rule %1 exception: %2", _ruleId, _exception] call CBA_fnc_error;
             };
         };
     } forEach _rows;
@@ -78,7 +78,7 @@ while {true} do {
 };
 
 if (_log_level >= 3) then {
-    diag_log text format ["[A3SQL Patch] applyAll: %1 applied, %2 errors", _applied, _errors];
+    ["A3SQL Patch", "applyAll: %1 applied, %2 errors", _applied, _errors] call CBA_fnc_info;
 };
 
 [0, "OK", [_applied, _errors]]

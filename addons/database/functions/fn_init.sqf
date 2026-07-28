@@ -6,7 +6,7 @@ private _version = _extension callExtension "version";
 private _log_level = ["a3sql_log_level"] call CBA_fnc_getSetting;
 
 if (_log_level >= 2) then {
-    diag_log text format ["[A3SQL] %1", _version];
+    ["A3SQL", "%1", _version] call CBA_fnc_info;
 };
 
 // Pass credentials to Rust extension for TCP auth (does nothing if empty)
@@ -23,7 +23,7 @@ if (["a3sql_listener_enabled"] call CBA_fnc_getSetting) then {
     if (_port <= 0) then { _port = 33306; };
     private _result = _extension callExtension ["listen", [str _port]];
     if (_log_level >= 1) then {
-        diag_log text format ["[A3SQL] Listener on port %1: %2", _port, _result];
+        ["A3SQL", "Listener on port %1: %2", _port, _result] call CBA_fnc_info;
     };
 };
 

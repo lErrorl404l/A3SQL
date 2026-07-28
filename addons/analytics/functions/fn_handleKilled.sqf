@@ -32,4 +32,4 @@ private _sql = format [
 ];
 _sql call a3sql_fnc_execute;
 
-["a3sql_kill", [_killerUID, _killerWeapon, _victimUID, _distance, _headshot]] call CBA_fnc_serverEvent;
+["a3sql_kill", [_killerUID, _killerWeapon, _victimUID, _distance, _headshot]] call CBA_fnc_globalEvent;

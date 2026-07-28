@@ -8,28 +8,28 @@ private _log_level = ["a3sql_patch_log_level"] call CBA_fnc_getSetting;
 private _createTable = "CREATE TABLE IF NOT EXISTS patch_rules (id INTEGER PRIMARY KEY, name TEXT NOT NULL, active INTEGER DEFAULT 1, priority INTEGER DEFAULT 0, match_type TEXT NOT NULL DEFAULT 'exact', match_value TEXT DEFAULT '', target_type TEXT NOT NULL, property TEXT NOT NULL, operator TEXT DEFAULT 'set', value TEXT NOT NULL, created_at TEXT DEFAULT '')";
 private _result = _extension callExtension _createTable;
 if (_log_level >= 2) then {
-    diag_log text format ["[A3SQL Patch] Table init: %1", _result];
+    ["A3SQL Patch", "Table init: %1", _result] call CBA_fnc_info;
 };
 
 // ── Auto-create patch_presets table ───────────────────────────────
 private _createPresets = "CREATE TABLE IF NOT EXISTS patch_presets (id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL, data TEXT NOT NULL, created_at TEXT DEFAULT '')";
 private _presetResult = _extension callExtension _createPresets;
 if (_log_level >= 2) then {
-    diag_log text format ["[A3SQL Patch] Presets table init: %1", _presetResult];
+    ["A3SQL Patch", "Presets table init: %1", _presetResult] call CBA_fnc_info;
 };
 
 // ── Column migration (group_name + notes) ─────────────────────────
 "ALTER TABLE patch_rules ADD COLUMN group_name TEXT DEFAULT ''" call a3sql_fnc_execute;
 "ALTER TABLE patch_rules ADD COLUMN notes TEXT DEFAULT ''" call a3sql_fnc_execute;
 if (_log_level >= 2) then {
-    diag_log text "[A3SQL Patch] Column migration applied (group_name, notes)";
+    ["A3SQL Patch", "Column migration applied (group_name, notes)"] call CBA_fnc_info;
 };
 
 // ── Auto-load saved rules ──────────────────────────────────────────
 private _loadResult = _extension callExtension "load patch_rules";
 if (_loadResult find '[0,"OK"' > -1) then {
     if (_log_level >= 2) then {
-        diag_log text "[A3SQL Patch] Loaded saved patch rules";
+        ["A3SQL Patch", "Loaded saved patch rules"] call CBA_fnc_info;
     };
     [] call a3sql_patch_core_fnc_reload;
 };
@@ -45,7 +45,7 @@ if (_enabled) then {
         params ["_args"];
         _args params ["_tick", "_maxTicks"];
         if !(["a3sql_patch_enabled"] call CBA_fnc_getSetting) exitWith {};
-        private _dirty = missionNamespace getVariable ["a3sql_patch_dirty", true];
+        private _dirty = if (isNil QGVAR(namespace)) then { true } else { GVAR(namespace) getVariable ["dirty", true] };
         private _timeout = (_tick >= _maxTicks);
         if (_dirty || _timeout) then {
             [] call a3sql_patch_core_fnc_applyAll;
@@ -61,7 +61,7 @@ addMissionEventHandler ["PlayerConnected", {
     params ["_id", "_uid", "_name", "_jip", "_owner", "_idStr"];
     if (_jip) then {
         if (["a3sql_patch_log_level"] call CBA_fnc_getSetting >= 2) then {
-            diag_log text format ["[A3SQL Patch] JIP player %1 (%2) — applying patches", _name, _uid];
+            ["A3SQL Patch", "JIP player %1 (%2) — applying patches", _name, _uid] call CBA_fnc_info;
         };
         [] call a3sql_patch_core_fnc_applyAll;
     };
@@ -76,10 +76,10 @@ if (!isNil "a3sql_patch_operators_fnc_applyOverrides") then {
 addMissionEventHandler ["Ended", {
     private _log_level = ["a3sql_patch_log_level"] call CBA_fnc_getSetting;
     if (_log_level >= 2) then {
-        diag_log text "[A3SQL Patch] Saving patch rules...";
+        ["A3SQL Patch", "Saving patch rules..."] call CBA_fnc_info;
     };
     "a3sql" callExtension "save patch_rules";
     if (_log_level >= 2) then {
-        diag_log text "[A3SQL Patch] Saved OK — patch system cleanup complete";
+        ["A3SQL Patch", "Saved OK — patch system cleanup complete"] call CBA_fnc_info;
     };
 }];

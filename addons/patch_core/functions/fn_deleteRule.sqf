@@ -13,9 +13,10 @@ private _parsed = parseSimpleArray _response;
 
 if ((_parsed select 0) == 0) then {
     // Mark dirty so applyAll picks up the change
-    missionNamespace setVariable ["a3sql_patch_dirty", true];
+    if (isNil QGVAR(namespace)) then { GVAR(namespace) = [] call CBA_fnc_createNamespace; };
+    GVAR(namespace) setVariable ["dirty", true];
     if (["a3sql_patch_log_level"] call CBA_fnc_getSetting >= 3) then {
-        diag_log text format ["[A3SQL Patch] Rule %1 deleted", _ruleId];
+        ["A3SQL Patch", "Rule %1 deleted", _ruleId] call CBA_fnc_info;
     };
 };
 

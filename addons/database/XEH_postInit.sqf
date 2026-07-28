@@ -11,7 +11,7 @@ if (["a3sql_auto_load"] call CBA_fnc_getSetting) then {
     private _path = ["a3sql_auto_save_path"] call CBA_fnc_getSetting;
     private _result = _extension callExtension ["load", [_path]];
     if (_log_level >= 1) then {
-        diag_log text format ["[A3SQL] Auto-load from '%1': %2", _path, _result];
+        ["A3SQL", "Auto-load from '%1': %2", _path, _result] call CBA_fnc_info;
     };
 };
 
@@ -29,7 +29,7 @@ if (["a3sql_listener_enabled"] call CBA_fnc_getSetting) then {
     if (_port <= 0) then { _port = 33306; };
     private _result = _extension callExtension ["listen", [str _port]];
     if (_log_level >= 1) then {
-        diag_log text format ["[A3SQL] Listener on port %1: %2", _port, _result];
+        ["A3SQL", "Listener on port %1: %2", _port, _result] call CBA_fnc_info;
     };
 };
 
@@ -39,6 +39,6 @@ if (["a3sql_auto_save"] call CBA_fnc_getSetting) then {
         params ["_endType"];
         private _path = ["a3sql_auto_save_path"] call CBA_fnc_getSetting;
         private _result = "a3sql" callExtension ["save", [_path]];
-        diag_log text format ["[A3SQL] Auto-save to '%1' on mission %2: %3", _path, _endType, _result];
+        ["A3SQL", "Auto-save to '%1' on mission %2: %3", _path, _endType, _result] call CBA_fnc_info;
     }];
 };

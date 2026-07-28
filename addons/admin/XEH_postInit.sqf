@@ -64,10 +64,10 @@ addMissionEventHandler ["HandleDisconnect", {
         private _sql = format ["UPDATE server_commands SET status='%1', result='%2', executed_at=datetime('now') WHERE id=%3", _status, _result, _id];
         _sql call a3sql_fnc_execute;
 
-        ["a3sql_admin_command", [_cmd, _params, _status]] call CBA_fnc_serverEvent;
+        ["a3sql_admin_command", [_cmd, _params, _status]] call CBA_fnc_globalEvent;
 
         if (["a3sql_admin_log_level"] call CBA_fnc_getSetting >= 2) then {
-            diag_log text format ["[A3SQL Admin] %1: %2 -> %3", _status, _fullCmd, _result];
+            ["A3SQL Admin", "%1: %2 -> %3", _status, _fullCmd, _result] call CBA_fnc_info;
         };
     } forEach _commands;
 

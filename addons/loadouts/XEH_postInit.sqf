@@ -6,7 +6,7 @@ private _sql = "CREATE TABLE IF NOT EXISTS loadout_templates (id INTEGER PRIMARY
 private _result = _extension callExtension _sql;
 
 if (["a3sql_loadouts_debug"] call CBA_fnc_getSetting) then {
-    diag_log text format ["[A3SQL Loadouts] Table init: %1", _result];
+    ["A3SQL Loadouts", "Table init: %1", _result] call CBA_fnc_info;
 };
 
 _result
