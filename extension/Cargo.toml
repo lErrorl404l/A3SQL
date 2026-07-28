@@ -48,7 +48,7 @@ nom = "8"
 arma3-wiki = "0.5"
 
 # TOML config for version pinning and startup options
-toml = "0.8"
+toml = "1.1"
 
 # Vendored OpenSSL for reliable cross-compilation (i686, Windows)
 openssl-sys = { version = "0.9", features = ["vendored"] }
