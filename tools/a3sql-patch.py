@@ -694,6 +694,95 @@ def cmd_watch(args: argparse.Namespace) -> int:
     return 0  # never reached
 
 
+# ── RCON / Server Command ────────────────────────────────────────────────
+
+
+RCON_POLL_INTERVAL = 2
+RCON_POLL_TIMEOUT = 30
+
+
+def cmd_rcon(args: argparse.Namespace) -> int:
+    """Queue a server command via sql queue, then poll for result."""
+    cmd = args.command
+    raw_params = " ".join(args.params) if args.params else ""
+
+    # Append --reason / --duration to params for kick/ban
+    extra: list[str] = []
+    if args.reason:
+        extra.append(args.reason)
+    if args.duration is not None:
+        extra.append(str(args.duration))
+    if extra:
+        if raw_params:
+            raw_params = raw_params + " " + " ".join(extra)
+        else:
+            raw_params = " ".join(extra)
+
+    insert_sql = (
+        f"INSERT INTO server_commands (command, params, source, created_at) "
+        f"VALUES ('{_sqlesc(cmd)}', '{_sqlesc(raw_params)}', 'cli', datetime('now')) "
+        f"RETURNING id"
+    )
+    try:
+        resp = send_sql(args.host, args.port, insert_sql, args.user, args.password)
+    except A3sqlError as exc:
+        _echo_err(str(exc), args.use_color)
+        return 1
+
+    # Extract id from RETURNING — response is [0, "OK", [[id]]]
+    try:
+        row_id = resp[2][1][0][0]
+    except (IndexError, TypeError) as exc:
+        _echo_err(f"Failed to parse insert response: {resp}", args.use_color)
+        return 1
+
+    poll_sql = f"SELECT status, result FROM server_commands WHERE id = {row_id}"
+    deadline = time.time() + RCON_POLL_TIMEOUT
+
+    while time.time() < deadline:
+        time.sleep(RCON_POLL_INTERVAL)
+        try:
+            poll = send_sql(args.host, args.port, poll_sql, args.user, args.password)
+        except A3sqlError:
+            continue
+
+        try:
+            row = poll[2][1][0]
+            status = row[0]
+            result = row[1] if len(row) > 1 else ""
+        except (IndexError, TypeError):
+            continue
+
+        if status == "executed":
+            if args.json:
+                print(json.dumps({"status": status, "result": result, "id": row_id}))
+            else:
+                _echo_ok(
+                    f"Command #{row_id} '{cmd}' executed — result: {result}",
+                    args.use_color,
+                )
+            return 0
+        elif status == "failed":
+            if args.json:
+                print(json.dumps({"status": status, "result": result, "id": row_id}))
+            else:
+                _echo_err(
+                    f"Command #{row_id} '{cmd}' failed — result: {result}",
+                    args.use_color,
+                )
+            return 1
+
+    # Timeout
+    if args.json:
+        print(json.dumps({"status": "timeout", "id": row_id, "command": cmd}))
+    else:
+        _echo_err(
+            f"Command #{row_id} '{cmd}' not executed within {RCON_POLL_TIMEOUT}s (still pending)",
+            args.use_color,
+        )
+    return 1
+
+
 def cmd_version(args: argparse.Namespace) -> int:
     """Print client version and server info."""
     try:
@@ -830,6 +919,36 @@ def _build_parser() -> argparse.ArgumentParser:
     # watch
     sub.add_parser("watch", help="Stream changes in real-time (poll every 2 sec)")
 
+    # rcon
+    p_rcon = sub.add_parser(
+        "rcon",
+        help="Execute a server command via SQL queue",
+        description=textwrap.dedent("""\
+            Queue a server command (kick, ban, missions, lock, unlock, say, etc.)
+            via the server_commands SQL table, then poll for the result.
+
+            Examples:
+              a3sql-patch rcon kick 76561198000000001 --reason "Team killing"
+              a3sql-patch rcon missions
+              a3sql-patch rcon lock
+              a3sql-patch rcon say "Server restart in 5 minutes"
+              a3sql-patch rcon ban 76561198000000001 --duration 30
+        """),
+    )
+    p_rcon.add_argument("command", help="Server command name")
+    p_rcon.add_argument(
+        "params",
+        nargs="*",
+        default=[],
+        help="Positional parameters for the command (e.g. UID, message)",
+    )
+    p_rcon.add_argument("--reason", help="Reason string (used for kick/ban commands)")
+    p_rcon.add_argument(
+        "--duration",
+        type=int,
+        help="Duration in minutes (used for ban command)",
+    )
+
     # version
     sub.add_parser("version", help="Print client version and server version")
 
@@ -866,6 +985,7 @@ def main() -> int:
         "delete-preset": cmd_delete_preset,
         "query": cmd_query,
         "watch": cmd_watch,
+        "rcon": cmd_rcon,
         "version": cmd_version,
     }
 
