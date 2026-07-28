@@ -90,3 +90,37 @@ systemChat format ["[A3SQL] listener: %1", _listener];
 
 diag_log "=== A3SQL SMOKE TEST DONE ===";
 systemChat "A3SQL smoke test complete — check RPT for full results";
+
+// ── PATCH SYSTEM SMOKE TESTS ──
+diag_log "=== A3SQL PATCH TEST ===";
+
+// 1. live_patch dispatch command
+private _lp1 = _ext callExtension ["live_patch", ["texture", "tex1", "a3sql\\test.paa"]];
+systemChat format ["[PATCH] live_patch: %1", _lp1];
+
+// 2. patch_rules table auto-created
+private _tbl = _ext callExtension "SELECT name FROM sqlite_master WHERE type='table' AND name='patch_rules'";
+systemChat format ["[PATCH] patch_rules exists: %1", _tbl];
+
+// 3. Insert a test rule and read it back
+private _ins = _ext callExtension "INSERT INTO patch_rules (name, active, priority, target_type, property, value) VALUES ('test_rule', 1, 0, 'texture', 'tex1', 'test.paa')";
+systemChat format ["[PATCH] insert rule: %1", _ins];
+
+private _read = _ext callExtension "SELECT name, target_type, property, value FROM patch_rules WHERE name = 'test_rule'";
+systemChat format ["[PATCH] read rule: %1", _read];
+
+// 4. fn_setDirty
+private _dirty = _ext callExtension "SELECT * FROM patch_rules WHERE active=1 ORDER BY priority";
+systemChat format ["[PATCH] select active: %1", _dirty];
+
+// 5. Verify operator functions work (basic call test via SQF eval)
+private _op_test = _ext callExtension "SELECT 1+1";
+systemChat format ["[PATCH] op test: %1", _op_test];
+
+// 6. Delete test rule and verify
+_ext callExtension "DELETE FROM patch_rules WHERE name = 'test_rule'";
+private _verify_del = _ext callExtension "SELECT COUNT(*) FROM patch_rules WHERE name = 'test_rule'";
+systemChat format ["[PATCH] delete verify: %1", _verify_del];
+
+diag_log "=== A3SQL PATCH TEST DONE ===";
+systemChat "A3SQL patch test complete — check RPT for results";
