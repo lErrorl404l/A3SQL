@@ -116,7 +116,22 @@ pub fn dispatch(input: &str, args: &[&str]) -> String {
     }
 
     if lowered.starts_with("live_patch") {
-        let first_arg = args.first().copied().unwrap_or("");
+        // Parse args from trimmed input when args is empty (TCP mode)
+        let lp_args: Vec<&str> = if args.is_empty() {
+            let after_prefix = trimmed
+                .strip_prefix("live_patch ")
+                .or_else(|| trimmed.strip_prefix("LIVE_PATCH "))
+                .unwrap_or("");
+            if after_prefix.is_empty() {
+                vec![""]
+            } else {
+                // Split by space for simple args; query mode handled separately
+                after_prefix.split(' ').collect()
+            }
+        } else {
+            args.to_vec()
+        };
+        let first_arg = lp_args.first().copied().unwrap_or("");
         let mut db = DB.lock().unwrap();
 
         // ponytail: table creation is idempotent via IF NOT EXISTS
@@ -141,7 +156,15 @@ pub fn dispatch(input: &str, args: &[&str]) -> String {
                 }
             }
             "query" => {
-                let sql = args.get(1).copied().unwrap_or("");
+                // In TCP mode, reconstruct SQL from remaining raw input
+                let sql = if args.is_empty() {
+                    trimmed
+                        .strip_prefix("live_patch query ")
+                        .or_else(|| trimmed.strip_prefix("LIVE_PATCH QUERY "))
+                        .unwrap_or("")
+                } else {
+                    lp_args.get(1).copied().unwrap_or("")
+                };
                 if sql.is_empty() {
                     return error_response(ErrorCode::Exec, "SQL required for query mode");
                 }
@@ -164,8 +187,8 @@ pub fn dispatch(input: &str, args: &[&str]) -> String {
             }
             _ => {
                 let target_type = first_arg;
-                let property = args.get(1).copied().unwrap_or("");
-                let value = args.get(2).copied().unwrap_or("");
+                let property = lp_args.get(1).copied().unwrap_or("");
+                let value = lp_args.get(2).copied().unwrap_or("");
 
                 if target_type.is_empty() {
                     return error_response(ErrorCode::Exec, "target_type is required");

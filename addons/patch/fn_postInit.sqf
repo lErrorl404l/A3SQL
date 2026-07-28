@@ -37,7 +37,7 @@ if (_enabled) then {
 addMissionEventHandler ["PlayerConnected", {
     params ["_id", "_uid", "_name", "_jip", "_owner", "_idStr"];
     if (_jip) then {
-        if (_log_level >= 2) then {
+        if (missionNamespace getVariable ["a3sql_patch_log_level", 2] >= 2) then {
             diag_log text format ["[A3SQL Patch] JIP player %1 (%2) — applying patches", _name, _uid];
         };
         [] call a3sql_patch_fnc_applyAll;
