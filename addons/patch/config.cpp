@@ -70,6 +70,9 @@ class CfgFunctions {
             class applyGroup {};
             class activateGroup {};
             class deactivateGroup {};
+            class applyOverrides {};
+            class registerOverride {};
+            class listOverrides {};
         };
     };
 };
