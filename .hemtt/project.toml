@@ -15,9 +15,10 @@ include = [
 
 [version]
 major = 0
-minor = 1
+minor = 2
 patch = 0
-git_hash = 0
+git_hash = 1  # APPENDS short git hash: 0.2.0.abc1234
+                # Use `hemtt build --release` for release builds
 
 # ── Hooks ────────────────────────────────────────────────────────────────
 [hemtt.hooks]
@@ -30,3 +31,20 @@ post_release = ["01_rename_zip"]
 # ── Release ──────────────────────────────────────────────────────────────
 [hemtt.release]
 folder = "a3sql"
+# Files included in release ZIP (in addition to [files])
+include = [
+    "@a3sql",
+    "@a3sql/addons/*.pbo",
+    "@a3sql/*.so",
+    "@a3sql/*.dll",
+]
+
+# ── Signing ──────────────────────────────────────────────────────────────
+# Uncomment and configure for signed PBO releases:
+# [hemtt.sign]
+# private_key = "../keys/a3sql.biprivatekey"
+# public_key = "../keys/a3sql.bikey"
+
+# ── Workshop ─────────────────────────────────────────────────────────────
+# PublishedID set in meta.cpp (per-environment)
+# PublishedID not included in repo — set locally for your workshop item
