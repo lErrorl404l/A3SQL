@@ -3,9 +3,7 @@
 #endif
 #include "\x\cba\addons\main\script_macros_common.hpp"
 
-#undef DFUNC
 #define DFUNC(var1) TRIPLES(PREFIX,fnc,var1)
-#undef DEFUNC
 #define DEFUNC(var1,var2) TRIPLES(DOUBLES(PREFIX,var1),fnc,var2)
 
 #undef QFUNC
