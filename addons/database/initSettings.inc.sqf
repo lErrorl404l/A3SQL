@@ -1,48 +1,47 @@
-#include "script_component.hpp"
 
 ["a3sql_listener_enabled", "CHECKBOX",
-    ["STR_A3SQL_Database_ListenerEnabled_DisplayName", "STR_A3SQL_Database_ListenerEnabled_Description"],
-    "STR_A3SQL_Database_Category", true, false
+    [LSTRING(ListenerEnabled_DisplayName), LSTRING(ListenerEnabled_Description)],
+    LSTRING(Category), true, false
 ] call CBA_fnc_addSetting;
 
-["a3sql_listener_port", "EDIT",
-    ["STR_A3SQL_Database_ListenerPort_DisplayName", "STR_A3SQL_Database_ListenerPort_Description"],
-    "STR_A3SQL_Database_Category", "33306", false
+["a3sql_database_listener_port", "EDITBOX",
+    [LSTRING(ListenerPort_DisplayName), LSTRING(ListenerPort_Description)],
+    LSTRING(Category), "33306", false
 ] call CBA_fnc_addSetting;
 
-["a3sql_listener_bind", "EDIT",
-    ["STR_A3SQL_Database_ListenerBind_DisplayName", "STR_A3SQL_Database_ListenerBind_Description"],
-    "STR_A3SQL_Database_Category", "127.0.0.1", false
+["a3sql_database_listener_bind", "EDITBOX",
+    [LSTRING(ListenerBind_DisplayName), LSTRING(ListenerBind_Description)],
+    LSTRING(Category), "127.0.0.1", false
 ] call CBA_fnc_addSetting;
 
 ["a3sql_auto_save", "CHECKBOX",
-    ["STR_A3SQL_Database_AutoSave_DisplayName", "STR_A3SQL_Database_AutoSave_Description"],
-    "STR_A3SQL_Database_Category", false, false
+    [LSTRING(AutoSave_DisplayName), LSTRING(AutoSave_Description)],
+    LSTRING(Category), false, false
 ] call CBA_fnc_addSetting;
 
 ["a3sql_auto_load", "CHECKBOX",
-    ["STR_A3SQL_Database_AutoLoad_DisplayName", "STR_A3SQL_Database_AutoLoad_Description"],
-    "STR_A3SQL_Database_Category", false, false
+    [LSTRING(AutoLoad_DisplayName), LSTRING(AutoLoad_Description)],
+    LSTRING(Category), false, false
 ] call CBA_fnc_addSetting;
 
-["a3sql_auto_save_path", "EDIT",
-    ["STR_A3SQL_Database_AutoSavePath_DisplayName", "STR_A3SQL_Database_AutoSavePath_Description"],
-    "STR_A3SQL_Database_Category", "a3sql_autosave.bin", false
+["a3sql_database_auto_save_path", "EDITBOX",
+    [LSTRING(AutoSavePath_DisplayName), LSTRING(AutoSavePath_Description)],
+    LSTRING(Category), "a3sql_autosave.bin", false
 ] call CBA_fnc_addSetting;
 
 ["a3sql_log_level", "LIST",
-    ["STR_A3SQL_Database_LogLevel_DisplayName", "STR_A3SQL_Database_LogLevel_Description"],
-    "STR_A3SQL_Database_Category",
+    [LSTRING(LogLevel_DisplayName), LSTRING(LogLevel_Description)],
+    LSTRING(Category),
     [[0, 1, 2, 3], ["ERROR", "WARN", "INFO", "DEBUG"], 2],
     false
 ] call CBA_fnc_addSetting;
 
-["a3sql_listener_user", "EDIT",
-    ["STR_A3SQL_Database_ListenerUser_DisplayName", "STR_A3SQL_Database_ListenerUser_Description"],
-    "STR_A3SQL_Database_Category", "", false
+["a3sql_database_listener_user", "EDITBOX",
+    [LSTRING(ListenerUser_DisplayName), LSTRING(ListenerUser_Description)],
+    LSTRING(Category), "", false
 ] call CBA_fnc_addSetting;
 
-["a3sql_listener_password", "EDIT",
-    ["STR_A3SQL_Database_ListenerPassword_DisplayName", "STR_A3SQL_Database_ListenerPassword_Description"],
-    "STR_A3SQL_Database_Category", "", false
+["a3sql_database_listener_password", "EDITBOX",
+    [LSTRING(ListenerPassword_DisplayName), LSTRING(ListenerPassword_Description)],
+    LSTRING(Category), "", false
 ] call CBA_fnc_addSetting;

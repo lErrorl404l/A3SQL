@@ -19,15 +19,15 @@ if (_log_level >= 2) then {
 };
 
 // ── Column migration (group_name + notes) ─────────────────────────
-"ALTER TABLE patch_rules ADD COLUMN group_name TEXT DEFAULT ''" call a3sql_fnc_execute;
-"ALTER TABLE patch_rules ADD COLUMN notes TEXT DEFAULT ''" call a3sql_fnc_execute;
+"ALTER TABLE patch_rules ADD COLUMN group_name TEXT DEFAULT ''" call a3sql_database_fnc_execute;
+"ALTER TABLE patch_rules ADD COLUMN notes TEXT DEFAULT ''" call a3sql_database_fnc_execute;
 if (_log_level >= 2) then {
     ["A3SQL Patch", "Column migration applied (group_name, notes)"] call CBA_fnc_info;
 };
 
 // ── Auto-load saved rules ──────────────────────────────────────────
 private _loadResult = _extension callExtension "load patch_rules";
-if (_loadResult find '[0,"OK"' > -1) then {
+if ('[0,"OK"' in _loadResult) then {
     if (_log_level >= 2) then {
         ["A3SQL Patch", "Loaded saved patch rules"] call CBA_fnc_info;
     };
@@ -39,7 +39,7 @@ if (_enabled) then {
     private _interval = ["a3sql_patch_check_interval_hz"] call CBA_fnc_getSetting;
     if (_interval <= 0) then { _interval = 0; };
     private _hz = if (_interval > 0) then { 1 / _interval } else { 0 };
-    private _maxTicks = round(60 / (if (_hz > 0) then { _hz } else { 0.05 }));
+    private _maxTicks = round(60 / ([0.05, _hz] select (_hz > 0)));
 
     [_hz, [0, _maxTicks], {
         params ["_args"];

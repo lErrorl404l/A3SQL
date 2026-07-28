@@ -3,7 +3,7 @@
 if (!isServer) exitWith {};
 
 // Create progression table — stores per-player rank/score data across sessions
-"CREATE TABLE IF NOT EXISTS player_progression (uid TEXT PRIMARY KEY, name TEXT, highest_rank TEXT, current_rank TEXT, score INT DEFAULT 0, total_kills INT DEFAULT 0, total_deaths INT DEFAULT 0, missions_played INT DEFAULT 0, playtime_seconds INT DEFAULT 0, last_seen TEXT, last_mission TEXT)" call a3sql_fnc_execute;
+"CREATE TABLE IF NOT EXISTS player_progression (uid TEXT PRIMARY KEY, name TEXT, highest_rank TEXT, current_rank TEXT, score INT DEFAULT 0, total_kills INT DEFAULT 0, total_deaths INT DEFAULT 0, missions_played INT DEFAULT 0, playtime_seconds INT DEFAULT 0, last_seen TEXT, last_mission TEXT)" call a3sql_database_fnc_execute;
 
 if (["a3sql_progression_log_verbose"] call CBA_fnc_getSetting) then {
     ["A3SQL Progression", "player_progression table ready"] call CBA_fnc_info;

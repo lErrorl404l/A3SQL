@@ -15,8 +15,13 @@ options.release = [
 ]
 
 [sqf.undefined]
-enabled = true
-options.check_orphan_code = true
+enabled = false
+
+[sqf.shadowed]
+enabled = false
 
 [sqf.not_private]
 enabled = true
+
+[config.source]
+options.sqf_mission_event_warnings = false

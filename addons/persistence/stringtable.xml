@@ -3,38 +3,38 @@
     <Package name="Persistence">
         <Key ID="STR_a3sql_persistence_Category">
             <English>A3SQL Persistence</English>
-            <German>A3SQL Persistence</German>
             <French>A3SQL Persistence</French>
-        </Key>
-        <Key ID="STR_a3sql_persistence_Enabled_DisplayName">
-            <English>Enable Persistence</English>
-            <German>Persistenz aktivieren</German>
-            <French>Activer la persistance</French>
-        </Key>
-        <Key ID="STR_a3sql_persistence_Enabled_Description">
-            <English>Enable player state persistence on disconnect/join.</English>
-            <German>Persistenz des Spielerstatus bei Verbindungsabbruch/-beitritt aktivieren.</German>
-            <French>Activer la persistance de l'état du joueur lors de la déconnexion/connexion.</French>
-        </Key>
-        <Key ID="STR_a3sql_persistence_RestoreOnJIP_DisplayName">
-            <English>Restore on JIP</English>
-            <German>Bei JIP wiederherstellen</German>
-            <French>Restaurer lors d'un JIP</French>
-        </Key>
-        <Key ID="STR_a3sql_persistence_RestoreOnJIP_Description">
-            <English>Restore player state when they JIP back into the mission.</English>
-            <German>Spielerstatus wiederherstellen, wenn sie per JIP zur Mission zurückkehren.</German>
-            <French>Restaurer l'état du joueur lorsqu'il revient dans la mission via JIP.</French>
-        </Key>
-        <Key ID="STR_a3sql_persistence_Debug_DisplayName">
-            <English>Debug</English>
-            <German>Debug</German>
-            <French>Débogage</French>
+            <German>A3SQL Persistence</German>
         </Key>
         <Key ID="STR_a3sql_persistence_Debug_Description">
             <English>Enable verbose logging and systemChat for restore operations.</English>
-            <German>Ausführliche Protokollierung und systemChat für Wiederherstellungsvorgänge aktivieren.</German>
             <French>Activer la journalisation détaillée et systemChat pour les opérations de restauration.</French>
+            <German>Ausführliche Protokollierung und systemChat für Wiederherstellungsvorgänge aktivieren.</German>
+        </Key>
+        <Key ID="STR_a3sql_persistence_Debug_DisplayName">
+            <English>Debug</English>
+            <French>Débogage</French>
+            <German>Debug</German>
+        </Key>
+        <Key ID="STR_a3sql_persistence_Enabled_Description">
+            <English>Enable player state persistence on disconnect/join.</English>
+            <French>Activer la persistance de l'état du joueur lors de la déconnexion/connexion.</French>
+            <German>Persistenz des Spielerstatus bei Verbindungsabbruch/-beitritt aktivieren.</German>
+        </Key>
+        <Key ID="STR_a3sql_persistence_Enabled_DisplayName">
+            <English>Enable Persistence</English>
+            <French>Activer la persistance</French>
+            <German>Persistenz aktivieren</German>
+        </Key>
+        <Key ID="STR_a3sql_persistence_RestoreOnJIP_Description">
+            <English>Restore player state when they JIP back into the mission.</English>
+            <French>Restaurer l'état du joueur lorsqu'il revient dans la mission via JIP.</French>
+            <German>Spielerstatus wiederherstellen, wenn sie per JIP zur Mission zurückkehren.</German>
+        </Key>
+        <Key ID="STR_a3sql_persistence_RestoreOnJIP_DisplayName">
+            <English>Restore on JIP</English>
+            <French>Restaurer lors d'un JIP</French>
+            <German>Bei JIP wiederherstellen</German>
         </Key>
     </Package>
 </Project>
