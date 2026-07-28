@@ -37,7 +37,7 @@ private _loadout = [
 
 _unit setUnitLoadout _loadout;
 
-if (missionNamespace getVariable ["a3sql_loadouts_debug", false]) then {
+if (["a3sql_loadouts_debug"] call CBA_fnc_getSetting) then {
     systemChat format ["[A3SQL Loadouts] Applied %1 / %2 to %3", _faction, _role, name _unit];
 };
 

@@ -3,7 +3,7 @@
 params [["_extension", "a3sql"]];
 
 private _version = _extension callExtension "version";
-private _log_level = missionNamespace getVariable ["a3sql_admin_log_level", 1];
+private _log_level = ["a3sql_admin_log_level"] call CBA_fnc_getSetting;
 
 if (_log_level >= 2) then {
     diag_log text format ["[A3SQL Admin] %1", _version];

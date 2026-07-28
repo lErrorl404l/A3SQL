@@ -65,6 +65,6 @@ if (_vehicle != "") then {
     };
 };
 
-if (missionNamespace getVariable ["a3sql_persistence_debug", false]) then {
+if (["a3sql_persistence_debug"] call CBA_fnc_getSetting) then {
     systemChat format ["[A3SQL Persistence] Restored player %1", _uid];
 };

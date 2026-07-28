@@ -6,12 +6,12 @@ params [
 
 missionNamespace setVariable ["a3sql_patch_dirty", true];
 
-if (missionNamespace getVariable ["a3sql_patch_log_level", 2] >= 2) then {
+if (["a3sql_patch_log_level"] call CBA_fnc_getSetting >= 3) then {
     diag_log text "[A3SQL Patch] Reload triggered — dirty flag set";
 };
 
 // Immediately run applyAll so the reload takes effect on next frame
-if (missionNamespace getVariable ["a3sql_patch_enabled", true]) then {
+if (["a3sql_patch_enabled"] call CBA_fnc_getSetting) then {
     [] call FUNC(applyAll);
 };
 

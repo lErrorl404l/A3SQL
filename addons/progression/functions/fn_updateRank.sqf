@@ -3,7 +3,7 @@
 params [["_unit", objNull, [objNull]]];
 
 if (!isServer) exitWith {};
-if (!(missionNamespace getVariable ["a3sql_progression_enabled", true])) exitWith {};
+if !(["a3sql_progression_enabled"] call CBA_fnc_getSetting) exitWith {};
 
 private _units = if (isNull _unit) then {
     allUnits select {isPlayer _x}
@@ -58,7 +58,7 @@ private _rankOrder = ["PRIVATE", "CORPORAL", "SERGEANT", "LIEUTENANT", "CAPTAIN"
         };
     };
 
-    if (missionNamespace getVariable ["a3sql_progression_log_verbose", false]) then {
+    if (["a3sql_progression_log_verbose"] call CBA_fnc_getSetting) then {
         diag_log text format ["[A3SQL Progression] Updated %1 (%2): rank=%3 score=%4 kills=%5 deaths=%6", _name, _uid, _rank, _score, _kills, _deaths];
     };
 } forEach _units;

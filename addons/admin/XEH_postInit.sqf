@@ -17,6 +17,8 @@ addMissionEventHandler ["PlayerConnected", {
         _uid, _name, _idStr
     ];
     _sql call a3sql_fnc_execute;
+
+    ["a3sql_player_connected", [_uid, _name]] call CBA_fnc_serverEvent;
 }];
 
 addMissionEventHandler ["HandleDisconnect", {
@@ -27,11 +29,13 @@ addMissionEventHandler ["HandleDisconnect", {
         _uid
     ];
     _sql call a3sql_fnc_execute;
+
+    ["a3sql_player_disconnected", [_uid, _name]] call CBA_fnc_serverEvent;
 }];
 
 // ── PerFrame: periodic player state update + command execution ───
 [{
-    if (!missionNamespace getVariable ["a3sql_admin_enabled", true]) exitWith {};
+    if !(["a3sql_admin_enabled"] call CBA_fnc_getSetting) exitWith {};
     if (!isServer) exitWith {};
 
     // Update player positions/ranks
@@ -60,7 +64,9 @@ addMissionEventHandler ["HandleDisconnect", {
         private _sql = format ["UPDATE server_commands SET status='%1', result='%2', executed_at=datetime('now') WHERE id=%3", _status, _result, _id];
         _sql call a3sql_fnc_execute;
 
-        if (missionNamespace getVariable ["a3sql_admin_log_level", 1] >= 2) then {
+        ["a3sql_admin_command", [_cmd, _params, _status]] call CBA_fnc_serverEvent;
+
+        if (["a3sql_admin_log_level"] call CBA_fnc_getSetting >= 2) then {
             diag_log text format ["[A3SQL Admin] %1: %2 -> %3", _status, _fullCmd, _result];
         };
     } forEach _commands;

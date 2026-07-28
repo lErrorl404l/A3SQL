@@ -3,14 +3,16 @@
 params ["_id", "_uid", "_name", "_jip", "_owner", "_idStr"];
 
 if (!_jip) exitWith {};
-if (!missionNamespace getVariable ["a3sql_persistence_restore_on_jip", true]) exitWith {};
+if (!(["a3sql_persistence_restore_on_jip"] call CBA_fnc_getSetting)) exitWith {};
 
-[_uid] spawn {
+// Wait for player unit to exist (set by CBA via setPlayerVariable), then restore
+[{
     params ["_uid"];
-    private _timeout = time + 10;
-    waitUntil { sleep 0.5; !isNull (missionNamespace getVariable [format ["player_%1", _uid], objNull]) || time > _timeout };
-    if (time > _timeout) exitWith {
-        diag_log text format ["[A3SQL Persistence] JIP restore timed out for UID %1", _uid];
-    };
+    !isNull (missionNamespace getVariable [format ["player_%1", _uid], objNull])
+}, {
+    params ["_uid"];
     [_uid] call a3sql_persistence_fnc_restorePlayer;
-};
+}, [_uid], 10, {
+    params ["_uid"];
+    diag_log text format ["[A3SQL Persistence] JIP restore timed out for UID %1", _uid];
+}] call CBA_fnc_waitUntilAndExec;

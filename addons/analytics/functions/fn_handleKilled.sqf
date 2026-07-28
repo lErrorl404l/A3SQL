@@ -31,3 +31,5 @@ private _sql = format [
     _mission
 ];
 _sql call a3sql_fnc_execute;
+
+["a3sql_kill", [_killerUID, _killerWeapon, _victimUID, _distance, _headshot]] call CBA_fnc_serverEvent;

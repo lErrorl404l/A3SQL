@@ -168,8 +168,8 @@ private _failed  = 0;
             } catch {};
         };
         case "sqf_exec": {
-            if (!missionNamespace getVariable ["a3sql_patch_allow_sqf_exec", false]) then {
-                if (missionNamespace getVariable ["a3sql_patch_log_level", 2] >= 1) then {
+            if !(["a3sql_patch_allow_sqf_exec"] call CBA_fnc_getSetting) then {
+                if (["a3sql_patch_log_level"] call CBA_fnc_getSetting >= 3) then {
                     diag_log text "[A3SQL Patch] sqf_exec blocked — a3sql_patch_allow_sqf_exec is disabled";
                 };
             } else {

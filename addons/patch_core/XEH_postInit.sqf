@@ -1,8 +1,8 @@
 #include "script_component.hpp"
 
 private _extension = "a3sql";
-private _enabled = missionNamespace getVariable ["a3sql_patch_enabled", true];
-private _log_level = missionNamespace getVariable ["a3sql_patch_log_level", 2];
+private _enabled = ["a3sql_patch_enabled"] call CBA_fnc_getSetting;
+private _log_level = ["a3sql_patch_log_level"] call CBA_fnc_getSetting;
 
 // ── Auto-create patch_rules table ──────────────────────────────────
 private _createTable = "CREATE TABLE IF NOT EXISTS patch_rules (id INTEGER PRIMARY KEY, name TEXT NOT NULL, active INTEGER DEFAULT 1, priority INTEGER DEFAULT 0, match_type TEXT NOT NULL DEFAULT 'exact', match_value TEXT DEFAULT '', target_type TEXT NOT NULL, property TEXT NOT NULL, operator TEXT DEFAULT 'set', value TEXT NOT NULL, created_at TEXT DEFAULT '')";
@@ -36,7 +36,7 @@ if (_loadResult find '[0,"OK"' > -1) then {
 
 // ── PerFrame handler ───────────────────────────────────────────────
 if (_enabled) then {
-    private _interval = missionNamespace getVariable ["a3sql_patch_check_interval_hz", 5];
+    private _interval = ["a3sql_patch_check_interval_hz"] call CBA_fnc_getSetting;
     if (_interval <= 0) then { _interval = 0; };
     private _hz = if (_interval > 0) then { 1 / _interval } else { 0 };
     private _maxTicks = round(60 / (if (_hz > 0) then { _hz } else { 0.05 }));
@@ -44,7 +44,7 @@ if (_enabled) then {
     [_hz, [0, _maxTicks], {
         params ["_args"];
         _args params ["_tick", "_maxTicks"];
-        if (!missionNamespace getVariable ["a3sql_patch_enabled", true]) exitWith {};
+        if !(["a3sql_patch_enabled"] call CBA_fnc_getSetting) exitWith {};
         private _dirty = missionNamespace getVariable ["a3sql_patch_dirty", true];
         private _timeout = (_tick >= _maxTicks);
         if (_dirty || _timeout) then {
@@ -60,7 +60,7 @@ if (_enabled) then {
 addMissionEventHandler ["PlayerConnected", {
     params ["_id", "_uid", "_name", "_jip", "_owner", "_idStr"];
     if (_jip) then {
-        if (missionNamespace getVariable ["a3sql_patch_log_level", 2] >= 2) then {
+        if (["a3sql_patch_log_level"] call CBA_fnc_getSetting >= 2) then {
             diag_log text format ["[A3SQL Patch] JIP player %1 (%2) — applying patches", _name, _uid];
         };
         [] call a3sql_patch_core_fnc_applyAll;
@@ -74,7 +74,7 @@ if (!isNil "a3sql_patch_operators_fnc_applyOverrides") then {
 
 // ── Mission end cleanup ────────────────────────────────────────────
 addMissionEventHandler ["Ended", {
-    private _log_level = missionNamespace getVariable ["a3sql_patch_log_level", 2];
+    private _log_level = ["a3sql_patch_log_level"] call CBA_fnc_getSetting;
     if (_log_level >= 2) then {
         diag_log text "[A3SQL Patch] Saving patch rules...";
     };
