@@ -2,7 +2,7 @@
 
 class CfgPatches {
     class ADDON {
-        name = COMPONENT_NAME;
+        name = "A3SQL - Database";
         author = "ABE Team";
         requiredVersion = 2.02;
         requiredAddons[] = {"a3sql_main"};

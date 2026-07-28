@@ -1,15 +1,12 @@
-// Manual defines (avoiding CBA macro dependency for HEMTT compat)
-#define ADDON a3sql_patch_core
-#define COMPONENT_NAME "A3SQL - A3SQL_Patch_Core"
 
 #include "script_component.hpp"
 
 class CfgPatches {
     class ADDON {
-        name = COMPONENT_NAME;
+        name = "A3SQL - Patch Core";
         author = "ABE Team";
         requiredVersion = 2.02;
-        requiredAddons[] = {"a3sql_sql", "cba_xeh"};
+        requiredAddons[] = {"a3sql_database", "cba_xeh"};
         units[] = {};
         weapons[] = {};
     };
