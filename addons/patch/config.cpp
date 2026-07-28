@@ -59,6 +59,16 @@ class CfgFunctions {
             class opNegate {};
             class opReplace {};
             class opFormat {};
+            class openEditor {};
+            class gui_addRule {};
+            class gui_editRule {};
+            class gui_deleteRule {};
+            class gui_listRules {};
+            class gui_savePreset {};
+            class gui_loadPreset {};
         };
     };
 };
+
+// Include dialog definition
+#include "gui\config.hpp"
