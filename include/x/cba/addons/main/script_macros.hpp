@@ -14,7 +14,7 @@
 #define DOUBLES(var1,var2) var1##_##var2
 #define TRIPLES(var1,var2,var3) var1##_##var2##_##var3
 
-#define GVAR(var) TRIPLES(COMPONENT,var)
+#define GVAR(var) DOUBLES(COMPONENT,var)
 #define QGVAR(var) QUOTE(GVAR(var))
 #define FUNC(var) TRIPLES(COMPONENT,fnc,var)
 #define QFUNC(var) QUOTE(FUNC(var))
