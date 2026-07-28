@@ -17,41 +17,23 @@ fn test_tcp_listener() {
     let mut stream = TcpStream::connect("127.0.0.1:33307").expect("Failed to connect to TCP listener");
     println!("✅ TCP connection established");
 
-    // Read initial prompt (if any)
-    let mut reader = BufReader::new(&stream);
+    // Write + read helper: scoped BufReader to avoid borrow conflict
     let mut buf = String::new();
+    macro_rules! tcp_cmd {
+        ($cmd:expr, $expect:literal) => {{
+            stream.write_all(concat!($cmd, "\n").as_bytes()).expect("write failed");
+            buf.clear();
+            let mut reader = BufReader::new(&stream);
+            reader.read_line(&mut buf).expect("read failed");
+            assert!(buf.contains($expect), "{}: {}", stringify!($cmd), buf);
+            println!("✅ TCP: {}", stringify!($cmd));
+        }};
+    }
 
-    // Send SQL query
-    stream
-        .write_all(b"CREATE TABLE tcp_test (id STRING PRIMARY KEY, val STRING)\n")
-        .expect("write failed");
-    buf.clear();
-    reader.read_line(&mut buf).expect("read failed");
-    assert!(buf.contains("\"OK\""), "create table: {}", buf);
-    println!("✅ TCP: CREATE TABLE");
-
-    // Insert via TCP
-    stream
-        .write_all(b"INSERT INTO tcp_test VALUES ('1', 'hello')\n")
-        .expect("write failed");
-    buf.clear();
-    reader.read_line(&mut buf).expect("read failed");
-    assert!(buf.contains("\"OK\""), "insert: {}", buf);
-    println!("✅ TCP: INSERT");
-
-    // SELECT via TCP
-    stream.write_all(b"SELECT * FROM tcp_test\n").expect("write failed");
-    buf.clear();
-    reader.read_line(&mut buf).expect("read failed");
-    assert!(buf.contains("hello"), "select: {}", buf);
-    println!("✅ TCP: SELECT");
-
-    // version command
-    stream.write_all(b"version\n").expect("write failed");
-    buf.clear();
-    reader.read_line(&mut buf).expect("read failed");
-    assert!(buf.contains("a3sql"), "version: {}", buf);
-    println!("✅ TCP: VERSION");
+    tcp_cmd!("CREATE TABLE tcp_test (id STRING PRIMARY KEY, val STRING)", "\"OK\"");
+    tcp_cmd!("INSERT INTO tcp_test VALUES ('1', 'hello')", "\"OK\"");
+    tcp_cmd!("SELECT * FROM tcp_test", "hello");
+    tcp_cmd!("version", "a3sql");
 
     // Cleanup
     a3sql::dispatch("DROP TABLE IF EXISTS tcp_test", &[]);
