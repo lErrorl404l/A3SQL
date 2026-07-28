@@ -1,4 +1,62 @@
-// a3sql save/load verification test
+// a3sql save/load + TCP listener verification test
+
+#[test]
+fn test_tcp_listener() {
+    // Start the TCP listener on a test port
+    let r = a3sql::dispatch("listen 33307", &[]);
+    assert!(r.contains("\"OK\""), "listen start: {}", r);
+    println!("✅ TCP listener started on 33307");
+
+    // Allow listener thread to start
+    std::thread::sleep(std::time::Duration::from_millis(500));
+
+    // Connect via TCP and send a version command
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpStream;
+
+    let mut stream = TcpStream::connect("127.0.0.1:33307").expect("Failed to connect to TCP listener");
+    println!("✅ TCP connection established");
+
+    // Read initial prompt (if any)
+    let mut reader = BufReader::new(&stream);
+    let mut buf = String::new();
+
+    // Send SQL query
+    stream
+        .write_all(b"CREATE TABLE tcp_test (id STRING PRIMARY KEY, val STRING)\n")
+        .expect("write failed");
+    buf.clear();
+    reader.read_line(&mut buf).expect("read failed");
+    assert!(buf.contains("\"OK\""), "create table: {}", buf);
+    println!("✅ TCP: CREATE TABLE");
+
+    // Insert via TCP
+    stream
+        .write_all(b"INSERT INTO tcp_test VALUES ('1', 'hello')\n")
+        .expect("write failed");
+    buf.clear();
+    reader.read_line(&mut buf).expect("read failed");
+    assert!(buf.contains("\"OK\""), "insert: {}", buf);
+    println!("✅ TCP: INSERT");
+
+    // SELECT via TCP
+    stream.write_all(b"SELECT * FROM tcp_test\n").expect("write failed");
+    buf.clear();
+    reader.read_line(&mut buf).expect("read failed");
+    assert!(buf.contains("hello"), "select: {}", buf);
+    println!("✅ TCP: SELECT");
+
+    // version command
+    stream.write_all(b"version\n").expect("write failed");
+    buf.clear();
+    reader.read_line(&mut buf).expect("read failed");
+    assert!(buf.contains("a3sql"), "version: {}", buf);
+    println!("✅ TCP: VERSION");
+
+    // Cleanup
+    a3sql::dispatch("DROP TABLE IF EXISTS tcp_test", &[]);
+    println!("✅ All TCP tests passed");
+}
 
 #[test]
 fn test_save_load_cycle() {
