@@ -115,6 +115,49 @@ pub fn dispatch(input: &str, args: &[&str]) -> String {
         return handle_listen(&listen_args);
     }
 
+    if lowered.starts_with("live_patch") {
+        let target_type = args.first().unwrap_or(&"");
+        let property = args.get(1).copied().unwrap_or("");
+        let value = args.get(2).copied().unwrap_or("");
+
+        if target_type.is_empty() {
+            return error_response(ErrorCode::Exec, "target_type is required");
+        }
+        if property.is_empty() {
+            return error_response(ErrorCode::Exec, "property is required");
+        }
+        if value.is_empty() {
+            return error_response(ErrorCode::Exec, "value is required");
+        }
+
+        let mut db = DB.lock().unwrap();
+        // ponytail: table creation is idempotent via IF NOT EXISTS
+        let create_sql = "CREATE TABLE IF NOT EXISTS patch_rules (id INTEGER PRIMARY KEY, name TEXT NOT NULL, active INTEGER DEFAULT 1, priority INTEGER DEFAULT 0, match_type TEXT NOT NULL DEFAULT 'exact', match_value TEXT DEFAULT '', target_type TEXT NOT NULL, property TEXT NOT NULL, operator TEXT DEFAULT 'set', value TEXT NOT NULL, created_at TEXT DEFAULT '')";
+        if let Err(e) = execute::parse_and_exec(create_sql, &mut db) {
+            return error_response(ErrorCode::Exec, &e.to_string());
+        }
+
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let name = format!("live_patch_{}", secs);
+        let insert_sql = format!(
+            "INSERT INTO patch_rules (name, active, priority, match_type, match_value, target_type, property, operator, value, created_at) VALUES ('{}', 1, 0, 'exact', '', '{}', '{}', 'set', '{}', '{}')",
+            name.replace('\'', "''"),
+            target_type.replace('\'', "''"),
+            property.replace('\'', "''"),
+            value.replace('\'', "''"),
+            secs,
+        );
+        if let Err(e) = execute::parse_and_exec(&insert_sql, &mut db) {
+            return error_response(ErrorCode::Exec, &e.to_string());
+        }
+
+        let row_id = db.last_insert_rowid.as_deref().unwrap_or("unknown");
+        return ok_response(&format!("\"Patch rule inserted with id {}\"", row_id));
+    }
+
     // Remote server connection for network replication
     if lowered == "connect" || lowered.starts_with("connect ") {
         let parts: Vec<&str> = trimmed.splitn(3, |c: char| c.is_whitespace()).collect();
