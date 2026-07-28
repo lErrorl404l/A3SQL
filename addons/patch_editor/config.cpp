@@ -16,4 +16,4 @@ class CfgPatches {
 
 
 // Include dialog definition
-#include "ui\config.hpp"
+// ui/config.hpp removed — window manager conflict
