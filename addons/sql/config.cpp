@@ -44,6 +44,12 @@ class CfgFunctions {
             class exportSQL {};
             class save {};
             class load {};
+            class executePrepared {};
+            class executeTimed {};
+            class prepare {};
+            class selectAll {};
+            class selectArray {};
+            class selectMap {};
         };
     };
 };
