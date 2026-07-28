@@ -116,46 +116,88 @@ pub fn dispatch(input: &str, args: &[&str]) -> String {
     }
 
     if lowered.starts_with("live_patch") {
-        let target_type = args.first().unwrap_or(&"");
-        let property = args.get(1).copied().unwrap_or("");
-        let value = args.get(2).copied().unwrap_or("");
-
-        if target_type.is_empty() {
-            return error_response(ErrorCode::Exec, "target_type is required");
-        }
-        if property.is_empty() {
-            return error_response(ErrorCode::Exec, "property is required");
-        }
-        if value.is_empty() {
-            return error_response(ErrorCode::Exec, "value is required");
-        }
-
+        let first_arg = args.first().copied().unwrap_or("");
         let mut db = DB.lock().unwrap();
+
         // ponytail: table creation is idempotent via IF NOT EXISTS
         let create_sql = "CREATE TABLE IF NOT EXISTS patch_rules (id INTEGER PRIMARY KEY, name TEXT NOT NULL, active INTEGER DEFAULT 1, priority INTEGER DEFAULT 0, match_type TEXT NOT NULL DEFAULT 'exact', match_value TEXT DEFAULT '', target_type TEXT NOT NULL, property TEXT NOT NULL, operator TEXT DEFAULT 'set', value TEXT NOT NULL, created_at TEXT DEFAULT '')";
         if let Err(e) = execute::parse_and_exec(create_sql, &mut db) {
             return error_response(ErrorCode::Exec, &e.to_string());
         }
 
-        let secs = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
-        let name = format!("live_patch_{}", secs);
-        let insert_sql = format!(
-            "INSERT INTO patch_rules (name, active, priority, match_type, match_value, target_type, property, operator, value, created_at) VALUES ('{}', 1, 0, 'exact', '', '{}', '{}', 'set', '{}', '{}')",
-            name.replace('\'', "''"),
-            target_type.replace('\'', "''"),
-            property.replace('\'', "''"),
-            value.replace('\'', "''"),
-            secs,
-        );
-        if let Err(e) = execute::parse_and_exec(&insert_sql, &mut db) {
-            return error_response(ErrorCode::Exec, &e.to_string());
-        }
+        match first_arg {
+            "list" => {
+                let sql = "SELECT * FROM patch_rules ORDER BY priority";
+                let stmts = match parse_sql(sql) {
+                    Ok(s) => s,
+                    Err(e) => return error_response(ErrorCode::Parse, &e.to_string()),
+                };
+                if stmts.is_empty() {
+                    return error_response(ErrorCode::Exec, "no statements");
+                }
+                match execute::execute(&stmts[0], &mut db) {
+                    Ok(result) => return ok_response(&result),
+                    Err(e) => return error_response(ErrorCode::Exec, &e.to_string()),
+                }
+            }
+            "query" => {
+                let sql = args.get(1).copied().unwrap_or("");
+                if sql.is_empty() {
+                    return error_response(ErrorCode::Exec, "SQL required for query mode");
+                }
+                let stmts = match parse_sql(sql) {
+                    Ok(s) => s,
+                    Err(e) => return error_response(ErrorCode::Parse, &e.to_string()),
+                };
+                if stmts.is_empty() {
+                    return error_response(ErrorCode::Exec, "no statements in query");
+                }
+                // Execute all statements, return last result
+                let mut last = String::from("\"OK\"");
+                for stmt in &stmts {
+                    match execute::execute(stmt, &mut db) {
+                        Ok(r) => last = r,
+                        Err(e) => return error_response(ErrorCode::Exec, &e.to_string()),
+                    }
+                }
+                return ok_response(&last);
+            }
+            _ => {
+                let target_type = first_arg;
+                let property = args.get(1).copied().unwrap_or("");
+                let value = args.get(2).copied().unwrap_or("");
 
-        let row_id = db.last_insert_rowid.as_deref().unwrap_or("unknown");
-        return ok_response(&format!("\"Patch rule inserted with id {}\"", row_id));
+                if target_type.is_empty() {
+                    return error_response(ErrorCode::Exec, "target_type is required");
+                }
+                if property.is_empty() {
+                    return error_response(ErrorCode::Exec, "property is required");
+                }
+                if value.is_empty() {
+                    return error_response(ErrorCode::Exec, "value is required");
+                }
+
+                let secs = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                let name = format!("live_patch_{}", secs);
+                let insert_sql = format!(
+                    "INSERT INTO patch_rules (name, active, priority, match_type, match_value, target_type, property, operator, value, created_at) VALUES ('{}', 1, 0, 'exact', '', '{}', '{}', 'set', '{}', '{}')",
+                    name.replace('\'', "''"),
+                    target_type.replace('\'', "''"),
+                    property.replace('\'', "''"),
+                    value.replace('\'', "''"),
+                    secs,
+                );
+                if let Err(e) = execute::parse_and_exec(&insert_sql, &mut db) {
+                    return error_response(ErrorCode::Exec, &e.to_string());
+                }
+
+                let row_id = db.last_insert_rowid.as_deref().unwrap_or("unknown");
+                return ok_response(&format!("\"Patch rule inserted with id {}\"", row_id));
+            }
+        }
     }
 
     // Remote server connection for network replication
