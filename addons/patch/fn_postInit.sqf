@@ -67,6 +67,9 @@ addMissionEventHandler ["PlayerConnected", {
     };
 }];
 
+// ── Apply config overrides ─────────────────────────────────────────
+[] call a3sql_patch_fnc_applyOverrides;
+
 // ── Mission end cleanup ────────────────────────────────────────────
 addMissionEventHandler ["Ended", {
     private _log_level = missionNamespace getVariable ["a3sql_patch_log_level", 2];
