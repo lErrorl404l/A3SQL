@@ -18,6 +18,22 @@ if (_log_level >= 2) then {
     diag_log text format ["[A3SQL Patch] Presets table init: %1", _presetResult];
 };
 
+// ── Column migration (group_name + notes) ─────────────────────────
+"ALTER TABLE patch_rules ADD COLUMN group_name TEXT DEFAULT ''" call a3sql_fnc_execute;
+"ALTER TABLE patch_rules ADD COLUMN notes TEXT DEFAULT ''" call a3sql_fnc_execute;
+if (_log_level >= 2) then {
+    diag_log text "[A3SQL Patch] Column migration applied (group_name, notes)";
+};
+
+// ── Auto-load saved rules ──────────────────────────────────────────
+private _loadResult = _extension callExtension "load patch_rules";
+if (_loadResult find '[0,"OK"' > -1) then {
+    if (_log_level >= 2) then {
+        diag_log text "[A3SQL Patch] Loaded saved patch rules";
+    };
+    [] call a3sql_patch_fnc_reload;
+};
+
 // ── PerFrame handler ───────────────────────────────────────────────
 if (_enabled) then {
     private _interval = missionNamespace getVariable ["a3sql_patch_check_interval_hz", 5];
@@ -53,7 +69,12 @@ addMissionEventHandler ["PlayerConnected", {
 
 // ── Mission end cleanup ────────────────────────────────────────────
 addMissionEventHandler ["Ended", {
-    if (missionNamespace getVariable ["a3sql_patch_log_level", 2] >= 2) then {
-        diag_log text "[A3SQL Patch] Mission ended — patch system cleanup complete";
+    private _log_level = missionNamespace getVariable ["a3sql_patch_log_level", 2];
+    if (_log_level >= 2) then {
+        diag_log text "[A3SQL Patch] Saving patch rules...";
+    };
+    "a3sql" callExtension "save patch_rules";
+    if (_log_level >= 2) then {
+        diag_log text "[A3SQL Patch] Saved OK — patch system cleanup complete";
     };
 }];

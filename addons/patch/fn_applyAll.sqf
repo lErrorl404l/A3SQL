@@ -44,6 +44,17 @@ while {true} do {
 
         private _ruleId = _rule getOrDefault ["id", "?"];
 
+        // ── Stream output (real-time) ───────────────────────────────
+        if (missionNamespace getVariable ["a3sql_patch_stream_output", false]) then {
+            systemChat format ["[A3SQL Patch] Applying rule %1 (%2 — %3 %4 %5)",
+                _ruleId,
+                _rule getOrDefault ["name", ""],
+                _rule getOrDefault ["target_type", ""],
+                _rule getOrDefault ["property", ""],
+                _rule getOrDefault ["operator", "set"]
+            ];
+        };
+
         try {
             private _result = [_rule, _extension] call FUNC(applyRule);
             if ((_result select 0) == 0) then {
