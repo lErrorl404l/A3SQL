@@ -5,4 +5,4 @@ private _sql = if (_mission == "") then {
 } else {
     format ["SELECT COUNT(*) as count FROM replay_snapshots WHERE mission_name = '%1'", _mission]
 };
-[_sql] call a3sql_fnc_selectMap;
+[_sql] call a3sql_database_fnc_selectMap;

@@ -1,7 +1,7 @@
 #include "../script_component.hpp"
 
 params [
-    ["_rule", [], [[]]],
+    ["_rule", [], [createHashMap, []]],
     ["_extension", "a3sql", [""]]
 ];
 
@@ -24,13 +24,15 @@ if (_rule isEqualType []) then {
     _operator   = _rule param [9, "set", [""]];
     _value      = _rule param [10, "", [""]];
 } else {
-    _ruleId     = _rule getOrDefault ["id", 0];
-    _matchType  = _rule getOrDefault ["match_type", "exact"];
-    _matchValue = _rule getOrDefault ["match_value", ""];
-    _targetType = _rule getOrDefault ["target_type", ""];
-    _property   = _rule getOrDefault ["property", ""];
-    _operator   = _rule getOrDefault ["operator", "set"];
-    _value      = _rule getOrDefault ["value", ""];
+    if (_rule isEqualType createHashMap) then {
+        _ruleId     = _rule getOrDefault ["id", 0];
+        _matchType  = _rule getOrDefault ["match_type", "exact"];
+        _matchValue = _rule getOrDefault ["match_value", ""];
+        _targetType = _rule getOrDefault ["target_type", ""];
+        _property   = _rule getOrDefault ["property", ""];
+        _operator   = _rule getOrDefault ["operator", "set"];
+        _value      = _rule getOrDefault ["value", ""];
+    };
 };
 
 if (_property isEqualTo "") exitWith { [1, "ERR_PARAM", "No property specified"] };
@@ -83,8 +85,8 @@ switch (toLower _targetType) do {
                 case "all":     { _targets = allMissionObjects "All"; };
                 case "object":  { _targets = allMissionObjects "All"; };
                 case "vehicle": { _targets = vehicles; };
-                case "man":
-                case "unit":    { _targets = allUnits; };
+                case "man":       { _targets = allUnits; };
+                case "unit":      { _targets = allUnits; };
                 case "group":   { _targets = allGroups apply { _x }; };
                 default         { _targets = allMissionObjects "All"; };
             };
@@ -247,7 +249,7 @@ private _failed  = 0;
         };
         case "default": {
             try {
-                private _current = _target getVariable [_property];
+                private _current = _target getVariable [_property, 0];
                 _target setVariable [_property, [_current, _value] call FUNC(opDefault)];
                 _success = true;
             } catch {};

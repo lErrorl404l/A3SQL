@@ -18,6 +18,6 @@ private _sql = format [
     "INSERT INTO patch_rules (name, active, priority, match_type, match_value, target_type, property, operator, value) VALUES ('%1', 1, 0, 'init', '%2', '%3', '%4', 'set', '%5')",
     _name, _matchValue, _targetType, _property, _value
 ];
-_sql call a3sql_fnc_execute;
+_sql call a3sql_database_fnc_execute;
 
 [0, "OK", "Override registered"]

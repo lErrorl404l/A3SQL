@@ -1,6 +1,6 @@
-PREP(applyLoadout);
-PREP(createTemplate);
-PREP(deleteTemplate);
-PREP(getTemplate);
-PREP(listByFaction);
-PREP(listTemplates);
+A3PREP(applyLoadout);
+A3PREP(createTemplate);
+A3PREP(deleteTemplate);
+A3PREP(getTemplate);
+A3PREP(listByFaction);
+A3PREP(listTemplates);

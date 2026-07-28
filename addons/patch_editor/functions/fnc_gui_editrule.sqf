@@ -21,7 +21,7 @@ private _ruleId = parseNumber (_list lbData _sel);
 if (_ruleId <= 0) exitWith {};
 
 private _sql = format ["SELECT * FROM patch_rules WHERE id = %1", _ruleId];
-private _rows = [_sql] call a3sql_fnc_selectMap;
+private _rows = [_sql] call a3sql_database_fnc_selectMap;
 if (_rows isEqualTo []) exitWith {};
 
 private _rule = _rows select 0;

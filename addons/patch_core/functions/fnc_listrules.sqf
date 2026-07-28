@@ -1,7 +1,7 @@
 #include "../script_component.hpp"
 
 params [
-    ["_filter", "", ["", []]],
+    ["_filter", "", ["", createHashMap, []]],
     ["_extension", "a3sql", [""]]
 ];
 
@@ -16,8 +16,7 @@ if (_filter isEqualType "") then {
     };
 };
 
-if (_filter isEqualType []) then {
-    // Hashmap filter: only include rules where all specified keys match
+if (_filter isEqualType createHashMap) then {
     private _conditions = [];
     {
         private _key = _x;

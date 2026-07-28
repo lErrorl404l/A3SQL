@@ -1,4 +1,3 @@
-#include "script_component.hpp"
 
 ["a3sql_persistence_enabled", "CHECKBOX",
     [LSTRING(Enabled_DisplayName), LSTRING(Enabled_Description)],

@@ -17,7 +17,7 @@ private _batch = [];
     ];
     if (count _batch >= 50) then {
         private _sql = format ["INSERT INTO replay_snapshots (timestamp, entity_type, pos_x, pos_y, pos_z, health, group_id, mission_name) VALUES %1", _batch joinString ","];
-        _sql call a3sql_fnc_execute;
+        _sql call a3sql_database_fnc_execute;
         _batch = [];
     };
 } forEach allUnits;
@@ -31,7 +31,7 @@ private _batch = [];
     ];
     if (count _batch >= 50) then {
         private _sql = format ["INSERT INTO replay_snapshots (timestamp, entity_type, pos_x, pos_y, pos_z, health, group_id, mission_name) VALUES %1", _batch joinString ","];
-        _sql call a3sql_fnc_execute;
+        _sql call a3sql_database_fnc_execute;
         _batch = [];
     };
 } forEach vehicles;
@@ -39,5 +39,5 @@ private _batch = [];
 // Flush remaining
 if (_batch isNotEqualTo []) then {
     private _sql = format ["INSERT INTO replay_snapshots (timestamp, entity_type, pos_x, pos_y, pos_z, health, group_id, mission_name) VALUES %1", _batch joinString ","];
-    _sql call a3sql_fnc_execute;
+    _sql call a3sql_database_fnc_execute;
 };

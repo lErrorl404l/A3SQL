@@ -1,4 +1,3 @@
-#include "script_component.hpp"
 
 ["a3sql_analytics_sample_interval", "SLIDER",
     [LSTRING(SampleInterval_DisplayName), LSTRING(SampleInterval_Description)],

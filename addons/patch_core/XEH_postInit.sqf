@@ -19,8 +19,8 @@ if (_log_level >= 2) then {
 };
 
 // ── Column migration (group_name + notes) ─────────────────────────
-"ALTER TABLE patch_rules ADD COLUMN group_name TEXT DEFAULT ''" call a3sql_fnc_execute;
-"ALTER TABLE patch_rules ADD COLUMN notes TEXT DEFAULT ''" call a3sql_fnc_execute;
+"ALTER TABLE patch_rules ADD COLUMN group_name TEXT DEFAULT ''" call a3sql_database_fnc_execute;
+"ALTER TABLE patch_rules ADD COLUMN notes TEXT DEFAULT ''" call a3sql_database_fnc_execute;
 if (_log_level >= 2) then {
     ["A3SQL Patch", "Column migration applied (group_name, notes)"] call CBA_fnc_info;
 };

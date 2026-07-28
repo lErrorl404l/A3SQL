@@ -8,7 +8,7 @@ private _sql = format [
     "SELECT unit_type, pos_x, pos_y, pos_z, dir, damage, loadout_json, vehicle, vehicle_role FROM player_save WHERE uid = '%1' AND mission_name = '%2'",
     _uid, missionName
 ];
-private _result = _sql call a3sql_fnc_selectAll;
+private _result = _sql call a3sql_database_fnc_selectAll;
 
 // Check result: [0, "OK", [[headers], ...rows]]
 if (_result isEqualTo [] || {_result select 0 != 0}) exitWith {};

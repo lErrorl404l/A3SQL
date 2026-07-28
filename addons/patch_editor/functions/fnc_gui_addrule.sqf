@@ -45,7 +45,7 @@ if (_isUpdate) then {
         "UPDATE patch_rules SET name = '%1', active = %2, priority = %3, target_type = '%4', property = '%5', operator = '%6', value = '%7' WHERE id = %8",
         _name, _activeInt, _priorityInt, _targetType, _property, _operator, _value, _ruleId
     ];
-    _result = [_sql] call a3sql_fnc_execute;
+    _result = [_sql] call a3sql_database_fnc_execute;
 
     if ((_result select 0) == 0) then {
         ["A3SQL Patch", format ["Rule %1 updated", _ruleId]] call CBA_fnc_notify;
@@ -59,7 +59,7 @@ if (_isUpdate) then {
         "INSERT INTO patch_rules (name, active, priority, target_type, property, operator, value) VALUES ('%1', %2, %3, '%4', '%5', '%6', '%7')",
         _name, _activeInt, _priorityInt, _targetType, _property, _operator, _value
     ];
-    _result = [_sql] call a3sql_fnc_execute;
+    _result = [_sql] call a3sql_database_fnc_execute;
 
     if ((_result select 0) == 0) then {
         ["A3SQL Patch", format ["Rule '%1' added", _name]] call CBA_fnc_notify;

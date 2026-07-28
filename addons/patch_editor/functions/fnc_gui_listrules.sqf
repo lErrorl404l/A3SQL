@@ -30,7 +30,7 @@ _slider sliderSetPosition 0;
 private _list = _display displayCtrl 100;
 lbClear _list;
 
-private _rules = ["SELECT * FROM patch_rules ORDER BY priority DESC, id ASC"] call a3sql_fnc_selectMap;
+private _rules = ["SELECT * FROM patch_rules ORDER BY priority DESC, id ASC"] call a3sql_database_fnc_selectMap;
 
 {
     private _id = _x getOrDefault ["id", 0];

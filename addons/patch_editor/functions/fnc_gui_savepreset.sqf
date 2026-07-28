@@ -13,7 +13,7 @@ if (_presetName isEqualTo "") then {
 };
 
 // Fetch all rules as array of hashmaps
-private _rules = ["SELECT * FROM patch_rules ORDER BY priority DESC, id ASC"] call a3sql_fnc_selectMap;
+private _rules = ["SELECT * FROM patch_rules ORDER BY priority DESC, id ASC"] call a3sql_database_fnc_selectMap;
 
 if (_rules isEqualTo []) exitWith {
     ["A3SQL Patch", "No rules to save"] call CBA_fnc_notify;
@@ -35,14 +35,14 @@ private _stripped = _rules apply {
 private _data = str _stripped;
 
 // Check if preset already exists
-private _existing = [format ["SELECT id FROM patch_presets WHERE name = '%1'", _presetName]] call a3sql_fnc_selectMap;
+private _existing = [format ["SELECT id FROM patch_presets WHERE name = '%1'", _presetName]] call a3sql_database_fnc_selectMap;
 if (_existing isNotEqualTo []) then {
     // Update existing preset
     private _sql = format [
         "UPDATE patch_presets SET data = '%1' WHERE name = '%2'",
         _data, _presetName
     ];
-    [_sql] call a3sql_fnc_execute;
+    [_sql] call a3sql_database_fnc_execute;
     ["A3SQL Patch", format ["Preset '%1' updated (%2 rules)", _presetName, count _stripped]] call CBA_fnc_notify;
 } else {
     // Insert new preset
@@ -50,7 +50,7 @@ if (_existing isNotEqualTo []) then {
         "INSERT INTO patch_presets (name, data) VALUES ('%1', '%2')",
         _presetName, _data
     ];
-    [_sql] call a3sql_fnc_execute;
+    [_sql] call a3sql_database_fnc_execute;
     ["A3SQL Patch", format ["Preset '%1' saved (%2 rules)", _presetName, count _stripped]] call CBA_fnc_notify;
 };
 

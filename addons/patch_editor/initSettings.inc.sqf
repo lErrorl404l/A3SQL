@@ -1,4 +1,3 @@
-#include "script_component.hpp"
 
 // ── Keybinding ────────────────────────────────────────────────────
 ["a3sql_patch_editor_key", "EDITOR",

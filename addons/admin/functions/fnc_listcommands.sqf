@@ -10,4 +10,4 @@ if (_conditions isEqualTo []) exitWith { [] };
 private _where = _conditions joinString " OR ";
 private _sql = format ["SELECT * FROM server_commands WHERE %1 ORDER BY id DESC LIMIT %2", _where, _limit];
 
-[_sql] call a3sql_fnc_selectMap
+[_sql] call a3sql_database_fnc_selectMap

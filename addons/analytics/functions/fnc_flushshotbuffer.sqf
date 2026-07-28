@@ -11,7 +11,7 @@ private _values = [];
 } forEach _buffer;
 
 private _sql = format ["INSERT INTO events_shots (timestamp, shooter_uid, weapon, mission_name) VALUES %1", _values joinString ","];
-_sql call a3sql_fnc_execute;
+_sql call a3sql_database_fnc_execute;
 
 // Clear buffer
 GVAR(shot_buffer) = [];

@@ -30,4 +30,4 @@ private _sql = format [
     _uid, _unitType, _pos select 0, _pos select 1, _pos select 2, _dir, _damage, _loadout, _vehicle, _vehicleRole, _mission, _now
 ];
 
-_sql call a3sql_fnc_execute;
+_sql call a3sql_database_fnc_execute;

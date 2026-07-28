@@ -4,7 +4,7 @@
 // Uses match_type='init' to identify config overrides (not runtime patches)
 // Uses CBA_fnc_addClassEventHandler for event-driven application on future entities
 
-private _overrides = ["SELECT * FROM patch_rules WHERE match_type='init' AND active=1 ORDER BY priority LIMIT 100"] call a3sql_fnc_selectMap;
+private _overrides = ["SELECT * FROM patch_rules WHERE match_type='init' AND active=1 ORDER BY priority LIMIT 100"] call a3sql_database_fnc_selectMap;
 
 // Register class event handlers so newly created entities get overrides applied
 {

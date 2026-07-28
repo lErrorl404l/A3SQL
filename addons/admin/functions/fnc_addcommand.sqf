@@ -7,6 +7,6 @@ private _valid = ["kick","ban","missions","lock","unlock","exec","restart","shut
 if !(_command in _valid) exitWith { [1, "ERR_PARAM", format ["Invalid command: %1", _command]] };
 
 private _sql = format ["INSERT INTO server_commands (command, params, source, created_at) VALUES ('%1', '%2', '%3', datetime('now'))", _command, _params, _source];
-_sql call a3sql_fnc_execute;
+_sql call a3sql_database_fnc_execute;
 
 [0, "OK", "Command queued"]

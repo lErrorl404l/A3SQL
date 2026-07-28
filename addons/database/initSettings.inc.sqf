@@ -1,4 +1,3 @@
-#include "script_component.hpp"
 
 ["a3sql_listener_enabled", "CHECKBOX",
     [LSTRING(ListenerEnabled_DisplayName), LSTRING(ListenerEnabled_Description)],
