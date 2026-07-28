@@ -4,7 +4,6 @@
 [![CI](https://img.shields.io/github/actions/workflow/status/lErrorl404l/a3sql/ci.yml?style=flat-square&label=CI)](https://github.com/lErrorl404l/a3sql/actions)
 [![Downloads](https://img.shields.io/github/downloads/lErrorl404l/a3sql/total.svg?style=flat-square&label=Downloads)](https://github.com/lErrorl404l/a3sql/releases)
 [![License](https://img.shields.io/badge/License-APL--SA-red.svg?style=flat-square)](LICENSE)
-[![Discord](https://img.shields.io/badge/Discord-Join-darkviolet.svg?style=flat-square)](https://acemod.org/discord)
 
 **A3SQL** is a live database engine for Arma 3. It stores and processes mission data at runtime — managing loadouts, tracking player stats, patching in-game values, logging events — all through a persistent SQL database embedded in your server.
 
