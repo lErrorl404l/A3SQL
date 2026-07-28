@@ -1,45 +1,44 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project name="A3SQL">
     <Package name="Patch">
-        <Key ID="STR_a3sql_patch_setting_allow_sqf_exec">
-            <Original>Allow SQF Exec Operator</Original>
-            <English>Allow SQF Exec Operator</English>
+        <Key ID="STR_a3sql_patch_Category">
+            <English>A3SQL Patch</English>
         </Key>
-        <Key ID="STR_a3sql_patch_setting_allow_sqf_exec_desc">
-            <Original>WARNING: Enables arbitrary SQF execution via sqf_exec operator. RCE risk.</Original>
-            <English>WARNING: Enables arbitrary SQF execution via sqf_exec operator. RCE risk.</English>
-        </Key>
-        <Key ID="STR_a3sql_patch_setting_check_interval_hz">
-            <Original>Check Interval (Hz)</Original>
-            <English>Check Interval (Hz)</English>
-        </Key>
-        <Key ID="STR_a3sql_patch_setting_check_interval_hz_desc">
-            <Original>How often PerFrame handler checks for new patch rules. 0 = every frame.</Original>
-            <English>How often PerFrame handler checks for new patch rules. 0 = every frame.</English>
-        </Key>
-        <Key ID="STR_a3sql_patch_setting_enabled">
-            <Original>Enable Patching</Original>
+        <Key ID="STR_a3sql_patch_Enabled_DisplayName">
             <English>Enable Patching</English>
         </Key>
-        <Key ID="STR_a3sql_patch_setting_enabled_desc">
-            <Original>Enable dynamic patching system.</Original>
+        <Key ID="STR_a3sql_patch_Enabled_Description">
             <English>Enable dynamic patching system.</English>
         </Key>
-        <Key ID="STR_a3sql_patch_setting_log_level">
-            <Original>Log Level</Original>
+        <Key ID="STR_a3sql_patch_LogLevel_DisplayName">
             <English>Log Level</English>
         </Key>
-        <Key ID="STR_a3sql_patch_setting_log_level_desc">
-            <Original>Verbosity of .rpt diagnostic messages for patching.</Original>
+        <Key ID="STR_a3sql_patch_LogLevel_Description">
             <English>Verbosity of .rpt diagnostic messages for patching.</English>
         </Key>
-        <Key ID="STR_a3sql_patch_setting_stream_output">
-            <Original>Stream Output</Original>
+        <Key ID="STR_a3sql_patch_CheckIntervalHz_DisplayName">
+            <English>Check Interval (Hz)</English>
+        </Key>
+        <Key ID="STR_a3sql_patch_CheckIntervalHz_Description">
+            <English>How often PerFrame handler checks for new patch rules. 0 = every frame.</English>
+        </Key>
+        <Key ID="STR_a3sql_patch_AllowSqfExec_DisplayName">
+            <English>Allow SQF Exec Operator</English>
+        </Key>
+        <Key ID="STR_a3sql_patch_AllowSqfExec_Description">
+            <English>WARNING: Enables arbitrary SQF execution via sqf_exec operator. RCE risk.</English>
+        </Key>
+        <Key ID="STR_a3sql_patch_StreamOutput_DisplayName">
             <English>Stream Output</English>
         </Key>
-        <Key ID="STR_a3sql_patch_setting_stream_output_desc">
-            <Original>Show systemChat messages for each rule applied in real-time.</Original>
+        <Key ID="STR_a3sql_patch_StreamOutput_Description">
             <English>Show systemChat messages for each rule applied in real-time.</English>
+        </Key>
+        <Key ID="STR_a3sql_patch_EditorKey_DisplayName">
+            <English>Open Patch Editor</English>
+        </Key>
+        <Key ID="STR_a3sql_patch_EditorKey_Description">
+            <English>Open the dynamic patch rule editor dialog.</English>
         </Key>
     </Package>
 </Project>

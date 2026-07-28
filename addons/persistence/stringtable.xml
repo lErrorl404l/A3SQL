@@ -1,29 +1,26 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project name="A3SQL">
     <Package name="Persistence">
-        <Key ID="STR_a3sql_persistence_setting_debug">
-            <Original>Debug</Original>
-            <English>Debug</English>
+        <Key ID="STR_a3sql_persistence_Category">
+            <English>A3SQL Persistence</English>
         </Key>
-        <Key ID="STR_a3sql_persistence_setting_debug_desc">
-            <Original>Enable verbose logging and systemChat for restore operations.</Original>
-            <English>Enable verbose logging and systemChat for restore operations.</English>
-        </Key>
-        <Key ID="STR_a3sql_persistence_setting_enabled">
-            <Original>Enable Persistence</Original>
+        <Key ID="STR_a3sql_persistence_Enabled_DisplayName">
             <English>Enable Persistence</English>
         </Key>
-        <Key ID="STR_a3sql_persistence_setting_enabled_desc">
-            <Original>Enable player state persistence on disconnect/join.</Original>
+        <Key ID="STR_a3sql_persistence_Enabled_Description">
             <English>Enable player state persistence on disconnect/join.</English>
         </Key>
-        <Key ID="STR_a3sql_persistence_setting_restore_on_jip">
-            <Original>Restore on JIP</Original>
+        <Key ID="STR_a3sql_persistence_RestoreOnJIP_DisplayName">
             <English>Restore on JIP</English>
         </Key>
-        <Key ID="STR_a3sql_persistence_setting_restore_on_jip_desc">
-            <Original>Restore player state when they JIP back into the mission.</Original>
+        <Key ID="STR_a3sql_persistence_RestoreOnJIP_Description">
             <English>Restore player state when they JIP back into the mission.</English>
+        </Key>
+        <Key ID="STR_a3sql_persistence_Debug_DisplayName">
+            <English>Debug</English>
+        </Key>
+        <Key ID="STR_a3sql_persistence_Debug_Description">
+            <English>Enable verbose logging and systemChat for restore operations.</English>
         </Key>
     </Package>
 </Project>

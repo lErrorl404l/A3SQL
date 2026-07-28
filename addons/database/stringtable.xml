@@ -1,76 +1,61 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project name="A3SQL">
-    <Package name="SQL">
-        <Key ID="STR_a3sql_database_setting_auto_load">
-            <Original>Auto-Load on Mission Start</Original>
+    <Package name="Database">
+        <Key ID="STR_a3sql_database_Category">
+            <English>A3SQL Database</English>
+        </Key>
+        <Key ID="STR_a3sql_database_AutoLoad_DisplayName">
             <English>Auto-Load on Mission Start</English>
         </Key>
-        <Key ID="STR_a3sql_database_setting_auto_load_desc">
-            <Original>Restore database from file when mission starts.</Original>
+        <Key ID="STR_a3sql_database_AutoLoad_Description">
             <English>Restore database from file when mission starts.</English>
         </Key>
-        <Key ID="STR_a3sql_database_setting_auto_save">
-            <Original>Auto-Save on Mission End</Original>
+        <Key ID="STR_a3sql_database_AutoSave_DisplayName">
             <English>Auto-Save on Mission End</English>
         </Key>
-        <Key ID="STR_a3sql_database_setting_auto_save_desc">
-            <Original>Save database to file when mission ends.</Original>
+        <Key ID="STR_a3sql_database_AutoSave_Description">
             <English>Save database to file when mission ends.</English>
         </Key>
-        <Key ID="STR_a3sql_database_setting_auto_save_path">
-            <Original>Auto-Save File Path</Original>
+        <Key ID="STR_a3sql_database_AutoSavePath_DisplayName">
             <English>Auto-Save File Path</English>
         </Key>
-        <Key ID="STR_a3sql_database_setting_auto_save_path_desc">
-            <Original>File path relative to Arma 3 directory, or absolute path.</Original>
+        <Key ID="STR_a3sql_database_AutoSavePath_Description">
             <English>File path relative to Arma 3 directory, or absolute path.</English>
         </Key>
-        <Key ID="STR_a3sql_database_setting_listener_bind">
-            <Original>Listener Bind Address</Original>
+        <Key ID="STR_a3sql_database_ListenerBind_DisplayName">
             <English>Listener Bind Address</English>
         </Key>
-        <Key ID="STR_a3sql_database_setting_listener_bind_desc">
-            <Original>IP to bind to: 127.0.0.1 (localhost) or 0.0.0.0 (network).</Original>
+        <Key ID="STR_a3sql_database_ListenerBind_Description">
             <English>IP to bind to: 127.0.0.1 (localhost) or 0.0.0.0 (network).</English>
         </Key>
-        <Key ID="STR_a3sql_database_setting_listener_enabled">
-            <Original>Enable TCP Listener</Original>
+        <Key ID="STR_a3sql_database_ListenerEnabled_DisplayName">
             <English>Enable TCP Listener</English>
         </Key>
-        <Key ID="STR_a3sql_database_setting_listener_enabled_desc">
-            <Original>Start TCP listener on mission start for external queries.</Original>
+        <Key ID="STR_a3sql_database_ListenerEnabled_Description">
             <English>Start TCP listener on mission start for external queries.</English>
         </Key>
-        <Key ID="STR_a3sql_database_setting_listener_password">
-            <Original>Listener Password</Original>
+        <Key ID="STR_a3sql_database_ListenerPassword_DisplayName">
             <English>Listener Password</English>
         </Key>
-        <Key ID="STR_a3sql_database_setting_listener_password_desc">
-            <Original>Password required for TCP login. Leave empty for anonymous access.</Original>
+        <Key ID="STR_a3sql_database_ListenerPassword_Description">
             <English>Password required for TCP login. Leave empty for anonymous access.</English>
         </Key>
-        <Key ID="STR_a3sql_database_setting_listener_port">
-            <Original>Listener Port</Original>
+        <Key ID="STR_a3sql_database_ListenerPort_DisplayName">
             <English>Listener Port</English>
         </Key>
-        <Key ID="STR_a3sql_database_setting_listener_port_desc">
-            <Original>TCP port for external query listener.</Original>
+        <Key ID="STR_a3sql_database_ListenerPort_Description">
             <English>TCP port for external query listener.</English>
         </Key>
-        <Key ID="STR_a3sql_database_setting_listener_user">
-            <Original>Listener Username</Original>
+        <Key ID="STR_a3sql_database_ListenerUser_DisplayName">
             <English>Listener Username</English>
         </Key>
-        <Key ID="STR_a3sql_database_setting_listener_user_desc">
-            <Original>Username required for TCP login. Leave empty for anonymous access.</Original>
+        <Key ID="STR_a3sql_database_ListenerUser_Description">
             <English>Username required for TCP login. Leave empty for anonymous access.</English>
         </Key>
-        <Key ID="STR_a3sql_database_setting_log_level">
-            <Original>Log Level</Original>
+        <Key ID="STR_a3sql_database_LogLevel_DisplayName">
             <English>Log Level</English>
         </Key>
-        <Key ID="STR_a3sql_database_setting_log_level_desc">
-            <Original>Verbosity of .rpt diagnostic messages.</Original>
+        <Key ID="STR_a3sql_database_LogLevel_Description">
             <English>Verbosity of .rpt diagnostic messages.</English>
         </Key>
     </Package>

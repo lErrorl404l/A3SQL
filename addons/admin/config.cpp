@@ -15,31 +15,13 @@ class CfgPatches {
     };
 };
 
-class CfgEventHandlers {
-    class ADDON {
-        init = "call a3sql_admin_fnc_init";
-    };
-};
+#include "CfgEventHandlers.hpp"
 
-class Extended_PreInit_EventHandlers {
-    class ADDON {
-        init = "call a3sql_admin_fnc_settings";
-    };
-};
-
-class Extended_PostInit_EventHandlers {
-    class ADDON {
-        init = "call a3sql_admin_fnc_postInit";
-    };
-};
-
-        class CfgFunctions {
-    class a3sql {
+class CfgFunctions {
+            class a3sql {
         class admin {
-            file = "z\a3sql\addons\admin";
+            file = "z\a3sql\addons\admin\functions";
             class init {};
-            class settings {};
-            class postInit {};
             class executeCommand {};
             class addCommand {};
             class listCommands {};

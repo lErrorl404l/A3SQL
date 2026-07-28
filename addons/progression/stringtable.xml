@@ -1,20 +1,19 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project name="A3SQL">
     <Package name="Progression">
-        <Key ID="STR_a3sql_progression_setting_enabled">
-            <Original>Enable Progression</Original>
+        <Key ID="STR_a3sql_progression_Category">
+            <English>A3SQL Progression</English>
+        </Key>
+        <Key ID="STR_a3sql_progression_Enabled_DisplayName">
             <English>Enable Progression</English>
         </Key>
-        <Key ID="STR_a3sql_progression_setting_enabled_desc">
-            <Original>Enable persistent rank/score tracking across sessions.</Original>
+        <Key ID="STR_a3sql_progression_Enabled_Description">
             <English>Enable persistent rank/score tracking across sessions.</English>
         </Key>
-        <Key ID="STR_a3sql_progression_setting_log_verbose">
-            <Original>Verbose Logging</Original>
+        <Key ID="STR_a3sql_progression_VerboseLogging_DisplayName">
             <English>Verbose Logging</English>
         </Key>
-        <Key ID="STR_a3sql_progression_setting_log_verbose_desc">
-            <Original>Enable verbose logging for progression operations.</Original>
+        <Key ID="STR_a3sql_progression_VerboseLogging_Description">
             <English>Enable verbose logging for progression operations.</English>
         </Key>
     </Package>

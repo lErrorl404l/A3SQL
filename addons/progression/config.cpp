@@ -2,6 +2,8 @@
 #define ADDON a3sql_progression
 #define COMPONENT_NAME "A3SQL - A3SQL_Progression"
 
+#include "script_component.hpp"
+
 class CfgPatches {
     class ADDON {
         name = COMPONENT_NAME;
@@ -13,31 +15,13 @@ class CfgPatches {
     };
 };
 
-class CfgEventHandlers {
-    class ADDON {
-        init = "call a3sql_progression_fnc_init";
-    };
-};
-
-class Extended_PreInit_EventHandlers {
-    class ADDON {
-        init = "call a3sql_progression_fnc_settings";
-    };
-};
-
-class Extended_PostInit_EventHandlers {
-    class ADDON {
-        init = "call a3sql_progression_fnc_postInit";
-    };
-};
+#include "CfgEventHandlers.hpp"
 
 class CfgFunctions {
     class a3sql {
         class progression {
-            file = "z\a3sql\addons\progression";
+            file = "z\a3sql\addons\progression\functions";
             class init {};
-            class settings {};
-            class postInit {};
             class getProgression {};
             class updateRank {};
             class getHighestRank {};

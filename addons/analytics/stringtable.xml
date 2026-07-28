@@ -1,28 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project name="A3SQL">
     <Package name="Analytics">
-        <Key ID="STR_a3sql_analytics_setting_debug">
-            <Original>Debug</Original>
-            <English>Debug</English>
+        <Key ID="STR_a3sql_analytics_Category">
+            <English>A3SQL Analytics</English>
         </Key>
-        <Key ID="STR_a3sql_analytics_setting_debug_desc">
-            <Original>Enable verbose logging.</Original>
-            <English>Enable verbose logging.</English>
-        </Key>
-        <Key ID="STR_a3sql_analytics_setting_sample_interval">
-            <Original>Sample Interval (s)</Original>
+        <Key ID="STR_a3sql_analytics_SampleInterval_DisplayName">
             <English>Sample Interval (s)</English>
         </Key>
-        <Key ID="STR_a3sql_analytics_setting_sample_interval_desc">
-            <Original>How often to sample server performance metrics.</Original>
+        <Key ID="STR_a3sql_analytics_SampleInterval_Description">
             <English>How often to sample server performance metrics.</English>
         </Key>
-        <Key ID="STR_a3sql_analytics_setting_stream_output">
-            <Original>Stream Output</Original>
+        <Key ID="STR_a3sql_analytics_Debug_DisplayName">
+            <English>Debug</English>
+        </Key>
+        <Key ID="STR_a3sql_analytics_Debug_Description">
+            <English>Enable verbose logging.</English>
+        </Key>
+        <Key ID="STR_a3sql_analytics_StreamOutput_DisplayName">
             <English>Stream Output</English>
         </Key>
-        <Key ID="STR_a3sql_analytics_setting_stream_output_desc">
-            <Original>Show analytics notifications via systemChat.</Original>
+        <Key ID="STR_a3sql_analytics_StreamOutput_Description">
             <English>Show analytics notifications via systemChat.</English>
         </Key>
     </Package>
