@@ -33,7 +33,7 @@ class Extended_PostInit_EventHandlers {
     };
 };
 
-class CfgFunctions {
+        class CfgFunctions {
     class a3sql {
         class admin {
             file = "z\a3sql\addons\admin";
@@ -44,6 +44,10 @@ class CfgFunctions {
             class addCommand {};
             class listCommands {};
             class clearExecuted {};
+            class listPlayers {};
+            class getPlayer {};
+            class kickPlayer {};
+            class banPlayer {};
         };
     };
 };
