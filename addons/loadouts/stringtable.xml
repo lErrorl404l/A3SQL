@@ -3,12 +3,18 @@
     <Package name="Loadouts">
         <Key ID="STR_a3sql_loadouts_Category">
             <English>A3SQL Loadouts</English>
+            <German>A3SQL Loadouts</German>
+            <French>A3SQL Loadouts</French>
         </Key>
         <Key ID="STR_a3sql_loadouts_Debug_DisplayName">
             <English>Debug Mode</English>
+            <German>Debug-Modus</German>
+            <French>Mode débogage</French>
         </Key>
         <Key ID="STR_a3sql_loadouts_Debug_Description">
             <English>Enable debug output for loadout operations.</English>
+            <German>Debug-Ausgabe für Loadout-Operationen aktivieren.</German>
+            <French>Activer la sortie de débogage pour les opérations d'équipement.</French>
         </Key>
     </Package>
 </Project>

@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project name="A3SQL">
+    <Package name="Patch_Core">
+        <Key ID="STR_a3sql_patch_Category">
+            <English>A3SQL Patch</English>
+            <German>A3SQL Patch</German>
+            <French>A3SQL Patch</French>
+        </Key>
+        <Key ID="STR_a3sql_patch_Enabled_DisplayName">
+            <English>Enable Patching</English>
+            <German>Patchen aktivieren</German>
+            <French>Activer le patching</French>
+        </Key>
+        <Key ID="STR_a3sql_patch_Enabled_Description">
+            <English>Enable dynamic patching system.</English>
+            <German>Dynamisches Patchen aktivieren.</German>
+            <French>Activer le système de patching dynamique.</French>
+        </Key>
+        <Key ID="STR_a3sql_patch_LogLevel_DisplayName">
+            <English>Log Level</English>
+            <German>Protokollstufe</German>
+            <French>Niveau de journalisation</French>
+        </Key>
+        <Key ID="STR_a3sql_patch_LogLevel_Description">
+            <English>Verbosity of .rpt diagnostic messages for patching.</English>
+            <German>Ausführlichkeit der .rpt-Diagnosemeldungen für das Patchen.</German>
+            <French>Niveau de détail des messages de diagnostic .rpt pour le patching.</French>
+        </Key>
+        <Key ID="STR_a3sql_patch_CheckIntervalHz_DisplayName">
+            <English>Check Interval (Hz)</English>
+            <German>Prüfintervall (Hz)</German>
+            <French>Intervalle de vérification (Hz)</French>
+        </Key>
+        <Key ID="STR_a3sql_patch_CheckIntervalHz_Description">
+            <English>How often PerFrame handler checks for new patch rules. 0 = every frame.</English>
+            <German>Wie oft der PerFrame-Handler nach neuen Patch-Regeln sucht. 0 = jedes Bild.</German>
+            <French>Fréquence à laquelle le gestionnaire PerFrame vérifie les nouvelles règles de patch. 0 = chaque image.</French>
+        </Key>
+        <Key ID="STR_a3sql_patch_AllowSqfExec_DisplayName">
+            <English>Allow SQF Exec Operator</English>
+            <German>SQF-Exec-Operator erlauben</German>
+            <French>Autoriser l'opérateur SQF Exec</French>
+        </Key>
+        <Key ID="STR_a3sql_patch_AllowSqfExec_Description">
+            <English>WARNING: Enables arbitrary SQF execution via sqf_exec operator. RCE risk.</English>
+            <German>WARNUNG: Ermöglicht beliebige SQF-Ausführung über den sqf_exec-Operator. RCE-Risiko.</German>
+            <French>ATTENTION : Permet l'exécution arbitraire de SQF via l'opérateur sqf_exec. Risque d'exécution de code à distance (RCE).</French>
+        </Key>
+        <Key ID="STR_a3sql_patch_StreamOutput_DisplayName">
+            <English>Stream Output</English>
+            <German>Stream-Ausgabe</German>
+            <French>Sortie en flux</French>
+        </Key>
+        <Key ID="STR_a3sql_patch_StreamOutput_Description">
+            <English>Show systemChat messages for each rule applied in real-time.</English>
+            <German>systemChat-Nachrichten für jede angewendete Regel in Echtzeit anzeigen.</German>
+            <French>Afficher les messages systemChat pour chaque règle appliquée en temps réel.</French>
+        </Key>
+    </Package>
+</Project>
