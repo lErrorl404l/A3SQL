@@ -18,7 +18,7 @@ while {true} do {
     private _response = _extension callExtension _sql;
     if (_response isEqualTo "") exitWith {};
 
-    private _parsed = _response call parseSimpleArray;
+    private _parsed = parseSimpleArray _response;
     if ((_parsed select 0) != 0) exitWith {};
 
     private _data = _parsed select 2;

@@ -1,4 +1,6 @@
-#include "script_component.hpp"
+// Manual defines (avoiding CBA macro dependency for HEMTT compat)
+#define ADDON a3sql_patch
+#define COMPONENT_NAME "A3SQL - A3SQL_Patch"
 
 class CfgPatches {
     class ADDON {
@@ -32,7 +34,7 @@ class Extended_PostInit_EventHandlers {
 class CfgFunctions {
     class a3sql {
         class patch {
-            file = QPATHTO_FOLDER(patch);
+            file = "z\a3sql\addons\patch";
             class init {};
             class settings {};
             class postInit {};
