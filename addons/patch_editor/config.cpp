@@ -14,7 +14,6 @@ class CfgPatches {
 
 #include "CfgEventHandlers.hpp"
 
-#include "CfgFunctions.hpp"
 
 // Include dialog definition
 #include "ui\config.hpp"

@@ -1,1 +1,0 @@
-fnc_createtemplate.sqf
