@@ -41,11 +41,11 @@ _unit setDamage _damage;
 // Vehicle restore
 if (_vehicle != "") then {
     private _nearVehs = nearestObjects [_unit, [_vehicle], 50];
-    if (count _nearVehs > 0) then {
+    if (_nearVehs isNotEqualTo []) then {
         private _veh = _nearVehs select 0;
         if (!isNull _veh) then {
             private _role = parseSimpleArray _vehicleRole;
-            if (count _role > 0) then {
+            if (_role isNotEqualTo []) then {
                 private _roleType = _role select 0;
                 private _roleIndex = if (count _role > 1) then { _role select 1 } else { -1 };
                 switch (_roleType) do {

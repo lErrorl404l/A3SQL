@@ -27,10 +27,10 @@ private _rankOrder = ["PRIVATE", "CORPORAL", "SERGEANT", "LIEUTENANT", "CAPTAIN"
     private _deaths = 0;
 
     private _killResult = [format ["SELECT COUNT(*) as cnt FROM events_kills WHERE killer_uid = '%1'", _uid]] call a3sql_database_fnc_selectMap;
-    if !(_killResult isEqualTo []) then { _kills = (_killResult select 0) get "cnt"; };
+    if (_killResult isNotEqualTo []) then { _kills = (_killResult select 0) get "cnt"; };
 
     private _deathResult = [format ["SELECT COUNT(*) as cnt FROM events_kills WHERE victim_uid = '%1'", _uid]] call a3sql_database_fnc_selectMap;
-    if !(_deathResult isEqualTo []) then { _deaths = (_deathResult select 0) get "cnt"; };
+    if (_deathResult isNotEqualTo []) then { _deaths = (_deathResult select 0) get "cnt"; };
 
     // ── Escape strings for SQL ──────────────────────────────────
     _name = _name regexReplace ["'", "''"];
@@ -45,7 +45,7 @@ private _rankOrder = ["PRIVATE", "CORPORAL", "SERGEANT", "LIEUTENANT", "CAPTAIN"
 
     // ── Update highest_rank if current rank is higher ───────────
     private _highestResult = [format ["SELECT highest_rank FROM player_progression WHERE uid = '%1'", _uid]] call a3sql_database_fnc_selectMap;
-    if !(_highestResult isEqualTo []) then {
+    if (_highestResult isNotEqualTo []) then {
         private _storedHighest = (_highestResult select 0) getOrDefault ["highest_rank", ""];
         if (_storedHighest == "") then {
             [format ["UPDATE player_progression SET highest_rank = '%1' WHERE uid = '%2'", _rank, _uid]] call a3sql_database_fnc_execute;

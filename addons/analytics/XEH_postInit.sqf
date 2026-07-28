@@ -17,7 +17,7 @@ if (_sampleInterval <= 0) then { _sampleInterval = 60; };
 
     private _now = str date;
     private _fps = diag_fps;
-    private _fpsMin = diag_fpsmin;
+    private _fpsMin = diag_fpsMin;
     private _entities = count allUnits;
     private _vehicles = count vehicles;
     private _players = {isPlayer _x} count allUnits;
