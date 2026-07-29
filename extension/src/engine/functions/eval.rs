@@ -769,6 +769,8 @@ pub(crate) fn eval_literal_expr(expr: &Expr) -> Result<DbValue, EngineError> {
             let vals = exec_subquery(query)?;
             Ok(vals.into_iter().next().unwrap_or(DbValue::Null))
         }
+        // Double-quoted identifiers used as values: "hello" → string
+        Expr::Identifier(ident) => Ok(DbValue::String(ident.value.clone())),
         _ => Err(EngineError::Exec(format!(
             "Complex expressions not supported in values: {:?}",
             expr

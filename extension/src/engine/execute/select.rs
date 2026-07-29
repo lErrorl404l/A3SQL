@@ -36,6 +36,24 @@ pub(crate) fn exec_select(query: &Query, db: &mut Database) -> Result<String, En
         // Set thread-local DB snapshot so subqueries/EXISTS work in bare SELECT
         SUBQ_DB.with(|snap| *snap.borrow_mut() = Some(db.clone()));
 
+        // Evaluate WHERE clause (SELECT 1 WHERE 1=0 should return empty)
+        if let Some(where_expr) = &select.selection {
+            let where_val = eval_expr(where_expr, &[], &HashMap::new()).unwrap_or(DbValue::Bool(false));
+            if !is_truthy(&where_val) {
+                let h = select
+                    .projection
+                    .iter()
+                    .map(|item| match item {
+                        SelectItem::UnnamedExpr(e) => format!("\"{}\"", projection_expr_name(e)),
+                        SelectItem::ExprWithAlias { alias, .. } => format!("\"{}\"", alias.value.to_lowercase()),
+                        _ => "\"*\"".into(),
+                    })
+                    .collect::<Vec<_>>()
+                    .join(",");
+                return Ok(format!("[[{}]]", h));
+            }
+        }
+
         let row: &[DbValue] = &[];
         let empty_cols: HashMap<String, usize> = HashMap::new();
         let header: Vec<String> = select
