@@ -135,7 +135,7 @@ pub fn dispatch(input: &str, args: &[&str]) -> String {
         let mut db = DB.lock().unwrap();
 
         // ponytail: table creation is idempotent via IF NOT EXISTS
-        let create_sql = "CREATE TABLE IF NOT EXISTS patch_rules (id INTEGER PRIMARY KEY, name TEXT NOT NULL, active INTEGER DEFAULT 1, priority INTEGER DEFAULT 0, match_type TEXT NOT NULL DEFAULT 'exact', match_value TEXT DEFAULT '', target_type TEXT NOT NULL, property TEXT NOT NULL, operator TEXT DEFAULT 'set', value TEXT NOT NULL, created_at TEXT DEFAULT '')";
+        let create_sql = "CREATE TABLE IF NOT EXISTS patch_rules (id INTEGER AUTO_INCREMENT, name TEXT NOT NULL PRIMARY KEY, active INTEGER DEFAULT 1, priority INTEGER DEFAULT 0, match_type TEXT NOT NULL DEFAULT 'exact', match_value TEXT DEFAULT '', target_type TEXT NOT NULL, property TEXT NOT NULL, operator TEXT DEFAULT 'set', value TEXT NOT NULL, created_at TEXT DEFAULT '')";
         if let Err(e) = execute::parse_and_exec(create_sql, &mut db) {
             return error_response(ErrorCode::Exec, &e.to_string());
         }
@@ -200,11 +200,12 @@ pub fn dispatch(input: &str, args: &[&str]) -> String {
                     return error_response(ErrorCode::Exec, "value is required");
                 }
 
-                let secs = std::time::SystemTime::now()
+                let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs();
-                let name = format!("live_patch_{}", secs);
+                    .unwrap_or_default();
+                let secs = now.as_secs();
+                let nanos = now.subsec_nanos();
+                let name = format!("live_patch_{}_{:09}", secs, nanos);
                 let insert_sql = format!(
                     "INSERT INTO patch_rules (name, active, priority, match_type, match_value, target_type, property, operator, value, created_at) VALUES ('{}', 1, 0, 'exact', '', '{}', '{}', 'set', '{}', '{}')",
                     name.replace('\'', "''"),
