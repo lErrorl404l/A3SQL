@@ -43,8 +43,16 @@ where
     if matches!(a, DbValue::Null) || matches!(b, DbValue::Null) {
         return Ok(DbValue::Null);
     }
+    // Integer division by zero guard: pass a wrapper that checks
+    let safe_int = |x: i64, y: i64| -> Result<i64, EngineError> {
+        if y == 0 {
+            Err(EngineError::Exec("Division by zero".into()))
+        } else {
+            Ok(int_op(x, y))
+        }
+    };
     match (a, b) {
-        (DbValue::Int(x), DbValue::Int(y)) => Ok(DbValue::Int(int_op(*x, *y))),
+        (DbValue::Int(x), DbValue::Int(y)) => safe_int(*x, *y).map(DbValue::Int),
         _ => match (to_float(a), to_float(b)) {
             (Some(x), Some(y)) => Ok(DbValue::Float(float_op(x, y))),
             _ => Err(EngineError::TypeError {
@@ -426,6 +434,14 @@ fn rewrite_outer_refs(expr: &Expr, subq_tables: &[String], row: &[DbValue], col_
             high: Box::new(rewrite_outer_refs(high, subq_tables, row, col_map)),
             negated: *negated,
         },
+        Expr::InList { expr, list, negated } => Expr::InList {
+            expr: Box::new(rewrite_outer_refs(expr, subq_tables, row, col_map)),
+            list: list
+                .iter()
+                .map(|e| rewrite_outer_refs(e, subq_tables, row, col_map))
+                .collect(),
+            negated: *negated,
+        },
         _ => expr.clone(),
     }
 }
@@ -515,6 +531,9 @@ fn has_outer_refs(expr: &Expr, subq_tables: &[String], col_map: &HashMap<String,
             has_outer_refs(expr, subq_tables, col_map)
                 || has_outer_refs(low, subq_tables, col_map)
                 || has_outer_refs(high, subq_tables, col_map)
+        }
+        Expr::InList { expr, list, .. } => {
+            has_outer_refs(expr, subq_tables, col_map) || list.iter().any(|e| has_outer_refs(e, subq_tables, col_map))
         }
         _ => false,
     }
