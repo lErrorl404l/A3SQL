@@ -247,7 +247,7 @@ pub(crate) fn exec_update(upd: &Update, db: &mut Database) -> Result<String, Eng
         "UPDATE",
         db,
         &[],
-        &old_rows.last().map(|r| r.as_slice()).unwrap_or(&[]),
+        old_rows.last().map(|r| r.as_slice()).unwrap_or(&[]),
     );
     Ok(format!("\"Updated {} row(s)\"", validated_updates.len()))
 }

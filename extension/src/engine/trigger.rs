@@ -12,7 +12,6 @@
 use std::cell::Cell;
 
 use super::database::Database;
-use super::prelude::value_to_string;
 use crate::engine::value::DbValue;
 
 /// Maximum trigger recursion depth before execution is silently skipped.
