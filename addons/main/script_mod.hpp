@@ -26,7 +26,7 @@
 #endif
 
 #ifndef REQUIRED_VERSION
-#define REQUIRED_VERSION 2.02
+#define REQUIRED_VERSION 2.20
 #endif
 
 #ifdef SUBCOMPONENT_BEAUTIFIED
