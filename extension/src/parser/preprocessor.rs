@@ -10,62 +10,64 @@ fn fix_scientific_notation(s: &str) -> String {
     let mut i = 0;
 
     while i < n {
-        if i + 2 < n
-            && bytes[i].is_ascii_digit()
-            && (bytes[i + 1] == b'e' || bytes[i + 1] == b'E')
-            && (bytes[i + 2].is_ascii_digit() || bytes[i + 2] == b'+' || bytes[i + 2] == b'-')
-        {
-            let prev_ok = i == 0 || (!bytes[i - 1].is_ascii_alphanumeric() && bytes[i - 1] != b'_');
-            if !prev_ok {
-                result.push(bytes[i]);
-                i += 1;
-                continue;
-            }
-            // Skip if already has '.' prefix (1.5e2 already valid)
-            let mut j = i;
-            while j > 0 && bytes[j - 1].is_ascii_digit() {
-                j -= 1;
-            }
-            if j > 0 && bytes[j - 1] == b'.' {
-                result.push(bytes[i]);
-                i += 1;
-                continue;
-            }
-            // Parse mantissa
-            let mant_start = i;
-            while i < n && bytes[i].is_ascii_digit() {
-                i += 1;
-            }
-            let mant_str = std::str::from_utf8(&bytes[mant_start..i]).unwrap_or("0");
-            i += 1; // skip e/E
-            let sign = if i < n && bytes[i] == b'-' {
-                i += 1;
-                -1
-            } else {
-                if i < n && bytes[i] == b'+' {
-                    i += 1;
-                }
-                1
-            };
-            let exp_start = i;
-            while i < n && bytes[i].is_ascii_digit() {
-                i += 1;
-            }
-            let exp_str = std::str::from_utf8(&bytes[exp_start..i]).unwrap_or("0");
-            let exp: i32 = exp_str.parse().unwrap_or(0) * sign;
-            // Expand to decimal string
-            let mant: f64 = mant_str.parse().unwrap_or(0.0);
-            let expanded = mant * 10f64.powi(exp);
-            // Format without unnecessary trailing zeros
-            if expanded.fract() == 0.0 && expanded.is_finite() {
-                result.extend_from_slice(format!("{}", expanded as i64).as_bytes());
-            } else {
-                result.extend_from_slice(format!("{}", expanded).as_bytes());
-            }
+        // Skip non-digit chars
+        if !bytes[i].is_ascii_digit() {
+            result.push(bytes[i]);
+            i += 1;
             continue;
         }
-        result.push(bytes[i]);
-        i += 1;
+        // Scan consecutive digits (the mantissa)
+        let mant_start = i;
+        while i < n && bytes[i].is_ascii_digit() {
+            i += 1;
+        }
+        let mantissa = &bytes[mant_start..i];
+
+        // Check if followed by e/E (scientific notation)
+        if i < n && (bytes[i] == b'e' || bytes[i] == b'E') {
+            // Boundary check: prev char before mantissa must not be alphanumeric/underscore
+            let prev_ok =
+                mant_start == 0 || (!bytes[mant_start - 1].is_ascii_alphanumeric() && bytes[mant_start - 1] != b'_');
+            if prev_ok {
+                // Reject if already has a '.' prefix (already-valid float like 1.5e2)
+                let mut j = mant_start;
+                while j > 0 && bytes[j - 1].is_ascii_digit() {
+                    j -= 1;
+                }
+                let has_dot = j > 0 && bytes[j - 1] == b'.';
+                if !has_dot {
+                    // Parse and expand: mantissa × 10^exponent
+                    let mant_str = std::str::from_utf8(mantissa).unwrap_or("0");
+                    i += 1; // skip e/E
+                    let sign = if i < n && bytes[i] == b'-' {
+                        i += 1;
+                        -1
+                    } else {
+                        if i < n && bytes[i] == b'+' {
+                            i += 1;
+                        }
+                        1
+                    };
+                    let exp_start = i;
+                    while i < n && bytes[i].is_ascii_digit() {
+                        i += 1;
+                    }
+                    let exp_str = std::str::from_utf8(&bytes[exp_start..i]).unwrap_or("0");
+                    let exp: i32 = exp_str.parse().unwrap_or(0) * sign;
+                    let mant: f64 = mant_str.parse().unwrap_or(0.0);
+                    let val = mant * 10f64.powi(exp);
+                    if val.fract() == 0.0 && val.is_finite() && val >= i64::MIN as f64 && val <= i64::MAX as f64 {
+                        result.extend_from_slice(format!("{}", val as i64).as_bytes());
+                    } else {
+                        result.extend_from_slice(format!("{}", val).as_bytes());
+                    }
+                    continue;
+                }
+            }
+        }
+        // Not scientific notation (or boundary/dot rejected) — emit digits as-is
+        result.extend_from_slice(mantissa);
+        // i already advanced past digits; loop will continue from current position
     }
 
     String::from_utf8(result).unwrap_or_else(|_| s.to_string())
