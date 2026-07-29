@@ -329,7 +329,7 @@ fn exec_fts_score(func: &Function, row: &[DbValue], col_map: &HashMap<String, us
 
 // ── Correlated subquery helpers ─────────────────────────────────────
 /// Extract table names used in a subquery's FROM clause.
-fn subquery_table_names(query: &Box<Query>) -> Vec<String> {
+fn subquery_table_names(query: &Query) -> Vec<String> {
     let mut names = Vec::new();
     if let SetExpr::Select(select) = &*query.body {
         for twj in &select.from {
@@ -405,7 +405,7 @@ fn rewrite_outer_refs(expr: &Expr, subq_tables: &[String], row: &[DbValue], col_
             right: Box::new(rewrite_outer_refs(right, subq_tables, row, col_map)),
         },
         Expr::UnaryOp { op, expr } => Expr::UnaryOp {
-            op: op.clone(),
+            op: *op,
             expr: Box::new(rewrite_outer_refs(expr, subq_tables, row, col_map)),
         },
         Expr::IsNull(inner) => Expr::IsNull(Box::new(rewrite_outer_refs(inner, subq_tables, row, col_map))),
@@ -448,12 +448,12 @@ fn rewrite_outer_refs(expr: &Expr, subq_tables: &[String], row: &[DbValue], col_
 
 /// If the subquery is correlated (references outer-table columns), rewrite its
 /// WHERE clause with literal values from the current row. Otherwise return a clone.
-fn rewrite_if_correlated(query: &Box<Query>, row: &[DbValue], col_map: &HashMap<String, usize>) -> Query {
+fn rewrite_if_correlated(query: &Query, row: &[DbValue], col_map: &HashMap<String, usize>) -> Query {
     if !is_correlated(query, col_map) {
-        return query.as_ref().clone();
+        return query.clone();
     }
     let subq_tables = subquery_table_names(query);
-    let mut q = query.as_ref().clone();
+    let mut q = query.clone();
     if let SetExpr::Select(ref mut s) = &mut *q.body {
         s.selection = s
             .selection
@@ -488,7 +488,7 @@ fn spanned_val(v: Value, span: Span) -> sqlparser::ast::ValueWithSpan {
 }
 
 /// Check if a subquery is correlated (references any outer-table columns).
-fn is_correlated(query: &Box<Query>, col_map: &HashMap<String, usize>) -> bool {
+fn is_correlated(query: &Query, col_map: &HashMap<String, usize>) -> bool {
     let subq_tables = subquery_table_names(query);
     if let SetExpr::Select(select) = &*query.body {
         if let Some(selection) = &select.selection {
