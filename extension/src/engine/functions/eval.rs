@@ -325,35 +325,34 @@ fn subquery_table_names(query: &Box<Query>) -> Vec<String> {
     let mut names = Vec::new();
     if let SetExpr::Select(select) = &*query.body {
         for twj in &select.from {
-            if let Some(tname) = table_factor_name(&twj.relation) {
-                names.push(tname);
-            }
+            names.extend(table_names_and_aliases(&twj.relation));
             for j in &twj.joins {
-                if let Some(tname) = table_factor_name(&j.relation) {
-                    names.push(tname);
-                }
+                names.extend(table_names_and_aliases(&j.relation));
             }
         }
     }
     names
 }
 
-/// Extract a lowercased table name from a TableFactor.
-fn table_factor_name(factor: &TableFactor) -> Option<String> {
+/// Return the table name and alias (if any) from a TableFactor, lowercased.
+fn table_names_and_aliases(factor: &TableFactor) -> Vec<String> {
     match factor {
-        TableFactor::Table { name, .. } => {
+        TableFactor::Table { name, alias, .. } => {
+            let mut result = Vec::new();
             let parts: Vec<String> = name
                 .0
                 .iter()
                 .filter_map(|p| p.as_ident().map(|id| id.value.to_lowercase()))
                 .collect();
-            if parts.is_empty() {
-                None
-            } else {
-                Some(parts.join("."))
+            if !parts.is_empty() {
+                result.push(parts.join("."));
             }
+            if let Some(a) = alias {
+                result.push(a.name.value.to_lowercase());
+            }
+            result
         }
-        _ => None,
+        _ => Vec::new(),
     }
 }
 
@@ -373,15 +372,15 @@ fn rewrite_outer_refs(expr: &Expr, subq_tables: &[String], row: &[DbValue], col_
             expr.clone()
         }
         Expr::CompoundIdentifier(parts) => {
-            // e.g. a.id → table "a", column "id"
             let lower: Vec<String> = parts.iter().map(|p| p.value.to_lowercase()).collect();
             if lower.len() >= 2 {
                 let table = &lower[0];
-                let col = lower[1..].join(".");
-                // If the table qualifier is not a subquery table, substitute
-                if !subq_tables.contains(&table) {
-                    // Try qualified name first, then bare column name
-                    let qualified = format!("{}.{}", table, col);
+                let qualified = lower.join(".");
+                if !subq_tables.contains(table) {
+                    // Try qualified name first (multi-table/joins), then bare
+                    // column name (single-table queries where col_map only has
+                    // bare names like "id" not "dept.id").
+                    let col = lower[1..].join(".");
                     let pos = col_map.get(&qualified).or_else(|| col_map.get(&col));
                     if let Some(&p) = pos {
                         return dbvalue_to_literal_expr(&row[p]);
@@ -488,13 +487,17 @@ fn is_correlated(query: &Box<Query>, col_map: &HashMap<String, usize>) -> bool {
 fn has_outer_refs(expr: &Expr, subq_tables: &[String], col_map: &HashMap<String, usize>) -> bool {
     match expr {
         Expr::Identifier(ident) => {
+            // Bare identifiers — any name in col_map might be outer
             let name = ident.value.to_lowercase();
-            col_map.contains_key(&name) && !subq_tables.contains(&name)
+            col_map.contains_key(&name)
         }
         Expr::CompoundIdentifier(parts) => {
+            // A table-qualified reference whose table is NOT in the subquery's
+            // FROM clause is always an outer reference — regardless of col_map
+            // contents (which only has bare column names for single-table queries).
             if parts.len() >= 2 {
                 let table = parts[0].value.to_lowercase();
-                !subq_tables.contains(&table) && col_map.contains_key(&table)
+                !subq_tables.contains(&table)
             } else {
                 false
             }
