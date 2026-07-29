@@ -8,7 +8,10 @@
 
 use std::collections::HashMap;
 
-use sqlparser::ast::{BinaryOperator, DataType, Expr, Function, FunctionArguments, UnaryOperator};
+use sqlparser::ast::{
+    BinaryOperator, DataType, Expr, Function, FunctionArguments, Query, SetExpr, TableFactor, UnaryOperator, Value,
+};
+use sqlparser::tokenizer::Span;
 
 use super::super::execute::select::exec_subquery;
 use super::super::table::Table;
@@ -316,6 +319,204 @@ fn exec_fts_score(func: &Function, row: &[DbValue], col_map: &HashMap<String, us
 
 // ── Expression evaluator ────────────────────────────────────────────────
 
+// ── Correlated subquery helpers ─────────────────────────────────────
+/// Extract table names used in a subquery's FROM clause.
+fn subquery_table_names(query: &Box<Query>) -> Vec<String> {
+    let mut names = Vec::new();
+    if let SetExpr::Select(select) = &*query.body {
+        for twj in &select.from {
+            if let Some(tname) = table_factor_name(&twj.relation) {
+                names.push(tname);
+            }
+            for j in &twj.joins {
+                if let Some(tname) = table_factor_name(&j.relation) {
+                    names.push(tname);
+                }
+            }
+        }
+    }
+    names
+}
+
+/// Extract a lowercased table name from a TableFactor.
+fn table_factor_name(factor: &TableFactor) -> Option<String> {
+    match factor {
+        TableFactor::Table { name, .. } => {
+            let parts: Vec<String> = name
+                .0
+                .iter()
+                .filter_map(|p| p.as_ident().map(|id| id.value.to_lowercase()))
+                .collect();
+            if parts.is_empty() {
+                None
+            } else {
+                Some(parts.join("."))
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Rewrite a subquery expression by replacing outer-table column references
+/// with literal values from the current row (correlated subquery decorrelation).
+fn rewrite_outer_refs(expr: &Expr, subq_tables: &[String], row: &[DbValue], col_map: &HashMap<String, usize>) -> Expr {
+    match expr {
+        Expr::Identifier(ident) => {
+            let name = ident.value.to_lowercase();
+            // If the column name is NOT a column in any subquery table, it must
+            // come from an outer (correlated) table — substitute its current value.
+            if col_map.contains_key(&name) && !subq_tables.contains(&name) {
+                if let Some(&pos) = col_map.get(&name) {
+                    return dbvalue_to_literal_expr(&row[pos]);
+                }
+            }
+            expr.clone()
+        }
+        Expr::CompoundIdentifier(parts) => {
+            // e.g. a.id → table "a", column "id"
+            let lower: Vec<String> = parts.iter().map(|p| p.value.to_lowercase()).collect();
+            if lower.len() >= 2 {
+                let table = &lower[0];
+                let col = lower[1..].join(".");
+                // If the table qualifier is not a subquery table, substitute
+                if !subq_tables.contains(&table) {
+                    // Try qualified name first, then bare column name
+                    let qualified = format!("{}.{}", table, col);
+                    let pos = col_map.get(&qualified).or_else(|| col_map.get(&col));
+                    if let Some(&p) = pos {
+                        return dbvalue_to_literal_expr(&row[p]);
+                    }
+                }
+            }
+            expr.clone()
+        }
+        // Recurse into nested expressions
+        Expr::Nested(inner) => Expr::Nested(Box::new(rewrite_outer_refs(inner, subq_tables, row, col_map))),
+        Expr::BinaryOp { left, op, right } => Expr::BinaryOp {
+            left: Box::new(rewrite_outer_refs(left, subq_tables, row, col_map)),
+            op: op.clone(),
+            right: Box::new(rewrite_outer_refs(right, subq_tables, row, col_map)),
+        },
+        Expr::UnaryOp { op, expr } => Expr::UnaryOp {
+            op: op.clone(),
+            expr: Box::new(rewrite_outer_refs(expr, subq_tables, row, col_map)),
+        },
+        Expr::IsNull(inner) => Expr::IsNull(Box::new(rewrite_outer_refs(inner, subq_tables, row, col_map))),
+        Expr::IsNotNull(inner) => Expr::IsNotNull(Box::new(rewrite_outer_refs(inner, subq_tables, row, col_map))),
+        Expr::Like {
+            negated,
+            any,
+            expr,
+            pattern,
+            escape_char,
+        } => Expr::Like {
+            negated: *negated,
+            any: *any,
+            expr: Box::new(rewrite_outer_refs(expr, subq_tables, row, col_map)),
+            pattern: Box::new(rewrite_outer_refs(pattern, subq_tables, row, col_map)),
+            escape_char: escape_char.clone(),
+        },
+        Expr::Between {
+            expr,
+            low,
+            high,
+            negated,
+        } => Expr::Between {
+            expr: Box::new(rewrite_outer_refs(expr, subq_tables, row, col_map)),
+            low: Box::new(rewrite_outer_refs(low, subq_tables, row, col_map)),
+            high: Box::new(rewrite_outer_refs(high, subq_tables, row, col_map)),
+            negated: *negated,
+        },
+        _ => expr.clone(),
+    }
+}
+
+/// If the subquery is correlated (references outer-table columns), rewrite its
+/// WHERE clause with literal values from the current row. Otherwise return a clone.
+fn rewrite_if_correlated(query: &Box<Query>, row: &[DbValue], col_map: &HashMap<String, usize>) -> Query {
+    if !is_correlated(query, col_map) {
+        return query.as_ref().clone();
+    }
+    let subq_tables = subquery_table_names(query);
+    let mut q = query.as_ref().clone();
+    if let SetExpr::Select(ref mut s) = &mut *q.body {
+        s.selection = s
+            .selection
+            .as_ref()
+            .map(|e| rewrite_outer_refs(e, &subq_tables, row, col_map));
+    }
+    q
+}
+
+/// Convert a DbValue to an sqlparser Expr::Value literal with an empty span.
+fn dbvalue_to_literal_expr(v: &DbValue) -> Expr {
+    let span = Span::empty();
+    match v {
+        DbValue::Null => Expr::Value(spanned_val(Value::Null, span)),
+        DbValue::Bool(b) => Expr::Value(spanned_val(Value::Boolean(*b), span)),
+        DbValue::Int(i) => Expr::Value(spanned_val(Value::Number(i.to_string(), false), span)),
+        DbValue::Float(f) => Expr::Value(spanned_val(Value::Number(format!("{}", f), false), span)),
+        DbValue::String(s) => Expr::Value(spanned_val(Value::SingleQuotedString(s.clone()), span)),
+        DbValue::Strings(v) => {
+            let json = serde_json::to_string(v).unwrap_or_else(|_| "[]".to_string());
+            Expr::Value(spanned_val(Value::SingleQuotedString(json), span))
+        }
+        DbValue::Floats(v) => {
+            let json = serde_json::to_string(v).unwrap_or_else(|_| "[]".to_string());
+            Expr::Value(spanned_val(Value::SingleQuotedString(json), span))
+        }
+    }
+}
+
+fn spanned_val(v: Value, span: Span) -> sqlparser::ast::ValueWithSpan {
+    sqlparser::ast::ValueWithSpan { value: v, span }
+}
+
+/// Check if a subquery is correlated (references any outer-table columns).
+fn is_correlated(query: &Box<Query>, col_map: &HashMap<String, usize>) -> bool {
+    let subq_tables = subquery_table_names(query);
+    if let SetExpr::Select(select) = &*query.body {
+        if let Some(selection) = &select.selection {
+            return has_outer_refs(selection, &subq_tables, col_map);
+        }
+    }
+    false
+}
+
+/// Walk an expression tree checking for column references that are NOT in
+/// the subquery's own tables but ARE in the outer col_map.
+fn has_outer_refs(expr: &Expr, subq_tables: &[String], col_map: &HashMap<String, usize>) -> bool {
+    match expr {
+        Expr::Identifier(ident) => {
+            let name = ident.value.to_lowercase();
+            col_map.contains_key(&name) && !subq_tables.contains(&name)
+        }
+        Expr::CompoundIdentifier(parts) => {
+            if parts.len() >= 2 {
+                let table = parts[0].value.to_lowercase();
+                !subq_tables.contains(&table) && col_map.contains_key(&table)
+            } else {
+                false
+            }
+        }
+        Expr::Nested(inner) => has_outer_refs(inner, subq_tables, col_map),
+        Expr::BinaryOp { left, right, .. } => {
+            has_outer_refs(left, subq_tables, col_map) || has_outer_refs(right, subq_tables, col_map)
+        }
+        Expr::UnaryOp { expr, .. } => has_outer_refs(expr, subq_tables, col_map),
+        Expr::IsNull(inner) | Expr::IsNotNull(inner) => has_outer_refs(inner, subq_tables, col_map),
+        Expr::Like { expr, pattern, .. } => {
+            has_outer_refs(expr, subq_tables, col_map) || has_outer_refs(pattern, subq_tables, col_map)
+        }
+        Expr::Between { expr, low, high, .. } => {
+            has_outer_refs(expr, subq_tables, col_map)
+                || has_outer_refs(low, subq_tables, col_map)
+                || has_outer_refs(high, subq_tables, col_map)
+        }
+        _ => false,
+    }
+}
+
 pub(crate) fn eval_expr(
     expr: &Expr,
     row: &[DbValue],
@@ -402,7 +603,8 @@ pub(crate) fn eval_expr(
         }
         Expr::Function(func) => exec_function(func, row, col_map),
         Expr::Subquery(query) => {
-            let vals = exec_subquery(query)?;
+            let subq_q = rewrite_if_correlated(query, row, col_map);
+            let vals = exec_subquery(&subq_q)?;
             Ok(vals.into_iter().next().unwrap_or(DbValue::Null))
         }
         Expr::InSubquery {
@@ -411,7 +613,8 @@ pub(crate) fn eval_expr(
             negated,
         } => {
             let val = eval_expr(expr, row, col_map)?;
-            let subq_result = exec_subquery(subquery)?;
+            let subq_q = rewrite_if_correlated(subquery, row, col_map);
+            let subq_result = exec_subquery(&subq_q)?;
             let found = subq_result.contains(&val);
             Ok(DbValue::Bool(if *negated { !found } else { found }))
         }
@@ -451,7 +654,8 @@ pub(crate) fn eval_expr(
             Ok(DbValue::Bool(if *negated { !(ge && le) } else { ge && le }))
         }
         Expr::Exists { subquery, negated } => {
-            let vals = exec_subquery(subquery)?;
+            let subq_q = rewrite_if_correlated(subquery, row, col_map);
+            let vals = exec_subquery(&subq_q)?;
             Ok(DbValue::Bool(if *negated { vals.is_empty() } else { !vals.is_empty() }))
         }
         Expr::Cast { expr, data_type, .. } => {
