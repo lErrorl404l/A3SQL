@@ -17,7 +17,7 @@ if (_dirty) then {
 };
 
 if (["a3sql_patch_log_level"] call CBA_fnc_getSetting >= 3) then {
-    ["A3SQL Patch", "Dirty flag set to %1", _dirty] call CBA_fnc_debug;
+    ["A3SQL Patch", "Dirty flag set to %1", _dirty] call CBA_fnc_info;
 };
 
 [0, "OK", _dirty]

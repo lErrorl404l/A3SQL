@@ -31,7 +31,7 @@ if (_sampleInterval <= 0) then { _sampleInterval = 60; };
     _sql call a3sql_database_fnc_execute;
 
     if (["a3sql_analytics_debug"] call CBA_fnc_getSetting) then {
-        ["A3SQL Analytics", "Perf sample: FPS=%1, Entities=%2, Players=%3", _fps, _entities, _players] call CBA_fnc_debug;
+        ["A3SQL Analytics", "Perf sample: FPS=%1, Entities=%2, Players=%3", _fps, _entities, _players] call CBA_fnc_info;
     };
 }, _sampleInterval, []] call CBA_fnc_addPerFrameHandler;
 

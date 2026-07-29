@@ -4,10 +4,11 @@ class CfgPatches {
     class ADDON {
         name = "A3SQL - Database";
         author = "ABE Team";
-        requiredVersion = 2.02;
+        requiredVersion = REQUIRED_VERSION;
         requiredAddons[] = {"a3sql_main", "cba_xeh"};
         units[] = {};
         weapons[] = {};
+        VERSION_CONFIG;
     };
 };
 

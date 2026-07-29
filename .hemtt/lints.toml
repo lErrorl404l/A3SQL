@@ -14,11 +14,13 @@ options.release = [
     "ENABLE_PERFORMANCE_COUNTERS",
 ]
 
+# Enable at Help severity (default) for catching bugs without breaking builds
 [sqf.undefined]
-enabled = false
+enabled = true
 
+# Enable at Help severity — warns about variable shadowing
 [sqf.shadowed]
-enabled = false
+enabled = true
 
 [sqf.not_private]
 enabled = true
