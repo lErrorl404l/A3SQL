@@ -1,10 +1,15 @@
+class Extended_PreStart_EventHandlers {
+    class ADDON {
+        init = QUOTE(call COMPILE_SCRIPT(XEH_preStart));
+    };
+};
 class Extended_PreInit_EventHandlers {
     class ADDON {
-        init = "call compileScript ['z\a3sql\addons\patch_editor\XEH_preInit.sqf']";
+        init = QUOTE(call COMPILE_SCRIPT(XEH_preInit));
     };
 };
 class Extended_PostInit_EventHandlers {
     class ADDON {
-        init = "call compileScript ['z\a3sql\addons\patch_editor\XEH_postInit.sqf']";
+        init = QUOTE(call COMPILE_SCRIPT(XEH_postInit));
     };
 };
