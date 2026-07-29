@@ -401,6 +401,10 @@ pub(crate) fn eval_expr(
             Ok(DbValue::Bool(if *negated { !found } else { found }))
         }
         Expr::Function(func) => exec_function(func, row, col_map),
+        Expr::Subquery(query) => {
+            let vals = exec_subquery(query)?;
+            Ok(vals.into_iter().next().unwrap_or(DbValue::Null))
+        }
         Expr::InSubquery {
             expr,
             subquery,

@@ -30,8 +30,17 @@ pub(crate) fn exec_select_joins(query: &Query, select: &Select, db: &mut Databas
     use sqlparser::ast::{JoinConstraint, JoinOperator};
 
     // ── Resolve all tables in FROM + JOINs ──────────────────────────
+    /// Extract alias name from a TableFactor (tracks aliased self-joins).
+    fn table_alias(factor: &TableFactor) -> Option<String> {
+        match factor {
+            TableFactor::Table { alias, .. } => alias.as_ref().map(|a| a.name.value.to_lowercase()),
+            _ => None,
+        }
+    }
+
     struct Tbl {
-        name: String,
+        name: String,          // actual table name
+        alias: Option<String>, // optional user-supplied alias
         cols: usize,
         start: usize,
         rows: Vec<Vec<DbValue>>,
@@ -43,6 +52,7 @@ pub(crate) fn exec_select_joins(query: &Query, select: &Select, db: &mut Databas
 
     for twj in &select.from {
         let (n, t) = resolve_table_factor(&twj.relation, db)?;
+        let a = table_alias(&twj.relation);
         if db.has_view(&n) {
             view_tables.push(n.clone());
         }
@@ -50,6 +60,7 @@ pub(crate) fn exec_select_joins(query: &Query, select: &Select, db: &mut Databas
         let c = t.columns.len();
         tbls.push(Tbl {
             name: n.clone(),
+            alias: a,
             cols: c,
             start: abs,
             rows: r,
@@ -57,6 +68,7 @@ pub(crate) fn exec_select_joins(query: &Query, select: &Select, db: &mut Databas
         abs += c;
         for j in &twj.joins {
             let (jn, jt) = resolve_table_factor(&j.relation, db)?;
+            let ja = table_alias(&j.relation);
             if db.has_view(&jn) {
                 view_tables.push(jn.clone());
             }
@@ -64,6 +76,7 @@ pub(crate) fn exec_select_joins(query: &Query, select: &Select, db: &mut Databas
             let jc = jt.columns.len();
             tbls.push(Tbl {
                 name: jn.clone(),
+                alias: ja,
                 cols: jc,
                 start: abs,
                 rows: jr,
@@ -76,15 +89,16 @@ pub(crate) fn exec_select_joins(query: &Query, select: &Select, db: &mut Databas
     let mut col_map: HashMap<String, usize> = HashMap::new();
     let mut header: Vec<String> = Vec::new();
     for tbl in &tbls {
+        let qualifier = tbl.alias.as_deref().unwrap_or(&tbl.name);
         let tn = db
             .get_table(&tbl.name)
             .map_err(|_| EngineError::TableNotFound(tbl.name.clone()))?
             .clone();
         for (ci, col) in tn.columns.iter().enumerate() {
             let p = tbl.start + ci;
-            col_map.insert(format!("{}.{}", tbl.name, col.name), p);
+            col_map.insert(format!("{}.{}", qualifier, col.name), p);
             col_map.insert(col.name.clone(), p);
-            header.push(format!("{}.{}", tbl.name, col.name));
+            header.push(format!("{}.{}", qualifier, col.name));
         }
     }
 

@@ -33,6 +33,9 @@ pub(crate) fn exec_select(query: &Query, db: &mut Database) -> Result<String, En
 
     // Handle bare SELECT without FROM clause
     if select.from.is_empty() {
+        // Set thread-local DB snapshot so subqueries/EXISTS work in bare SELECT
+        SUBQ_DB.with(|snap| *snap.borrow_mut() = Some(db.clone()));
+
         let row: &[DbValue] = &[];
         let empty_cols: HashMap<String, usize> = HashMap::new();
         let header: Vec<String> = select
