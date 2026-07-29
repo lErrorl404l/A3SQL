@@ -1,5 +1,75 @@
 // SQL preprocessor for a3sql
 //
+/// Transform scientific notation like `1e2` to `1.0e2` so sqlparser
+/// tokenises it as a Float literal instead of a number + identifier.
+/// Uses a manual scan since Rust's regex crate doesn't support look-around.
+fn fix_scientific_notation(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let n = bytes.len();
+    let mut result = Vec::with_capacity(n);
+    let mut i = 0;
+
+    while i < n {
+        if i + 2 < n
+            && bytes[i].is_ascii_digit()
+            && (bytes[i + 1] == b'e' || bytes[i + 1] == b'E')
+            && (bytes[i + 2].is_ascii_digit() || bytes[i + 2] == b'+' || bytes[i + 2] == b'-')
+        {
+            let prev_ok = i == 0 || (!bytes[i - 1].is_ascii_alphanumeric() && bytes[i - 1] != b'_');
+            if !prev_ok {
+                result.push(bytes[i]);
+                i += 1;
+                continue;
+            }
+            // Skip if already has '.' prefix (1.5e2 already valid)
+            let mut j = i;
+            while j > 0 && bytes[j - 1].is_ascii_digit() {
+                j -= 1;
+            }
+            if j > 0 && bytes[j - 1] == b'.' {
+                result.push(bytes[i]);
+                i += 1;
+                continue;
+            }
+            // Parse mantissa
+            let mant_start = i;
+            while i < n && bytes[i].is_ascii_digit() {
+                i += 1;
+            }
+            let mant_str = std::str::from_utf8(&bytes[mant_start..i]).unwrap_or("0");
+            i += 1; // skip e/E
+            let sign = if i < n && bytes[i] == b'-' {
+                i += 1;
+                -1
+            } else {
+                if i < n && bytes[i] == b'+' {
+                    i += 1;
+                }
+                1
+            };
+            let exp_start = i;
+            while i < n && bytes[i].is_ascii_digit() {
+                i += 1;
+            }
+            let exp_str = std::str::from_utf8(&bytes[exp_start..i]).unwrap_or("0");
+            let exp: i32 = exp_str.parse().unwrap_or(0) * sign;
+            // Expand to decimal string
+            let mant: f64 = mant_str.parse().unwrap_or(0.0);
+            let expanded = mant * 10f64.powi(exp);
+            // Format without unnecessary trailing zeros
+            if expanded.fract() == 0.0 && expanded.is_finite() {
+                result.extend_from_slice(format!("{}", expanded as i64).as_bytes());
+            } else {
+                result.extend_from_slice(format!("{}", expanded).as_bytes());
+            }
+            continue;
+        }
+        result.push(bytes[i]);
+        i += 1;
+    }
+
+    String::from_utf8(result).unwrap_or_else(|_| s.to_string())
+}
 /// Transforms custom a3sql SQL syntax into standard SQL that sqlparser-rs can
 /// parse with GenericDialect:
 ///
@@ -13,9 +83,8 @@
 /// Finds each `%%` operator outside string literals and rewrites
 /// `left %% right` → `fuzzy_match(left,right)`.
 pub fn preprocess(sql: &str) -> String {
-    // Replace pseudo-array type syntax before passing to sqlparser-rs.
-    // The engine stores arrays as JSON strings, so the base type is sufficient.
-    let mut result = sql.to_string();
+    // Fix scientific notation before other transforms
+    let mut result = fix_scientific_notation(sql);
     result = result.replace("STRINGS[]", "STRING");
     result = result.replace("FLOATS[]", "FLOAT");
 
