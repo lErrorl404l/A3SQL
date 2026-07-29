@@ -14,11 +14,8 @@ include = [
 ]
 
 [version]
-major = 0
-minor = 2
-patch = 0
-git_hash = 1  # APPENDS short git hash: 0.2.0.abc1234
-                # Use `hemtt build --release` for release builds
+path = "addons/main/script_version.hpp"
+git_hash = 1
 
 # ── Hooks ────────────────────────────────────────────────────────────────
 [hemtt.hooks]
