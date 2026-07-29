@@ -48,7 +48,9 @@ Configure via **CBA Settings** → **A3SQL** categories.
 
 ## Modules
 
-A3SQL is modular. Remove any PBO you don't need: | Addon | Purpose |
+A3SQL is modular. Remove any PBO you don't need:
+
+| Addon | Purpose |
 |-------|---------|
 | `a3sql_main` | Core mod definition (required) |
 | `a3sql_database` | SQL engine and query execution |
