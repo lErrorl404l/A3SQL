@@ -56,11 +56,29 @@ fn fix_scientific_notation(s: &str) -> String {
                     let exp: i32 = exp_str.parse().unwrap_or(0) * sign;
                     let mant: f64 = mant_str.parse().unwrap_or(0.0);
                     let val = mant * 10f64.powi(exp);
-                    if val.fract() == 0.0 && val.is_finite() && val >= i64::MIN as f64 && val <= i64::MAX as f64 {
-                        result.extend_from_slice(format!("{}", val as i64).as_bytes());
-                    } else {
-                        result.extend_from_slice(format!("{}", val).as_bytes());
+                    if val.is_finite() && val.abs() < 1e308 {
+                        // For values within reasonable range, emit the expanded form.
+                        // Use integer format when exact, float Display otherwise.
+                        let s = if val.fract() == 0.0 && val >= i64::MIN as f64 && val <= i64::MAX as f64 {
+                            format!("{}", val as i64)
+                        } else {
+                            format!("{}", val)
+                        };
+                        // Skip if output is absurdly long (sqlparser can't handle
+                        // 300-digit numbers). Fall through to emit original notation.
+                        if s.len() < 100 {
+                            result.extend_from_slice(s.as_bytes());
+                            continue;
+                        }
                     }
+                    // Overflow or too-long decimal — emit as float literal with
+                    // decimal point so sqlparser recognises it: 1e308 → 1.0e308.
+                    result.extend_from_slice(mantissa);
+                    result.extend_from_slice(b".0e");
+                    if sign == -1 {
+                        result.push(b'-');
+                    }
+                    result.extend_from_slice(&bytes[exp_start..i]);
                     continue;
                 }
             }

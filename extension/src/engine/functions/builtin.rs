@@ -50,12 +50,16 @@ pub(crate) fn sql_val_to_db(v: &sqlparser::ast::Value) -> DbValue {
         sqlparser::ast::Value::Null => DbValue::Null,
         sqlparser::ast::Value::Boolean(b) => DbValue::Bool(*b),
         sqlparser::ast::Value::Number(s, _) => {
-            if s.contains('.') {
+            if s.contains('.') || s.contains('e') || s.contains('E') {
                 s.parse::<f64>()
                     .map(DbValue::Float)
+                    .or_else(|_| s.parse::<i64>().map(DbValue::Int))
                     .unwrap_or(DbValue::String(s.clone()))
             } else {
-                s.parse::<i64>().map(DbValue::Int).unwrap_or(DbValue::String(s.clone()))
+                s.parse::<i64>()
+                    .map(DbValue::Int)
+                    .or_else(|_| s.parse::<f64>().map(DbValue::Float))
+                    .unwrap_or(DbValue::String(s.clone()))
             }
         }
         sqlparser::ast::Value::SingleQuotedString(s) | sqlparser::ast::Value::DoubleQuotedString(s) => {

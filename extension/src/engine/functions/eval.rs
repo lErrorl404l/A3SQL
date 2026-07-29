@@ -746,6 +746,10 @@ pub(crate) fn eval_literal_expr(expr: &Expr) -> Result<DbValue, EngineError> {
             let val = eval_literal_expr(expr)?;
             apply_unary_op(op, &val)
         }
+        Expr::Subquery(query) => {
+            let vals = exec_subquery(query)?;
+            Ok(vals.into_iter().next().unwrap_or(DbValue::Null))
+        }
         _ => Err(EngineError::Exec(format!(
             "Complex expressions not supported in values: {:?}",
             expr
