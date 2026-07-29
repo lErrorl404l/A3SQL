@@ -574,15 +574,24 @@ pub(crate) fn materialize_view(name: &str, db: &mut Database) -> Result<(), Engi
 
     if rows.len() >= 2 {
         let header = &rows[0];
+        // Infer column types from the first data row (same approach as CTE code)
         let cols: Vec<Column> = header
             .iter()
-            .map(|h| Column {
-                name: h.as_str().unwrap_or("col").to_lowercase(),
-                dtype: ColumnType::String,
-                primary_key: false,
-                not_null: false,
-                default: None,
-                auto_increment: false,
+            .enumerate()
+            .map(|(i, h)| {
+                let dtype = rows
+                    .get(1)
+                    .and_then(|r| r.get(i))
+                    .map(json_type_to_column)
+                    .unwrap_or(ColumnType::String);
+                Column {
+                    name: h.as_str().unwrap_or("col").to_lowercase(),
+                    dtype,
+                    primary_key: false,
+                    not_null: false,
+                    default: None,
+                    auto_increment: false,
+                }
             })
             .collect();
 
@@ -596,6 +605,23 @@ pub(crate) fn materialize_view(name: &str, db: &mut Database) -> Result<(), Engi
     }
 
     Ok(())
+}
+
+/// Infer ColumnType from a JSON value (shared with CTE code).
+fn json_type_to_column(v: &serde_json::Value) -> ColumnType {
+    match v {
+        serde_json::Value::Null => ColumnType::String,
+        serde_json::Value::Bool(_) => ColumnType::Bool,
+        serde_json::Value::Number(n) => {
+            if n.is_f64() {
+                ColumnType::Float
+            } else {
+                ColumnType::Int
+            }
+        }
+        serde_json::Value::String(_) => ColumnType::String,
+        _ => ColumnType::String,
+    }
 }
 
 /// Resolve a table factor, materialising a view if the name is not a real table.
