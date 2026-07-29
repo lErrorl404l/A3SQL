@@ -100,22 +100,32 @@ def process_file(filePath, skipA3Warnings=True, skipPragmaHemtt=True):
         cmd.append("-v")
         cmd.append(v)
 
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, universal_newlines=True)
+    proc = subprocess.Popen(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, universal_newlines=True
+    )
     try:
         proc.wait(12)
     except Exception:
         print("sqfvm timed out: {}".format(filePath))
         return True
 
-    fileHasError = False
+    # Track real errors (not virtual-path include failures)
+    realError = False
     while True:
         line = proc.stdout.readline()
         if not line:
             break
         line = line.rstrip()
         if line.startswith("[ERR]"):
-            fileHasError = True
-        if not (
+            skipIt = "Failed to include" in line and (
+                (_prefix and _prefix in line) or "..\\" in line
+            )
+            if skipIt:
+                pass  # HEMTT virtual path — skip as false positive
+            else:
+                realError = True
+                print("  {}".format(line))
+        elif not (
             (
                 skipA3Warnings
                 and line.startswith("[WRN]")
@@ -129,7 +139,7 @@ def process_file(filePath, skipA3Warnings=True, skipPragmaHemtt=True):
             )
         ):
             print("  {}".format(line))
-    return fileHasError
+    return realError
 
 
 # ── Main ─────────────────────────────────────────────────────────
