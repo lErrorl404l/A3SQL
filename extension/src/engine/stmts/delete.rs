@@ -185,7 +185,7 @@ pub(crate) fn exec_delete(del: &Delete, db: &mut Database) -> Result<String, Eng
     };
 
     // Fire BEFORE DELETE triggers (aborts if trigger returns error)
-    if let Err(e) = fire_triggers_before(&table_name, "DELETE", db) {
+    if let Err(e) = fire_triggers_before(&table_name, "DELETE", db, &[], &[]) {
         return Err(EngineError::Exec(e));
     }
 
@@ -208,6 +208,12 @@ pub(crate) fn exec_delete(del: &Delete, db: &mut Database) -> Result<String, Eng
         return Ok(format_projected_result(ref_rows, returning, &table.col_index, table));
     }
 
-    fire_triggers(&table_name, "DELETE", db);
+    fire_triggers(
+        &table_name,
+        "DELETE",
+        db,
+        &[],
+        &old_rows.last().map(|r| r.as_slice()).unwrap_or(&[]),
+    );
     Ok(format!("\"Deleted {} row(s)\"", count))
 }

@@ -86,7 +86,7 @@ pub(crate) fn exec_insert(ins: &Insert, db: &mut Database) -> Result<String, Eng
     };
 
     // Fire BEFORE INSERT triggers (aborts if trigger raises error)
-    if let Err(e) = fire_triggers_before(&table_name, "INSERT", db) {
+    if let Err(e) = fire_triggers_before(&table_name, "INSERT", db, &[], &[]) {
         return Err(EngineError::Exec(e));
     }
 
@@ -281,6 +281,7 @@ pub(crate) fn exec_insert(ins: &Insert, db: &mut Database) -> Result<String, Eng
         return Ok(format_projected_result(ref_rows, returning, &table.col_index, table));
     }
 
-    fire_triggers(&table_name, "INSERT", db);
+    let last_new = inserted_rows.last().map(|r| r.as_slice()).unwrap_or(&[]);
+    fire_triggers(&table_name, "INSERT", db, last_new, &[]);
     Ok(format!("\"Inserted {} row(s)\"", inserted))
 }

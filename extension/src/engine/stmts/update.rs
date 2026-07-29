@@ -220,7 +220,7 @@ pub(crate) fn exec_update(upd: &Update, db: &mut Database) -> Result<String, Eng
         // Fire BEFORE UPDATE triggers (drop mutable borrow first)
     };
 
-    if let Err(e) = fire_triggers_before(&table_name, "UPDATE", db) {
+    if let Err(e) = fire_triggers_before(&table_name, "UPDATE", db, &[], &[]) {
         return Err(EngineError::Exec(e));
     }
 
@@ -242,6 +242,12 @@ pub(crate) fn exec_update(upd: &Update, db: &mut Database) -> Result<String, Eng
         return Ok(format_projected_result(ref_rows, returning, &table.col_index, table));
     }
 
-    fire_triggers(&table_name, "UPDATE", db);
+    fire_triggers(
+        &table_name,
+        "UPDATE",
+        db,
+        &[],
+        &old_rows.last().map(|r| r.as_slice()).unwrap_or(&[]),
+    );
     Ok(format!("\"Updated {} row(s)\"", validated_updates.len()))
 }

@@ -11,7 +11,9 @@
 
 use std::cell::Cell;
 
-use crate::engine::database::Database;
+use super::database::Database;
+use super::prelude::value_to_string;
+use crate::engine::value::DbValue;
 
 /// Maximum trigger recursion depth before execution is silently skipped.
 const MAX_DEPTH: u32 = 16;
@@ -35,12 +37,34 @@ impl TriggerInfo {
     }
 }
 
+/// Format a DbValue as a SQL literal (type-correct) for trigger body substitution.
+fn sv(v: &DbValue) -> String {
+    match v {
+        DbValue::Null => "NULL".into(),
+        DbValue::Bool(b) => format!("{}", if *b { 1 } else { 0 }),
+        DbValue::Int(n) => format!("{}", n),
+        DbValue::Float(f) => format!("{}", f),
+        DbValue::String(s) => format!("'{}'", s),
+        DbValue::Strings(v) => serde_json::to_string(v).unwrap_or_default(),
+        DbValue::Floats(v) => serde_json::to_string(v).unwrap_or_default(),
+    }
+}
+
 /// Fire AFTER triggers for a given table and event.
+///
+/// `new_row` / `old_row` provide the affected row for NEW.col / OLD.col substitution.
+/// Pass `&[]` if no row context is available (the prefixes will be stripped silently).
 ///
 /// Returns immediately (no-op) if the trigger recursion limit has been reached.
 /// This prevents infinite loops when a trigger body performs INSERT/UPDATE/DELETE
 /// that would fire other triggers.
-pub(crate) fn fire_triggers(table_name: &str, event: &str, db: &mut Database) {
+pub(crate) fn fire_triggers(
+    table_name: &str,
+    event: &str,
+    db: &mut Database,
+    new_row: &[DbValue],
+    old_row: &[DbValue],
+) {
     // Guard: skip if we've recursed too deep
     let prev = TRIGGER_DEPTH.with(|d| {
         let depth = d.get();
@@ -66,8 +90,30 @@ pub(crate) fn fire_triggers(table_name: &str, event: &str, db: &mut Database) {
             .cloned()
             .collect();
         let _ = t;
+        let cols = t.columns.clone();
         for tr in triggers {
-            let body = tr.body.replace("OLD.", "").replace("NEW.", "");
+            let mut body = tr.body.clone();
+            for (ci, col) in cols.iter().enumerate() {
+                let col_name = col.name.clone();
+                if ci < new_row.len() {
+                    let new_val = sv(&new_row[ci]);
+                    for prefix in ["NEW.", "new.", "New."] {
+                        body = body.replace(&format!("{}{}", prefix, col_name), &new_val);
+                    }
+                }
+                if ci < old_row.len() {
+                    let old_val = sv(&old_row[ci]);
+                    for prefix in ["OLD.", "old.", "Old."] {
+                        body = body.replace(&format!("{}{}", prefix, col_name), &old_val);
+                    }
+                }
+            }
+            // Fallback: strip remaining OLD./NEW. prefixes for bare column names
+            body = body
+                .replace("OLD.", "")
+                .replace("old.", "")
+                .replace("NEW.", "")
+                .replace("new.", "");
             if let Err(e) = crate::engine::execute::parse_and_exec(&body, db) {
                 eprintln!("Trigger '{}' error: {}", tr.name, e);
             }
@@ -79,9 +125,18 @@ pub(crate) fn fire_triggers(table_name: &str, event: &str, db: &mut Database) {
 
 /// Fire BEFORE triggers for a given table and event.
 ///
+/// `new_row` / `old_row` provide the affected row for NEW.col / OLD.col substitution.
+/// Pass `&[]` if no row context is available.
+///
 /// Returns an error if any BEFORE trigger fails (e.g., via RAISE(ABORT, ...)).
 /// Unlike `fire_triggers` (AFTER), BEFORE triggers can abort the operation.
-pub(crate) fn fire_triggers_before(table_name: &str, event: &str, db: &mut Database) -> Result<(), String> {
+pub(crate) fn fire_triggers_before(
+    table_name: &str,
+    event: &str,
+    db: &mut Database,
+    new_row: &[DbValue],
+    old_row: &[DbValue],
+) -> Result<(), String> {
     let prev = TRIGGER_DEPTH.with(|d| {
         let depth = d.get();
         if depth >= MAX_DEPTH {
@@ -102,8 +157,29 @@ pub(crate) fn fire_triggers_before(table_name: &str, event: &str, db: &mut Datab
             .filter(|tr| tr.event == event && tr.timing == "BEFORE")
             .cloned()
             .collect();
+        let cols = t.columns.clone();
         for tr in triggers {
-            let body = tr.body.replace("OLD.", "").replace("NEW.", "");
+            let mut body = tr.body.clone();
+            for (ci, col) in cols.iter().enumerate() {
+                let col_name = col.name.clone();
+                if ci < new_row.len() {
+                    let new_val = sv(&new_row[ci]);
+                    for prefix in ["NEW.", "new.", "New."] {
+                        body = body.replace(&format!("{}{}", prefix, col_name), &new_val);
+                    }
+                }
+                if ci < old_row.len() {
+                    let old_val = sv(&old_row[ci]);
+                    for prefix in ["OLD.", "old.", "Old."] {
+                        body = body.replace(&format!("{}{}", prefix, col_name), &old_val);
+                    }
+                }
+            }
+            body = body
+                .replace("OLD.", "")
+                .replace("old.", "")
+                .replace("NEW.", "")
+                .replace("new.", "");
             crate::engine::functions::builtin::RAISE_ABORTED.with(|f| f.set(false));
             if let Err(e) = crate::engine::execute::parse_and_exec(&body, db) {
                 TRIGGER_DEPTH.with(|d| d.set(prev));
@@ -170,7 +246,7 @@ mod tests {
     #[test]
     fn trigger_fires_once_simple() {
         let mut db = make_trigger_test_db();
-        fire_triggers("a", "INSERT", &mut db);
+        fire_triggers("a", "INSERT", &mut db, &[], &[]);
         let log = db.get_table("log").unwrap();
         assert_eq!(log.row_count(), 1, "trigger should have inserted one row");
         // DbValue::to_string() wraps strings in quotes, so check via debug or raw access
