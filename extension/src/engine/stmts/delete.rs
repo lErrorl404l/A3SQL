@@ -213,7 +213,7 @@ pub(crate) fn exec_delete(del: &Delete, db: &mut Database) -> Result<String, Eng
         "DELETE",
         db,
         &[],
-        &old_rows.last().map(|r| r.as_slice()).unwrap_or(&[]),
+        old_rows.last().map(|r| r.as_slice()).unwrap_or(&[]),
     );
     Ok(format!("\"Deleted {} row(s)\"", count))
 }
