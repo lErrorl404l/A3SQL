@@ -1,12 +1,14 @@
+#include "script_component.hpp"
 
 class CfgPatches {
     class ADDON {
         name = "A3SQL - Analytics";
         author = "ABE Team";
-        requiredVersion = 2.02;
+        requiredVersion = REQUIRED_VERSION;
         requiredAddons[] = {"a3sql_database", "cba_xeh"};
         units[] = {};
         weapons[] = {};
+        VERSION_CONFIG;
     };
 };
 
