@@ -59,7 +59,8 @@ fn serve_client(stream: std::net::TcpStream) {
             }
             continue;
         }
-        let result = dispatch::dispatch(trimmed, &[]);
+        let mut db = crate::ffi::DB.lock().unwrap();
+        let result = dispatch::dispatch_inner(&mut db, trimmed, &[]);
         let _ = writeln!(stream, "{}", result);
     }
 }
@@ -73,7 +74,8 @@ pub fn start_server(bind: &str, port: u16, db_path: Option<&str>) -> Result<Stri
 
     if let Some(path) = db_path {
         // Load existing database if file exists
-        let r = dispatch::dispatch(&format!("load {}", path), &[]);
+        let mut db = crate::ffi::DB.lock().unwrap();
+        let r = dispatch::dispatch_inner(&mut db, &format!("load {}", path), &[]);
         eprintln!("[a3sql-server] Loaded from {}: {}", path, r);
     }
 
@@ -84,7 +86,8 @@ pub fn start_server(bind: &str, port: u16, db_path: Option<&str>) -> Result<Stri
         let path = path.to_string();
         std::thread::spawn(move || loop {
             std::thread::sleep(std::time::Duration::from_secs(30));
-            let r = dispatch::dispatch(&format!("save {}", path), &[]);
+            let mut db = crate::ffi::DB.lock().unwrap();
+            let r = dispatch::dispatch_inner(&mut db, &format!("save {}", path), &[]);
             if r.contains("ERR") {
                 eprintln!("[a3sql-server] auto-save: {}", r);
             }
