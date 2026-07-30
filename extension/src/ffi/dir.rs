@@ -32,6 +32,13 @@ use crate::engine;
 pub(crate) static DB: LazyLock<Mutex<engine::Database>> = LazyLock::new(|| Mutex::new(engine::Database::new()));
 
 /// Optional pointer to the SQF callback function registered by the engine.
+///
+/// # Security boundary
+/// This callback is hijackable by co-loaded extensions that can call
+/// `RVExtensionRegisterCallback` before we do. This is accepted because
+/// co-loaded extensions already run in the same process with the same
+/// privileges — they can read/write any memory reachable from the DLL.
+/// The callback pointer is a convenience, not a security boundary.
 pub(crate) static CALLBACK: LazyLock<Mutex<Option<unsafe extern "C" fn(i32, *mut std::os::raw::c_char)>>> =
     LazyLock::new(|| Mutex::new(None));
 // ponytail: external TCP listener — global lock on a single listener

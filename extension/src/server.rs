@@ -2,6 +2,12 @@
 
 //! TCP server — standalone and in-game TCP query interface.
 //! Supports LOGIN auth, multi-client, and optional file persistence.
+//!
+//! # Security boundary — auth bypass note
+//! The TCP LOGIN auth prevents _external_ network access, but SQF running in
+//! the same game client can bypass it entirely via `RVExtensionArgs` which
+//! has full DB access. This is an accepted design constraint in the Arma
+//! threat model: SQF already owns the process and its memory.
 
 use crate::dispatch;
 use crate::ffi::{CREDENTIALS, LISTENER};
