@@ -217,6 +217,8 @@ fn handle_create_trigger(sql: &str, db: &mut crate::engine::database::Database) 
     let rest = s
         .strip_prefix("CREATE TRIGGER ")
         .or_else(|| s.strip_prefix("create trigger "))
+        .or_else(|| s.strip_prefix("CREATE OR REPLACE TRIGGER "))
+        .or_else(|| s.strip_prefix("create or replace trigger "))
         .ok_or_else(|| "CREATE TRIGGER syntax error".to_string())?;
 
     // Trigger name (first word)
