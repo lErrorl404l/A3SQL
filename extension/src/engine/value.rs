@@ -59,6 +59,7 @@ pub(crate) enum DbValue {
 
 impl DbValue {
     /// Attempt to coerce a string into this value's type for comparison.
+    #[allow(dead_code, reason = "value coercion for comparison not yet wired")]
     pub fn coerce(&self, raw: &str) -> Self {
         match self {
             DbValue::Int(_) | DbValue::Null => raw

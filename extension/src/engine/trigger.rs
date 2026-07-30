@@ -31,6 +31,7 @@ pub(crate) struct TriggerInfo {
 }
 
 impl TriggerInfo {
+    #[allow(dead_code, reason = "trigger matching not yet wired into executor")]
     pub fn matches(&self, event: &str, timing: &str) -> bool {
         self.event == event && self.timing == timing
     }
