@@ -16,7 +16,10 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659
       - run: cargo build --release --manifest-path extension/Cargo.toml
       - name: Rename artifact
-        run: cp extension/target/release/liba3sql.so a3sql_x64.so
+        run: |
+          # Target dir is at project root (extension/ is a crate, not workspace)
+          cp target/release/liba3sql.so a3sql_x64.so
+          ls -la a3sql_x64.so
 
   windows:
     runs-on: ubuntu-latest
