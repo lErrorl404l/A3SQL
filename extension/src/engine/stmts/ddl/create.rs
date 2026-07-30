@@ -176,6 +176,7 @@ pub(crate) fn exec_create_view(cv: &sqlparser::ast::CreateView, db: &mut Databas
 
 // ── CREATE TABLE AS SELECT (CTAS) ──────────────────────────────────────
 
+#[allow(dead_code, reason = "CTAS not yet wired into DDL dispatch")]
 pub(crate) fn exec_create_table_as(
     def: &sqlparser::ast::CreateTable,
     db: &mut Database,
@@ -186,7 +187,10 @@ pub(crate) fn exec_create_table_as(
         return Ok(format!("\"Table '{}' already exists\"", table_name));
     }
 
-    let query = def.query.as_ref().unwrap();
+    let query = def
+        .query
+        .as_ref()
+        .ok_or_else(|| EngineError::Exec("CTAS requires a SELECT query".into()))?;
     let json = super::super::select::exec_select(query, db)?;
 
     let rows: Vec<Vec<serde_json::Value>> =

@@ -65,7 +65,7 @@ fn test_save_load_cycle() {
     assert!(r.contains("2"), "count before save: {}", r);
 
     // Save to file
-    let r = a3sql::dispatch("save /tmp/a3sql_save_test.bin", &[]);
+    let r = a3sql::dispatch("save a3sql_save_test.bin", &[]);
     assert!(r.contains("\"OK\""), "save: {}", r);
     println!("✅ Save OK");
 
@@ -81,7 +81,7 @@ fn test_save_load_cycle() {
     println!("✅ Table dropped OK");
 
     // Load from save
-    let r = a3sql::dispatch("load /tmp/a3sql_save_test.bin", &[]);
+    let r = a3sql::dispatch("load a3sql_save_test.bin", &[]);
     assert!(r.contains("\"OK\""), "load: {}", r);
     println!("✅ Load OK");
 
@@ -94,6 +94,6 @@ fn test_save_load_cycle() {
     println!("✅ Rules restored with group and notes");
 
     // Cleanup
-    std::fs::remove_file("/tmp/a3sql_save_test.bin").ok();
+    std::fs::remove_file("a3sql_data/a3sql_save_test.bin").ok();
     eprintln!("\n🎉 Auto-save/load verified: save/load cycle preserves all fields including group_name and notes");
 }

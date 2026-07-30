@@ -164,7 +164,9 @@ pub(crate) fn tokenize(input: &str) -> Result<Vec<Token>, String> {
         }
 
         // Multi-character operators
-        let next = chars.next().unwrap();
+        let next = chars
+            .next()
+            .ok_or_else(|| "unexpected end of input after SQF token".to_string())?;
         match next {
             '|' if chars.peek() == Some(&'|') => {
                 chars.next();

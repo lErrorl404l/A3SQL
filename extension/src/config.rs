@@ -10,6 +10,7 @@ use std::path::Path;
 use std::sync::LazyLock;
 
 /// Cached application config, loaded once on first access.
+#[allow(dead_code, reason = "phased auth implementation")]
 pub(crate) static CONFIG: LazyLock<Config> = LazyLock::new(Config::load);
 
 /// Parsed application config.
@@ -21,15 +22,22 @@ pub(crate) struct Config {
 
     /// Hex‑encoded Ed25519 public key (64 hex chars). Required when
     /// `auth_required` is `true` and the `auth` feature is enabled.
+    #[allow(dead_code, reason = "phased auth implementation")]
     pub public_key: Option<String>,
 
     /// Require every query to carry a `SIGNED <sig> <query>` prefix with a
     /// valid Ed25519 signature. Default: `false`.
+    #[allow(dead_code, reason = "phased auth implementation")]
     pub auth_required: Option<bool>,
+
+    /// Directory for file I/O commands (SAVE, LOAD, export_to_file).
+    /// Defaults to `./a3sql_data/` when not set.
+    pub data_dir: Option<String>,
 }
 
 impl Config {
     /// Whether auth verification is required.
+    #[allow(dead_code, reason = "phased auth implementation")]
     pub(crate) fn auth_enabled(&self) -> bool {
         #[cfg(feature = "auth")]
         {
@@ -42,6 +50,7 @@ impl Config {
     }
 
     /// The configured Ed25519 public key bytes, if any.
+    #[allow(dead_code, reason = "phased auth implementation")]
     pub(crate) fn public_key_bytes(&self) -> Option<[u8; 32]> {
         #[cfg(feature = "auth")]
         {
@@ -50,6 +59,15 @@ impl Config {
         #[cfg(not(feature = "auth"))]
         {
             None
+        }
+    }
+
+    /// The directory for file I/O (SAVE, LOAD, export_to_file).
+    /// Defaults to `./a3sql_data/`.
+    pub(crate) fn data_dir(&self) -> &std::path::Path {
+        match self.data_dir.as_deref() {
+            Some(d) => std::path::Path::new(d),
+            None => std::path::Path::new("./a3sql_data"),
         }
     }
 

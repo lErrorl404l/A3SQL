@@ -32,6 +32,13 @@ use crate::engine;
 pub(crate) static DB: LazyLock<Mutex<engine::Database>> = LazyLock::new(|| Mutex::new(engine::Database::new()));
 
 /// Optional pointer to the SQF callback function registered by the engine.
+///
+/// # Security boundary
+/// This callback is hijackable by co-loaded extensions that can call
+/// `RVExtensionRegisterCallback` before we do. This is accepted because
+/// co-loaded extensions already run in the same process with the same
+/// privileges — they can read/write any memory reachable from the DLL.
+/// The callback pointer is a convenience, not a security boundary.
 pub(crate) static CALLBACK: LazyLock<Mutex<Option<unsafe extern "C" fn(i32, *mut std::os::raw::c_char)>>> =
     LazyLock::new(|| Mutex::new(None));
 // ponytail: external TCP listener — global lock on a single listener
@@ -44,6 +51,10 @@ pub(crate) static REMOTE: LazyLock<Mutex<Option<std::net::TcpStream>>> = LazyLoc
 
 /// Output buffer size from Arma engine. Bumped to 20480 for fewer round-trips
 /// on larger result sets. Arma 3 v2.20 supports up to ~30 KB.
+#[allow(
+    dead_code,
+    reason = "OUTPUT_BUF_SIZE is a public constant checked in dispatch.rs and passed to Arma via RVExtensionArgs"
+)]
 pub(crate) const OUTPUT_BUF_SIZE: u32 = 20480;
 
 /// Version string — max 32 bytes including null terminator.
@@ -113,12 +124,13 @@ pub fn build_extension() -> Extension {
 /// - `payload[0]` — SQL input string
 /// - `payload[1..]` — bind parameter strings (substituted for `$1`, `$2`, ...)
 fn sql_handler(payload: Vec<String>) -> String {
+    let mut db = DB.lock().unwrap();
     if payload.is_empty() {
-        return dispatch::dispatch("", &[]);
+        return dispatch::dispatch_inner(&mut db, "", &[]);
     }
     let input = &payload[0];
     let args: Vec<&str> = payload[1..].iter().map(|s| s.as_str()).collect();
-    dispatch::dispatch(input, &args)
+    dispatch::dispatch_inner(&mut db, input, &args)
 }
 
 // ── C ABI ─────────────────────────────────────────────────────────────────────
@@ -134,7 +146,11 @@ pub unsafe extern "C" fn RVExtensionVersion(output: *mut c_char, output_size: u3
     with_extension(|_| {}); // ensure extension + plugins are initialised
     let version = version_bytes();
     let len = (output_size as usize).min(version.len());
-    std::ptr::copy_nonoverlapping(version.as_ptr(), output as *mut u8, len);
+    // SAFETY: `output` is guaranteed valid by the Arma engine contract
+    // and `output_size` bounds the copy length.
+    unsafe {
+        std::ptr::copy_nonoverlapping(version.as_ptr(), output as *mut u8, len);
+    }
 }
 
 /// STRING callExtension STRING — compatibility entry point.
@@ -147,7 +163,8 @@ pub unsafe extern "C" fn RVExtensionVersion(output: *mut c_char, output_size: u3
 #[no_mangle]
 pub unsafe extern "C" fn RVExtension(output: *mut c_char, output_size: u32, _function: *const c_char) {
     if !output.is_null() && output_size > 0 {
-        *output = 0;
+        // SAFETY: `output` is non-null and `output_size > 0` guarantees at least one byte.
+        unsafe { *output = 0 };
     }
 }
 
@@ -177,14 +194,17 @@ pub unsafe extern "C" fn RVExtensionArgs(
         return -1;
     }
     with_extension(|ext| {
-        ext.handle_call(
-            function as *mut c_char,
-            output,
-            output_size as usize,
-            Some(argv as *mut *mut i8),
-            Some(argc as i32),
-            true,
-        )
+        // SAFETY: All pointer arguments are guaranteed valid, non-null by the Arma engine contract.
+        unsafe {
+            ext.handle_call(
+                function as *mut c_char,
+                output,
+                output_size as usize,
+                Some(argv as *mut *mut i8),
+                Some(argc as i32),
+                true,
+            )
+        }
     })
 }
 

@@ -92,7 +92,10 @@ impl Table {
         self.col_index.remove(old_name);
         self.col_index.insert(
             new_name.to_string(),
-            self.columns.iter().position(|c| c.name == new_name).unwrap(),
+            self.columns
+                .iter()
+                .position(|c| c.name == new_name)
+                .ok_or_else(|| EngineError::Internal("column index not found after rename".into()))?,
         );
         Ok(())
     }
@@ -112,6 +115,7 @@ impl Table {
     }
 
     /// Get the header row (column names).
+    #[allow(dead_code, reason = "header accessor not yet used externally")]
     pub fn header(&self) -> Vec<&str> {
         self.columns.iter().map(|c| c.name.as_str()).collect()
     }

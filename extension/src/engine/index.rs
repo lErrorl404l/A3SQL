@@ -78,6 +78,7 @@ impl BTreeIndex {
 
     /// Partial match (for `LIKE 'prefix%'` or `>`, `<` comparisons).
     /// Returns all row indices where the key matches a predicate.
+    #[allow(dead_code, reason = "range queries not yet wired in executor")]
     pub fn range_lookup<F>(&self, mut predicate: F) -> Vec<usize>
     where
         F: FnMut(&str) -> bool,
@@ -92,6 +93,7 @@ impl BTreeIndex {
     }
 
     /// Scan all entries.
+    #[allow(dead_code, reason = "full index scan not yet wired in executor")]
     pub fn all_entries(&self) -> Vec<usize> {
         self.entries.values().flat_map(|v| v.iter().copied()).collect()
     }
@@ -119,6 +121,7 @@ impl TrigramIndex {
         }
     }
 
+    #[allow(dead_code, reason = "index column accessor not yet used externally")]
     pub fn column(&self) -> &str {
         &self.column
     }

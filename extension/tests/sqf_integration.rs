@@ -546,3 +546,36 @@ fn sqf_eval_with_commands() {
     assert_ok(&r, "SQF_EVAL typename");
     assert!(r.contains("SCALAR"), "expected SCALAR: {}", r);
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 15. Error recovery — SQF expression parse/lex errors produce null result
+//     (regression guards for unwrap() → proper error replacements)
+//     Note: SQF_EVAL inside SQL SELECT catches parse errors and returns null,
+//     so these verify the null-output behavior as a regression signal.
+// ─────────────────────────────────────────────────────────────────────────────
+#[test]
+fn sqf_eval_lexer_error_on_trailing_operator() {
+    let _g = setup();
+
+    // Input ending with '=' triggers the lexer error path
+    // (chars.next().ok_or_else("unexpected end of input after SQF token"))
+    // SQF_EVAL returns null on parse error, not an error response.
+    let r = dispatch("SELECT SQF_EVAL('1 =')", &[]);
+    assert_ok(&r, "SQF_EVAL trailing =");
+    assert!(
+        r.contains("null"),
+        "expected null result for trailing = (parse error caught by SELECT handler): {}",
+        r
+    );
+}
+
+#[test]
+fn sqf_eval_parser_error_on_trailing_binary_op() {
+    let _g = setup();
+
+    // Input ending with '+' (binary op with no RHS) triggers the parser error
+    // (self.advance().ok_or_else("unexpected end of expression"))
+    let r = dispatch("SELECT SQF_EVAL('1 +')", &[]);
+    assert_ok(&r, "SQF_EVAL 1 +");
+    assert!(r.contains("null"), "expected null result for trailing '+': {}", r);
+}

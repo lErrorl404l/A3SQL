@@ -7,7 +7,7 @@ notice = "deny"
 ignore = []
 
 [licenses]
-unlicensed = "denon"
+unlicensed = "deny"
 allow = [
     "MIT",
     "Apache-2.0",

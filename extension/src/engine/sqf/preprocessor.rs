@@ -12,7 +12,7 @@
 /// Returns the command name and processed args if the expression uses a
 /// macro-passthrough pattern. Otherwise returns None.
 /// Not yet implemented — reserved for future macro dispatch.
-#[allow(dead_code)]
+#[allow(dead_code, reason = "SQF preprocessor not yet wired into executor")]
 pub(crate) fn preprocess(input: &str) -> Result<String, String> {
     #[cfg(feature = "sqf-preprocessor")]
     {
