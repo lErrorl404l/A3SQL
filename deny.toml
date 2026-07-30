@@ -17,7 +17,7 @@ allow = [
 ]
 deny = []
 copyleft = "deny"
-allow-osi-fsf-free = "neither"
+allow-osi-fsf-free = "none"
 default = "deny"
 confidence-threshold = 0.8
 
