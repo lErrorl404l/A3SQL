@@ -37,10 +37,13 @@ include = [
 ]
 
 # ── Signing ──────────────────────────────────────────────────────────────
-# Uncomment and configure for signed PBO releases:
+# Generate a key pair:
+#   hemtt key create
+# Place the .biprivatekey somewhere secure, commit the .bikey.
+# Then uncomment:
 # [hemtt.sign]
-# private_key = "../keys/a3sql.biprivatekey"
-# public_key = "../keys/a3sql.bikey"
+# private_key = "./keys/a3sql.biprivatekey"
+# public_key  = "./a3sql.bikey"
 
 # ── Workshop ─────────────────────────────────────────────────────────────
 # PublishedID set in meta.cpp (per-environment)
