@@ -151,7 +151,10 @@ impl Parser {
             if !is_infix_binop || prec < min_prec {
                 break;
             }
-            let op_token = self.advance().unwrap().clone();
+            let op_token = self
+                .advance()
+                .ok_or_else(|| "unexpected end of expression".to_string())?
+                .clone();
             if let Token::Ident(name) = &op_token {
                 // SQF binary command: lhs <command> rhs
                 let rhs = self.parse_bp(0)?;
@@ -159,7 +162,11 @@ impl Parser {
             } else {
                 // Symbolic operator
                 let rhs = self.parse_bp(prec + 1)?;
-                lhs = Expr::Binary(op_from_token(&op_token).unwrap(), Box::new(lhs), Box::new(rhs));
+                lhs = Expr::Binary(
+                    op_from_token(&op_token).ok_or_else(|| format!("unknown operator: {:?}", op_token))?,
+                    Box::new(lhs),
+                    Box::new(rhs),
+                );
             }
         }
 
