@@ -19,8 +19,10 @@ use sqlparser::ast::Statement;
 use super::error::EngineError;
 
 /// Maximum optimisation passes before we give up.
+#[allow(dead_code, reason = "optimizer not yet wired into query execution")]
 const MAX_ITERATIONS: usize = 10;
 /// Per-rule time budget (milliseconds).
+#[allow(dead_code, reason = "optimizer not yet wired into query execution")]
 const RULE_TIMEOUT_MS: u64 = 100;
 
 // ── Trait ───────────────────────────────────────────────────────────────
@@ -29,6 +31,7 @@ const RULE_TIMEOUT_MS: u64 = 100;
 ///
 /// Return [`Transformed::Yes(rewritten)`] when a change was made,
 /// [`Transformed::No`] when the statement is already optimal for this rule.
+#[allow(dead_code, reason = "optimizer not yet wired into query execution")]
 pub(crate) trait OptimizerRule: std::fmt::Debug {
     fn name(&self) -> &str;
 
@@ -38,18 +41,21 @@ pub(crate) trait OptimizerRule: std::fmt::Debug {
 }
 
 /// Result of a rewrite pass.
+#[allow(dead_code, reason = "optimizer not yet wired into query execution")]
 pub(crate) enum Transformed<T> {
     Yes(T),
     No(T),
 }
 
 impl<T> Transformed<T> {
+    #[allow(dead_code, reason = "optimizer not yet wired into query execution")]
     pub(crate) fn into_inner(self) -> T {
         match self {
             Transformed::Yes(t) | Transformed::No(t) => t,
         }
     }
 
+    #[allow(dead_code, reason = "optimizer not yet wired into query execution")]
     pub(crate) fn was_changed(&self) -> bool {
         matches!(self, Transformed::Yes(_))
     }
@@ -60,11 +66,13 @@ impl<T> Transformed<T> {
 /// Holds the ordered list of optimisation rules and applies them to
 /// reach a fixed point.
 #[derive(Debug)]
+#[allow(dead_code, reason = "optimizer not yet wired into query execution")]
 pub(crate) struct Optimizer {
     rules: Vec<Box<dyn OptimizerRule>>,
 }
 
 impl Optimizer {
+    #[allow(dead_code, reason = "optimizer not yet wired into query execution")]
     pub(crate) fn new() -> Self {
         Optimizer {
             rules: vec![Box::new(SimplifyExpressions)],
@@ -73,6 +81,7 @@ impl Optimizer {
 
     /// Run all rules in order until no rule reports a change, up to
     /// [`MAX_ITERATIONS`] rounds.
+    #[allow(dead_code, reason = "optimizer not yet wired into query execution")]
     pub(crate) fn optimize(&self, stmt: Statement) -> Result<Statement, EngineError> {
         let start = Instant::now();
         let mut current = stmt;
@@ -115,6 +124,7 @@ impl Default for Optimizer {
 /// Currently handles:
 /// - No optimizations implemented yet (placeholder rule)
 #[derive(Debug)]
+#[allow(dead_code, reason = "optimizer not yet wired into query execution")]
 struct SimplifyExpressions;
 
 impl OptimizerRule for SimplifyExpressions {
