@@ -112,6 +112,7 @@ impl Table {
     }
 
     /// Get the header row (column names).
+    #[allow(dead_code, reason = "header accessor not yet used externally")]
     pub fn header(&self) -> Vec<&str> {
         self.columns.iter().map(|c| c.name.as_str()).collect()
     }

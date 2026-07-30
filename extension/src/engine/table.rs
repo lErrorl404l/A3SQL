@@ -72,9 +72,7 @@ impl Table {
                 self.pk_set.insert(key);
             }
         }
-        for (meta, _) in &self.indices {
-            let _ = meta;
-        }
+        self.rebuild_indices();
     }
 
     // ── Index management ────────────────────────────────────────────
