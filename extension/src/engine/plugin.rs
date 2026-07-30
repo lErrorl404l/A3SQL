@@ -264,9 +264,16 @@ pub extern "C" fn a3sql_plugin_register_function(
     min_args: i32,
     max_args: i32,
 ) -> i32 {
+    // SAFETY: plugin_name points to a null-terminated C string allocated by
+    // the plugin's C ABI init context. The caller guarantees the pointer is
+    // valid and non-null for the duration of from_ptr. This function is only
+    // called during plugin registration, before any SQL execution.
     let pname = unsafe { std::ffi::CStr::from_ptr(plugin_name) }
         .to_string_lossy()
         .into_owned();
+    // SAFETY: Same guarantees as plugin_name above — func_name is a valid
+    // non-null C string provided by the plugin init context, and remains
+    // valid for the lifetime of the from_ptr call.
     let fname = unsafe { std::ffi::CStr::from_ptr(func_name) }
         .to_string_lossy()
         .into_owned();
