@@ -11,10 +11,12 @@ pub(crate) mod error;
 pub(crate) mod execute;
 pub(crate) mod functions;
 pub(crate) mod index;
+#[path = "optimizer/dir.rs"]
 pub(crate) mod optimizer;
 pub(crate) mod plugin;
 pub(crate) mod prelude;
 pub(crate) mod serialize;
+#[path = "sqf/dir.rs"]
 pub(crate) mod sqf;
 pub(crate) mod stmts;
 pub(crate) mod table;

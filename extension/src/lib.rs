@@ -8,14 +8,17 @@
 //   _RVExtensionVersion@8, _RVExtension@12, _RVExtensionArgs@20
 
 #![allow(non_snake_case)]
+#![deny(unsafe_op_in_unsafe_fn)]
 // ponytail: unused items kept for phased implementation
-#![allow(dead_code)]
 
 pub(crate) mod auth;
 pub(crate) mod config;
 pub(crate) mod dispatch;
+#[path = "engine/dir.rs"]
 mod engine;
+#[path = "ffi/dir.rs"]
 pub mod ffi;
+#[path = "parser/dir.rs"]
 pub mod parser;
 pub(crate) mod server;
 

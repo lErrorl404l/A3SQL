@@ -34,12 +34,3 @@ pub fn eval_sqf(expression: &str, bindings: &HashMap<String, DbValue>) -> Result
     let expr = parser::parse(tokens)?;
     eval::eval(&expr, bindings)
 }
-
-/// Convenience: evaluate a standalone SQF expression with no variable bindings.
-/// Returns DbValue::Null on error (for SQL NULL semantics).
-pub fn eval_sqf_or_null(expression: &str) -> DbValue {
-    match eval_sqf(expression, &HashMap::new()) {
-        Ok(v) => v,
-        Err(_) => DbValue::Null,
-    }
-}
