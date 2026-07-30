@@ -162,28 +162,28 @@ pub(crate) fn exec_copy(
             let row: Vec<crate::engine::value::DbValue> = values
                 .iter()
                 .zip(table.columns.iter())
-                .map(|(v, col)| {
+                .map(|(v, col)| -> Result<crate::engine::value::DbValue, EngineError> {
                     let trimmed = v.trim();
                     if trimmed.is_empty() || trimmed == "NULL" || trimmed == "null" {
-                        return crate::engine::value::DbValue::Null;
+                        return Ok(crate::engine::value::DbValue::Null);
                     }
                     match col.dtype {
                         crate::engine::value::ColumnType::Int => trimmed
                             .parse::<i64>()
                             .map(crate::engine::value::DbValue::Int)
-                            .unwrap_or(crate::engine::value::DbValue::Null),
+                            .map_err(|_| EngineError::Exec(format!("COPY FROM stdin: invalid integer '{}'", trimmed))),
                         crate::engine::value::ColumnType::Float => trimmed
                             .parse::<f64>()
                             .map(crate::engine::value::DbValue::Float)
-                            .unwrap_or(crate::engine::value::DbValue::Null),
-                        crate::engine::value::ColumnType::Bool => match trimmed.to_lowercase().as_str() {
+                            .map_err(|_| EngineError::Exec(format!("COPY FROM stdin: invalid float '{}'", trimmed))),
+                        crate::engine::value::ColumnType::Bool => Ok(match trimmed.to_lowercase().as_str() {
                             "true" | "1" => crate::engine::value::DbValue::Bool(true),
                             _ => crate::engine::value::DbValue::Bool(false),
-                        },
-                        _ => crate::engine::value::DbValue::String(trimmed.to_string()),
+                        }),
+                        _ => Ok(crate::engine::value::DbValue::String(trimmed.to_string())),
                     }
                 })
-                .collect();
+                .collect::<Result<Vec<_>, _>>()?;
             table
                 .insert(row)
                 .map_err(|e| EngineError::Exec(format!("COPY FROM stdin: {}", e)))?;

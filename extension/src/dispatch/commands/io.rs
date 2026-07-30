@@ -1,5 +1,50 @@
+use std::path::Path;
+
+use crate::config::CONFIG;
 use crate::engine;
 use crate::engine::error::{error_response, ok_response, ErrorCode};
+
+// ── Path validation ─────────────────────────────────────────────────────
+
+/// Validate and resolve `filename` against the configured `data_dir`.
+/// Rejects absolute paths and paths containing `..` or `~`.
+/// Creates the data directory if it does not exist.
+/// Returns an error response string on failure.
+fn safe_data_path(filename: &str) -> Result<std::path::PathBuf, String> {
+    // ponytail: global data_dir lock; per-account dirs if multi-tenant needed
+    let p = Path::new(filename);
+    if p.is_absolute() {
+        return Err(error_response(ErrorCode::Io, "Absolute paths are not allowed"));
+    }
+    for component in p.components() {
+        let s = component.as_os_str().to_str().unwrap_or("");
+        if s == ".." {
+            return Err(error_response(ErrorCode::Io, "Path must not contain '..'"));
+        }
+        if s == "~" {
+            return Err(error_response(ErrorCode::Io, "Path must not contain '~'"));
+        }
+    }
+    let data_dir = CONFIG.data_dir().to_path_buf();
+    if !data_dir.exists() {
+        std::fs::create_dir_all(&data_dir)
+            .map_err(|e| error_response(ErrorCode::Io, &format!("Cannot create data dir: {}", e)))?;
+    }
+    let resolved = data_dir.join(filename);
+    // Reject extension of already-resolved path that tries to escape via
+    // intermediate symlinks outside data_dir (canonicalize only when the
+    // resolved path already exists; if it doesn't exist yet (writing), the
+    // check is best-effort).
+    if resolved.exists() {
+        let canonical = resolved
+            .canonicalize()
+            .map_err(|_| error_response(ErrorCode::Io, "Cannot resolve path"))?;
+        if !canonical.starts_with(data_dir.canonicalize().unwrap_or(data_dir.clone())) {
+            return Err(error_response(ErrorCode::Io, "Path escapes data directory"));
+        }
+    }
+    Ok(resolved)
+}
 
 // ── Import/Export handlers ──────────────────────────────────────────────
 
@@ -85,21 +130,39 @@ pub(crate) fn handle_dump_sql(db: &engine::Database) -> String {
 }
 
 pub(crate) fn handle_save(db: &engine::Database, args: &[&str]) -> String {
-    let filename = args.first().unwrap_or(&"a3sql.bin");
+    let filename = args.first().copied().unwrap_or("a3sql.bin");
+    if filename.is_empty() {
+        return error_response(ErrorCode::Io, "Filename must not be empty");
+    }
+    let path = match safe_data_path(filename) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
     let bytes = engine::serialize::export_binary(db);
-    match std::fs::write(filename, bytes) {
-        Ok(()) => ok_response(&format!("\"Saved to '{}'\"", filename)),
+    match std::fs::write(&path, bytes) {
+        Ok(()) => ok_response(&format!("\"Saved to '{}/{}'\"", CONFIG.data_dir().display(), filename)),
         Err(e) => error_response(ErrorCode::Io, &format!("Save failed: {}", e)),
     }
 }
 
 pub(crate) fn handle_load(db: &mut engine::Database, args: &[&str]) -> String {
-    let filename = args.first().unwrap_or(&"a3sql.bin");
-    match std::fs::read(filename) {
+    let filename = args.first().copied().unwrap_or("a3sql.bin");
+    if filename.is_empty() {
+        return error_response(ErrorCode::Io, "Filename must not be empty");
+    }
+    let path = match safe_data_path(filename) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    match std::fs::read(&path) {
         Ok(bytes) => {
             db.clear();
             match engine::serialize::import_binary(&bytes, db) {
-                Ok(()) => ok_response(&format!("\"Loaded from '{}'\"", filename)),
+                Ok(()) => ok_response(&format!(
+                    "\"Loaded from '{}/{}'\"",
+                    CONFIG.data_dir().display(),
+                    filename
+                )),
                 Err(e) => error_response(ErrorCode::Exec, &format!("Load failed: {}", e)),
             }
         }
@@ -116,7 +179,7 @@ pub(crate) fn handle_export_to_file(db: &engine::Database, trimmed: &str, args: 
     let has_table = parts.len() > 2 && !parts[2].is_empty();
     let table_name = if has_table { parts.get(2) } else { None };
     let cmd_path = if has_table { parts.get(3) } else { parts.get(2) };
-    let file_path: String = match cmd_path.or_else(|| args.first()) {
+    let filename: String = match cmd_path.or_else(|| args.first()) {
         Some(p) => p.to_string(),
         None => {
             if format_str == "sql" {
@@ -128,6 +191,10 @@ pub(crate) fn handle_export_to_file(db: &engine::Database, trimmed: &str, args: 
             }
         }
     };
+
+    if filename.is_empty() {
+        return error_response(ErrorCode::Io, "Filename must not be empty");
+    }
 
     let format: engine::serialize::Format = match format_str.parse() {
         Ok(f) => f,
@@ -150,11 +217,16 @@ pub(crate) fn handle_export_to_file(db: &engine::Database, trimmed: &str, args: 
         }
     };
 
-    let path_display = file_path.clone();
-    if let Some(parent) = std::path::Path::new(&file_path).parent() {
+    let path = match safe_data_path(&filename) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+
+    let path_display = path.to_string_lossy().to_string();
+    if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    match std::fs::write(&file_path, &data) {
+    match std::fs::write(&path, &data) {
         Ok(()) => ok_response(&format!("\"Exported to '{}'\"", path_display)),
         Err(e) => error_response(ErrorCode::Io, &format!("Write failed: {}", e)),
     }
