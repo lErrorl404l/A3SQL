@@ -575,9 +575,9 @@ fn audit_persistence() {
         &dispatch("INSERT INTO a_persist VALUES ('a', 10), ('b', 20)", &[]),
         "INSERT",
     );
-    ok(&dispatch("save /tmp/a3sql_audit_persist.bin", &[]), "SAVE");
+    ok(&dispatch("save a3sql_audit_persist.bin", &[]), "SAVE");
     ok(&dispatch("INSERT INTO a_persist VALUES ('c', 30)", &[]), "INSERT extra");
-    ok(&dispatch("load /tmp/a3sql_audit_persist.bin", &[]), "LOAD");
+    ok(&dispatch("load a3sql_audit_persist.bin", &[]), "LOAD");
     let r = dispatch("SELECT val FROM a_persist WHERE id = 'a'", &[]);
     contains(&r, "10", "LOAD restored");
     let r = dispatch("SELECT val FROM a_persist WHERE id = 'c'", &[]);
@@ -587,7 +587,7 @@ fn audit_persistence() {
     let r = dispatch("export csv a_persist", &[]);
     ok(&r, "export CSV");
     drop(dispatch("DROP TABLE a_persist", &[]));
-    drop(std::fs::remove_file("/tmp/a3sql_audit_persist.bin"));
+    drop(std::fs::remove_file("a3sql_data/a3sql_audit_persist.bin"));
 }
 
 #[test]

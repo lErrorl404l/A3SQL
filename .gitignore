@@ -39,3 +39,4 @@ release/
 releases/
 .venv
 .venv
+a3sql_data/

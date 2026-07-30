@@ -29,6 +29,10 @@ pub(crate) struct Config {
     /// valid Ed25519 signature. Default: `false`.
     #[allow(dead_code, reason = "phased auth implementation")]
     pub auth_required: Option<bool>,
+
+    /// Directory for file I/O commands (SAVE, LOAD, export_to_file).
+    /// Defaults to `./a3sql_data/` when not set.
+    pub data_dir: Option<String>,
 }
 
 impl Config {
@@ -55,6 +59,15 @@ impl Config {
         #[cfg(not(feature = "auth"))]
         {
             None
+        }
+    }
+
+    /// The directory for file I/O (SAVE, LOAD, export_to_file).
+    /// Defaults to `./a3sql_data/`.
+    pub(crate) fn data_dir(&self) -> &std::path::Path {
+        match self.data_dir.as_deref() {
+            Some(d) => std::path::Path::new(d),
+            None => std::path::Path::new("./a3sql_data"),
         }
     }
 

@@ -119,10 +119,10 @@ fn abi_save_load() {
     let _g = setup();
     assert!(abi_call("CREATE TABLE int_sl_t (id STRING PRIMARY KEY, val INT)").contains("\"OK\""));
     assert!(abi_call("INSERT INTO int_sl_t VALUES ('x', 42)").contains("\"OK\""));
-    assert!(abi_call("save /tmp/a3sql_int_test_save.bin").contains("\"OK\""));
-    assert!(abi_call("load /tmp/a3sql_int_test_save.bin").contains("\"OK\""));
+    assert!(abi_call("save int_test_save.bin").contains("\"OK\""));
+    assert!(abi_call("load int_test_save.bin").contains("\"OK\""));
     assert!(abi_call("SELECT val FROM int_sl_t WHERE id = 'x'").contains("42"));
-    let _ = std::fs::remove_file("/tmp/a3sql_int_test_save.bin");
+    let _ = std::fs::remove_file("a3sql_data/int_test_save.bin");
 }
 #[test]
 fn abi_export_import_json_roundtrip() {
