@@ -75,3 +75,16 @@ proptest = "1.11"
 [[bench]]
 name = "queries"
 harness = false
+
+[package.metadata.cargo-machete]
+ignored = [
+    "hemtt-tokens",
+    "indexmap",
+    "openssl-sys",
+    "regex",
+    "rkyv",
+    "rust_decimal",
+    "sqlformat",
+    "time",
+    "uuid",
+]
