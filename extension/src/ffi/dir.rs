@@ -44,7 +44,10 @@ pub(crate) static REMOTE: LazyLock<Mutex<Option<std::net::TcpStream>>> = LazyLoc
 
 /// Output buffer size from Arma engine. Bumped to 20480 for fewer round-trips
 /// on larger result sets. Arma 3 v2.20 supports up to ~30 KB.
-#[allow(dead_code)]
+#[allow(
+    dead_code,
+    reason = "OUTPUT_BUF_SIZE is a public constant checked in dispatch.rs and passed to Arma via RVExtensionArgs"
+)]
 pub(crate) const OUTPUT_BUF_SIZE: u32 = 20480;
 
 /// Version string — max 32 bytes including null terminator.

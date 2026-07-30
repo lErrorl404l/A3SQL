@@ -454,10 +454,10 @@ fn gap_save_with_active_view() {
         "CREATE VIEW a_sv_v AS SELECT id, v FROM a_sv1 WHERE v > 10",
         "create view",
     );
-    ok("save /tmp/a3sql_gap_view.bin", "save with view");
+    ok("save a3sql_gap_view.bin", "save with view");
     ok("CREATE TABLE a_sv2 (id STRING PRIMARY KEY)", "create post-save");
     ok("INSERT INTO a_sv2 VALUES ('x')", "insert after save");
-    ok("load /tmp/a3sql_gap_view.bin", "load back");
+    ok("load a3sql_gap_view.bin", "load back");
     let r = dispatch("SELECT id FROM a_sv1 WHERE v = 10", &[]);
     assert!(r.contains("a"), "restored table: {}", r);
     // View should still work after reload
@@ -466,19 +466,20 @@ fn gap_save_with_active_view() {
     // Ensure table added after save is gone
     let r3 = dispatch("SELECT id FROM a_sv2", &[]);
     assert!(!r3.contains("[0,"), "post-save table should not exist after load");
-    drop(std::fs::remove_file("/tmp/a3sql_gap_view.bin"));
+    drop(std::fs::remove_file("a3sql_data/a3sql_gap_view.bin"));
 }
 
 #[test]
 fn gap_load_corrupted() {
     let _g = setup();
     use std::io::Write;
-    let mut f = std::fs::File::create("/tmp/a3sql_gap_corrupt.bin").unwrap();
+    let p = "a3sql_data/a3sql_gap_corrupt.bin";
+    let mut f = std::fs::File::create(p).unwrap();
     f.write_all(b"NOTAVALIDBINARYFORMAT").unwrap();
     drop(f);
-    let r = dispatch("load /tmp/a3sql_gap_corrupt.bin", &[]);
+    let r = dispatch("load a3sql_gap_corrupt.bin", &[]);
     assert!(!r.contains("[0,"), "Load corrupt should fail: {}", r);
-    drop(std::fs::remove_file("/tmp/a3sql_gap_corrupt.bin"));
+    drop(std::fs::remove_file(p));
 }
 
 // ── Trigger edge cases ─────────────────────────────────────────
@@ -1191,6 +1192,197 @@ fn gap_three_table_join() {
     assert!(
         r.contains("alpha") && r.contains("cat1") && r.contains("42"),
         "3-table JOIN: {}",
+        r
+    );
+}
+
+// ── Path traversal prevention (SAVE/LOAD/export_to_file) ─────────────
+
+#[test]
+fn gap_save_rejects_absolute_path() {
+    let _g = setup();
+    dispatch("CREATE TABLE a_pt (id STRING PRIMARY KEY)", &[]);
+    ok("INSERT INTO a_pt VALUES ('x')", "seed for path test");
+
+    let r = dispatch("save /tmp/evil.bin", &[]);
+    assert!(
+        r.contains("ERR_Io") || r.contains("Absolute paths"),
+        "absolute path should be rejected: {}",
+        r
+    );
+}
+
+#[test]
+fn gap_save_rejects_parent_traversal() {
+    let _g = setup();
+    let r = dispatch("save ../../../etc/passwd", &[]);
+    assert!(
+        r.contains("ERR_Io") || r.contains("must not contain"),
+        "parent traversal should be rejected: {}",
+        r
+    );
+}
+
+#[test]
+fn gap_save_rejects_tilde() {
+    let _g = setup();
+    let r = dispatch("save ~/.ssh/id_rsa", &[]);
+    assert!(
+        r.contains("ERR_Io") || r.contains("must not contain"),
+        "tilde path should be rejected: {}",
+        r
+    );
+}
+
+#[test]
+fn gap_load_rejects_absolute_path() {
+    let _g = setup();
+    let r = dispatch("load /etc/shadow", &[]);
+    assert!(
+        r.contains("ERR_Io") || r.contains("Absolute paths"),
+        "absolute load path should be rejected: {}",
+        r
+    );
+}
+
+#[test]
+fn gap_load_rejects_parent_traversal() {
+    let _g = setup();
+    let r = dispatch("load ../../etc/shadow", &[]);
+    assert!(
+        r.contains("ERR_Io") || r.contains("must not contain"),
+        "parent traversal should be rejected: {}",
+        r
+    );
+}
+
+#[test]
+fn gap_export_to_file_rejects_path_traversal() {
+    let _g = setup();
+    dispatch("CREATE TABLE a_pt2 (id STRING PRIMARY KEY)", &[]);
+    ok("INSERT INTO a_pt2 VALUES ('x')", "seed for export test");
+
+    let r = dispatch("export_to_file json a_pt2 ../../evil.txt", &[]);
+    assert!(
+        r.contains("ERR_Io") || r.contains("must not contain"),
+        "export_to_file with traversal should be rejected: {}",
+        r
+    );
+}
+
+#[test]
+fn gap_save_load_basic_in_data_dir() {
+    let _g = setup();
+    dispatch("CREATE TABLE a_pt3 (id STRING PRIMARY KEY, val INT)", &[]);
+    ok("INSERT INTO a_pt3 VALUES ('a', 42)", "seed");
+
+    // Save should succeed (default data_dir)
+    let r = dispatch("save a3sql_pt_test.bin", &[]);
+    assert!(r.contains("[0,"), "save in data dir should succeed: {}", r);
+
+    // Load should succeed
+    let r = dispatch("load a3sql_pt_test.bin", &[]);
+    assert!(r.contains("[0,"), "load from data dir should succeed: {}", r);
+
+    // Clean up
+    let _ = std::fs::remove_file(
+        std::path::Path::new(if let Some(d) = option_env!("CARGO_MANIFEST_DIR") {
+            d
+        } else {
+            "."
+        })
+        .join("a3sql_data")
+        .join("a3sql_pt_test.bin"),
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CREATE TRIGGER parser — error-path & variant coverage
+// ─────────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn gap_create_trigger_for_each_row() {
+    let _g = setup();
+    dispatch("CREATE TABLE a_ctr_data (id STRING PRIMARY KEY, v INT)", &[]);
+    dispatch("CREATE TABLE a_ctr_log (msg STRING)", &[]);
+    ok(
+        "CREATE TRIGGER a_ctr_ins AFTER INSERT ON a_ctr_data FOR EACH ROW BEGIN INSERT INTO a_ctr_log VALUES ('fired') END",
+        "CREATE TRIGGER FOR EACH ROW",
+    );
+    dispatch("INSERT INTO a_ctr_data VALUES ('a', 1)", &[]);
+    let r = dispatch("SELECT * FROM a_ctr_log", &[]);
+    assert!(r.contains("fired"), "FOR EACH ROW trigger fired: {}", r);
+}
+
+#[test]
+fn gap_create_trigger_or_replace() {
+    let _g = setup();
+    dispatch("CREATE TABLE a_ctrr_data (id STRING PRIMARY KEY, v INT)", &[]);
+    dispatch("CREATE TABLE a_ctrr_log (msg STRING)", &[]);
+    ok(
+        "CREATE OR REPLACE TRIGGER a_ctrr_trg AFTER DELETE ON a_ctrr_data BEGIN INSERT INTO a_ctrr_log VALUES ('deleted') END",
+        "CREATE OR REPLACE TRIGGER",
+    );
+    dispatch("INSERT INTO a_ctrr_data VALUES ('x', 10)", &[]);
+    dispatch("DELETE FROM a_ctrr_data WHERE id = 'x'", &[]);
+    let r = dispatch("SELECT * FROM a_ctrr_log", &[]);
+    assert!(r.contains("deleted"), "OR REPLACE trigger fired: {}", r);
+}
+
+#[test]
+fn gap_create_trigger_missing_timing() {
+    let _g = setup();
+    dispatch("CREATE TABLE a_ctr_err (id STRING PRIMARY KEY)", &[]);
+    let r = dispatch("CREATE TRIGGER a_ctr_bad INSERT ON a_ctr_err BEGIN SELECT 1 END", &[]);
+    assert!(
+        r.contains("ERR") && r.contains("BEFORE or AFTER"),
+        "missing timing: {}",
+        r
+    );
+}
+
+#[test]
+fn gap_create_trigger_missing_on() {
+    let _g = setup();
+    dispatch("CREATE TABLE a_ctr_err2 (id STRING PRIMARY KEY)", &[]);
+    let r = dispatch("CREATE TRIGGER a_ctr_bad2 AFTER INSERT BEGIN SELECT 1 END", &[]);
+    assert!(r.contains("ERR") && r.contains("expected ON"), "missing ON: {}", r);
+}
+
+#[test]
+fn gap_create_trigger_missing_begin() {
+    let _g = setup();
+    dispatch("CREATE TABLE a_ctr_err3 (id STRING PRIMARY KEY)", &[]);
+    let r = dispatch("CREATE TRIGGER a_ctr_bad3 AFTER INSERT ON a_ctr_err3 SELECT 1", &[]);
+    assert!(
+        r.contains("ERR") && r.contains("expected BEGIN"),
+        "missing BEGIN: {}",
+        r
+    );
+}
+
+#[test]
+fn gap_create_trigger_missing_end() {
+    let _g = setup();
+    dispatch("CREATE TABLE a_ctr_err4 (id STRING PRIMARY KEY)", &[]);
+    let r = dispatch(
+        "CREATE TRIGGER a_ctr_bad4 AFTER INSERT ON a_ctr_err4 BEGIN SELECT 1",
+        &[],
+    );
+    assert!(r.contains("ERR") && r.contains("expected END"), "missing END: {}", r);
+}
+
+#[test]
+fn gap_create_trigger_invalid_event() {
+    let _g = setup();
+    dispatch("CREATE TABLE a_ctr_err5 (id STRING PRIMARY KEY)", &[]);
+    let r = dispatch(
+        "CREATE TRIGGER a_ctr_bad5 BEFORE SELECT ON a_ctr_err5 BEGIN SELECT 1 END",
+        &[],
+    );
+    assert!(
+        r.contains("ERR") && r.contains("expected INSERT"),
+        "invalid event: {}",
         r
     );
 }
