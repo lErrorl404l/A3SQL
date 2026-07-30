@@ -80,20 +80,24 @@ impl ReturnType {
 pub(crate) struct CmdInfo {
     pub arity: Arity,
     pub ret: ReturnType,
+    #[allow(dead_code, reason = "command groups metadata not yet queried externally")]
     pub groups: Vec<String>,
 }
 
 /// Database metadata.
 #[derive(Debug, Clone)]
 pub(crate) struct WikiMeta {
+    #[allow(dead_code, reason = "wiki data source not yet exposed")]
     pub source: &'static str,
     pub major: u8,
     pub minor: u8,
+    #[allow(dead_code, reason = "command count not yet exposed externally")]
     pub command_count: usize,
 }
 
 struct Database {
     commands: HashMap<String, CmdInfo>,
+    #[allow(dead_code, reason = "meta only accessed privately via wiki_meta()")]
     meta: WikiMeta,
 }
 
@@ -217,11 +221,13 @@ pub(crate) fn lookup(name: &str) -> Option<Arity> {
 }
 
 /// Check if a name is a known command.
+#[allow(dead_code, reason = "command existence check not yet wired into parser")]
 pub(crate) fn is_command(name: &str) -> bool {
     global_db().lookup(name).is_some()
 }
 
 /// Wiki metadata.
+#[allow(dead_code, reason = "wiki metadata not yet exposed as SQL function")]
 pub(crate) fn wiki_meta() -> &'static WikiMeta {
     &global_db().meta
 }
