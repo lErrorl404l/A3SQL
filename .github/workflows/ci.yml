@@ -17,7 +17,7 @@ env:
 jobs:
   # ── Core pipeline (org-wide reusable) ───────────────────────────────
   ci:
-    uses: lErrorl404l/.github/.github/workflows/rust-addon-ci.yml@v1
+    uses: lErrorl404l/.github/.github/workflows/rust-addon-ci.yml@main
     with:
       crate-name: a3sql
       crate-path: extension
