@@ -9,9 +9,24 @@ mod sql;
 #[allow(unused_imports)]
 pub(crate) use sql::{split_sql, substitute_params};
 
+use std::cell::Cell;
+
 use crate::engine;
 use crate::engine::error::{error_response, ok_response, ErrorCode};
 use crate::ffi::{CREDENTIALS, REMOTE};
+
+// ── Re‑entrancy guard ───────────────────────────────────────────────────────
+//
+// `handle_cursor_fetch` and `handle_execute_prepared` each call back into
+// `dispatch_inner` to run the read-back query.  Without a guard the
+// auth‑check preamble, custom‑command matching, and plugin initialisation
+// would re‑run on the nested call, which is wasteful but harmless for the
+// current command set.  The guard exists as a correctness foundation for
+// any future preamble step that must not re‑fire (e.g. a rate‑limiter, an
+// audit‑log writer, or a side‑effect‑sensitive hook).
+thread_local! {
+    static REENTRANT_DEPTH: Cell<u32> = const { Cell::new(0) };
+}
 
 // ── Dispatch ────────────────────────────────────────────────────────────────
 
@@ -34,7 +49,26 @@ pub fn dispatch(input: &str, args: &[&str]) -> String {
 /// When the `auth` feature is enabled and configured, every query must carry a
 /// `SIGNED <hex_sig> <payload>` prefix. Unsigned queries are rejected with
 /// `ERR_AUTH`.
+/// Drop guard that decrements the re‑entrancy counter on any exit path.
+struct DepthGuard;
+impl Drop for DepthGuard {
+    fn drop(&mut self) {
+        REENTRANT_DEPTH.with(|d| d.set(d.get() - 1));
+    }
+}
+
 pub(crate) fn dispatch_inner(db: &mut engine::Database, input: &str, args: &[&str]) -> String {
+    // ── Re‑entrancy guard ──────────────────────────────────────────────
+    // cursor_fetch and execute_prepared call back into dispatch_inner to
+    // run the read‑back query.  On re‑entrant calls skip the full preamble
+    // (plugin init, auth, command matching) and go straight to SQL exec.
+    REENTRANT_DEPTH.with(|d| d.set(d.get() + 1));
+    let _guard = DepthGuard;
+    let reentrant = REENTRANT_DEPTH.with(|d| d.get() > 1);
+    if reentrant {
+        return sql::exec_sql_statements(db, &sql::split_sql(input.trim()), args);
+    }
+
     // Lazy init built-in plugins (also called on RVExtensionVersion for release)
     static PLUGIN_INIT: std::sync::Once = std::sync::Once::new();
     PLUGIN_INIT.call_once(|| {
@@ -45,7 +79,7 @@ pub(crate) fn dispatch_inner(db: &mut engine::Database, input: &str, args: &[&st
 
     // ── Auth verification (if enabled) ─────────────────────────────────
     // Returns the verified payload (without `SIGNED <sig>`) when auth
-    // passes, or the original input when auth is disabled / not configured.
+    // passes, or the original input when non-auth / not configured.
     let trimmed = match verify_auth(trimmed) {
         Ok(t) => t,
         Err(e) => return e,
