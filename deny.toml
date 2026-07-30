@@ -1,7 +1,6 @@
 # cargo-deny configuration
 [advisories]
-vulnerability = "deny"
-unmaintained = "deny"
+unmaintained = "all"
 yanked = "deny"
 notice = "deny"
 ignore = []
