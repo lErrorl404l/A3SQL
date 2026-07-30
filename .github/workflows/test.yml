@@ -25,3 +25,5 @@ jobs:
           components: miri
           toolchain: nightly
       - run: cargo miri test --manifest-path extension/Cargo.toml --lib
+        env:
+          MIRIFLAGS: -Zmiri-isolation-error=warn
