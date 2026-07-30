@@ -17,16 +17,13 @@ fn serve_client(stream: std::net::TcpStream) {
         Err(_) => return,
     };
 
-    fn has_auth() -> bool {
-        let (user, pass) = CREDENTIALS.lock().unwrap().clone();
-        !user.is_empty() || !pass.is_empty()
-    }
-    fn check_login(user: &str, pass: &str) -> bool {
-        let expected = CREDENTIALS.lock().unwrap().clone();
-        user == expected.0 && pass == expected.1
-    }
+    // Snapshot credentials once per connection to avoid TOCTOU between
+    // the has-auth check and login comparison (credentials are read via
+    // RwLock in the FFI layer and could change between calls).
+    let (expected_user, expected_pass) = CREDENTIALS.lock().unwrap().clone();
 
-    let mut authenticated = !has_auth();
+    let has_auth = !expected_user.is_empty() || !expected_pass.is_empty();
+    let mut authenticated = !has_auth;
     let mut line = String::new();
     loop {
         line.clear();
@@ -44,7 +41,7 @@ fn serve_client(stream: std::net::TcpStream) {
         if !authenticated {
             if let Some(rest) = trimmed.strip_prefix("LOGIN ") {
                 let parts: Vec<&str> = rest.splitn(2, ' ').collect();
-                if parts.len() >= 2 && check_login(parts[0], parts[1]) {
+                if parts.len() >= 2 && parts[0] == expected_user && parts[1] == expected_pass {
                     let _ = writeln!(stream, "[0,\"OK\",\"Authenticated\"]");
                     authenticated = true;
                 } else {
