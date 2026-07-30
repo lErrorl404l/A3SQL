@@ -23,17 +23,6 @@ jobs:
       crate-path: extension
       rust-cross: true
 
-  # ── Benchmarks (after CI, before build) ─────────────────────────────
-  bench:
-    name: cargo bench
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Install Rust
-        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
-      - name: Run benchmarks
-        run: cargo bench --manifest-path extension/Cargo.toml
-
   # ── i686 Linux cross-compile (not in reusable workflow) ─────────────
   build-linux-i686:
     name: build i686-unknown-linux-gnu
@@ -107,6 +96,27 @@ jobs:
           pattern: a3sql-*
           merge-multiple: true
           path: extension/target/release
+      - name: Rename extension binaries to Arma naming convention
+        run: |
+          # a3sql_x64.so (Linux 64-bit)
+          if [ -f extension/target/release/liba3sql.so ]; then
+            cp extension/target/release/liba3sql.so a3sql_x64.so
+          fi
+          # a3sql_x64.dll (Windows 64-bit)
+          if [ -f extension/target/release/a3sql_x64.dll ]; then
+            cp extension/target/release/a3sql_x64.dll a3sql_x64.dll
+          elif [ -f extension/target/release/a3sql.dll ]; then
+            cp extension/target/release/a3sql.dll a3sql_x64.dll
+          fi
+          # a3sql.so (Linux 32-bit) — already renamed by upstream job
+          if [ -f extension/target/release/a3sql_x86.so ]; then
+            cp extension/target/release/a3sql_x86.so a3sql.so
+          fi
+          # a3sql.dll (Windows 32-bit) — already renamed by upstream job
+          if [ -f extension/target/release/a3sql_x86.dll ]; then
+            cp extension/target/release/a3sql_x86.dll a3sql.dll
+          fi
+          ls -la a3sql*.so a3sql*.dll 2>/dev/null || echo "(no extension binaries present)"
       - name: Build addon
         run: hemtt build
       - name: Upload addon

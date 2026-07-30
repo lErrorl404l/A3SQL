@@ -1,7 +1,10 @@
 # a3sql cross-compilation config
 #
 # These linkers are needed when building Windows targets on Linux CI runners.
-# On Ubuntu: sudo apt-get install mingw-w64
+# On Ubuntu: sudo apt-get install mingw-w64 gcc-multilib g++-multilib
+#
+# 32-bit Windows builds need --kill-at to strip stdcall @N decoration from
+# exported symbols so Arma 3 can find RVExtension/RVExtensionArgs by name.
 
 [target.x86_64-pc-windows-gnu]
 linker = "x86_64-w64-mingw32-gcc"
@@ -10,3 +13,7 @@ ar = "x86_64-w64-mingw32-gcc-ar"
 [target.i686-pc-windows-gnu]
 linker = "i686-w64-mingw32-gcc"
 ar = "i686-w64-mingw32-gcc-ar"
+rustflags = ["-C", "link-args=-Wl,--kill-at"]
+
+[target.i686-unknown-linux-gnu]
+linker = "i686-linux-gnu-gcc"

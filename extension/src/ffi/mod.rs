@@ -3,8 +3,17 @@
 // Build targets:
 //   Linux:   x86_64-unknown-linux-gnu, i686-unknown-linux-gnu
 //   Windows: x86_64-pc-windows-gnu,     i686-pc-windows-gnu
-// Windows x86 (32-bit) needs a .def file or link args for decorated exports:
-//   _RVExtensionVersion@8, _RVExtension@12, _RVExtensionArgs@20
+//
+// 32-bit Windows mingw needs `-Wl,--kill-at` (set in .cargo/config.toml) to
+// strip stdcall @N decoration so Arma can find RVExtension/RVExtensionArgs.
+//
+// Binary naming (post-build):
+//   extension/target/release/liba3sql.so  →  a3sql_x64.so      (Linux x86_64)
+//   extension/target/release/a3sql.dll    →  a3sql_x64.dll     (Windows x86_64)
+//   target/i686-unknown-linux-gnu/release/liba3sql.so  →  a3sql.so   (Linux i686)
+//   target/i686-pc-windows-gnu/release/a3sql.dll       →  a3sql.dll  (Windows i686)
+//
+// See tools/copy_ext_binaries.sh for the canonical rename script.
 
 //! C ABI entry points — RVExtension, RVExtensionArgs, RVExtensionVersion.
 //! These are the interface between the Arma 3 engine and a3sql.
@@ -33,8 +42,9 @@ pub(crate) static CREDENTIALS: LazyLock<Mutex<(String, String)>> =
     LazyLock::new(|| Mutex::new((String::new(), String::new())));
 pub(crate) static REMOTE: LazyLock<Mutex<Option<std::net::TcpStream>>> = LazyLock::new(|| Mutex::new(None));
 
-/// Output buffer size from Arma engine. Currently 10240 bytes.
-pub(crate) const OUTPUT_BUF_SIZE: u32 = 10240;
+/// Output buffer size from Arma engine. Bumped to 20480 for fewer round-trips
+/// on larger result sets. Arma 3 v2.20 supports up to ~30 KB.
+pub(crate) const OUTPUT_BUF_SIZE: u32 = 20480;
 
 /// Version string — max 32 bytes including null terminator.
 /// Derived from Cargo.toml so they stay in sync.
