@@ -17,6 +17,7 @@ use ed25519_dalek::{Signature, VerifyingKey};
 ///
 /// Returns `Some((signature_hex, payload))` when the prefix matches.
 /// Returns `None` for unsigned queries.
+#[allow(dead_code, reason = "phased auth implementation")]
 pub(crate) fn parse_signed_input(input: &str) -> Option<(&str, &str)> {
     let input = input.trim();
     let rest = input.strip_prefix("SIGNED ")?;
@@ -28,6 +29,7 @@ pub(crate) fn parse_signed_input(input: &str) -> Option<(&str, &str)> {
 }
 
 /// Decode a hex-encoded Ed25519 public key into 32 raw bytes.
+#[allow(dead_code, reason = "phased auth implementation")]
 pub(crate) fn hex_to_pubkey(hex: &str) -> Option<[u8; 32]> {
     if hex.len() != 64 {
         return None;
@@ -43,6 +45,7 @@ pub(crate) fn hex_to_pubkey(hex: &str) -> Option<[u8; 32]> {
 ///
 /// Feature‑gated: when `auth` is disabled this is a no‑op returning `true`.
 #[cfg(feature = "auth")]
+#[allow(dead_code, reason = "phased auth implementation")]
 pub(crate) fn verify_signature(public_key: &[u8; 32], payload: &str, signature_hex: &str) -> bool {
     let sig_bytes = match decode_hex(signature_hex) {
         Some(b) if b.len() == 64 => b,
@@ -61,6 +64,7 @@ pub(crate) fn verify_signature(public_key: &[u8; 32], payload: &str, signature_h
 
 /// No‑op when auth feature is disabled — always returns `true`.
 #[cfg(not(feature = "auth"))]
+#[allow(dead_code, reason = "phased auth implementation")]
 pub(crate) fn verify_signature(_public_key: &[u8; 32], _payload: &str, _signature_hex: &str) -> bool {
     true
 }
@@ -68,6 +72,7 @@ pub(crate) fn verify_signature(_public_key: &[u8; 32], _payload: &str, _signatur
 // ── Internal helpers ─────────────────────────────────────────────────────
 
 /// Decode a hex string into `Vec<u8>`. Returns `None` on invalid input.
+#[allow(dead_code, reason = "phased auth implementation")]
 #[allow(clippy::manual_is_multiple_of)]
 fn decode_hex(s: &str) -> Option<Vec<u8>> {
     if s.len() % 2 != 0 || s.is_empty() {
