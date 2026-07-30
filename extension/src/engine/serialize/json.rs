@@ -37,6 +37,7 @@ pub(crate) fn export_json(table: &Table) -> String {
 }
 
 /// Export full database as JSON.
+#[allow(dead_code, reason = "full DB export not yet exposed as command")]
 pub(crate) fn export_json_db(db: &Database) -> String {
     let tables: Vec<String> = db
         .table_names()
