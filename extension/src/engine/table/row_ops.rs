@@ -97,7 +97,7 @@ impl Table {
     }
 
     /// Rebuild all indices from scratch (after bulk deletes that shift row indices).
-    fn rebuild_indices(&mut self) {
+    pub(super) fn rebuild_indices(&mut self) {
         for (meta, impl_) in &mut self.indices {
             // Clear and rebuild
             let col_idx_opt = self.col_index.get(&meta.column).copied();
@@ -164,6 +164,7 @@ impl Table {
 
     /// Update rows matching a predicate. `setter` receives a mutable row reference.
     /// Returns count of updated rows.
+    #[allow(dead_code, reason = "bulk row update not yet wired into executor")]
     pub fn update<F>(&mut self, mut predicate: F, mut setter: impl FnMut(&mut [DbValue])) -> usize
     where
         F: FnMut(&[DbValue]) -> bool,
@@ -179,6 +180,7 @@ impl Table {
     }
 
     /// Select rows matching a predicate. Returns references to matching rows.
+    #[allow(dead_code, reason = "predicate-based row select not yet wired into executor")]
     pub fn select<F>(&self, mut predicate: F) -> Vec<&[DbValue]>
     where
         F: FnMut(&[DbValue]) -> bool,
@@ -240,10 +242,13 @@ impl Table {
     /// Truncate — remove all rows.
     pub fn truncate(&mut self) -> Result<(), EngineError> {
         self.rows.clear();
+        self.pk_set.clear();
+        self.indices.clear();
         Ok(())
     }
 
     /// All rows (references).
+    #[allow(dead_code, reason = "full row scan not yet wired into executor")]
     pub fn all_rows(&self) -> Vec<&[DbValue]> {
         self.rows.iter().map(|r| r.as_slice()).collect()
     }

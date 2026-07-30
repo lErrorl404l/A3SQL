@@ -63,6 +63,7 @@ pub(crate) fn int(col: &str) -> (&str, ColumnType, bool) {
 }
 
 /// Shorthand for a string column.
+#[allow(dead_code, reason = "test helper not used by all test modules")]
 pub(crate) fn str_col(col: &str) -> (&str, ColumnType, bool) {
     (col, ColumnType::String, false)
 }

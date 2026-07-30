@@ -25,6 +25,7 @@ use crate::engine::error::EngineError;
 pub(crate) struct PluginFunction {
     pub name: String,
     pub min_args: usize,
+    #[allow(dead_code, reason = "max args not yet enforced at dispatch")]
     pub max_args: usize,
     pub func: fn(&[DbValue]) -> Result<DbValue, EngineError>,
 }
@@ -33,8 +34,10 @@ pub(crate) struct PluginFunction {
 #[derive(Clone)]
 pub(crate) enum Hook {
     /// Called before query execution. Return None to allow, Some(err) to block.
+    #[allow(dead_code, reason = "plugin hooks not yet wired into executor")]
     PreQuery(fn(sql: &str) -> Option<String>),
     /// Called after query execution with the result JSON string.
+    #[allow(dead_code, reason = "plugin hooks not yet wired into executor")]
     PostQuery(fn(sql: &str, result: &str)),
 }
 
@@ -44,7 +47,7 @@ pub(crate) struct Plugin {
     pub functions: Vec<PluginFunction>,
     pub hooks: Vec<Hook>,
     // Dynamic library handle — kept alive for the plugin's lifetime.
-    #[allow(dead_code)]
+    #[allow(dead_code, reason = "lib_handle kept alive for plugin lifetime")]
     lib_handle: Option<Box<dyn std::any::Any + Send>>,
 }
 
@@ -123,6 +126,7 @@ pub(crate) fn lookup_function(name: &str) -> Option<(PluginFunction, String)> {
 }
 
 /// Check if a name matches a registered function (plugin or SQF).
+#[allow(dead_code, reason = "plugin function dispatch not yet wired")]
 pub(crate) fn is_registered(name: &str) -> bool {
     let reg = PLUGIN_REGISTRY.lock().unwrap();
     for plugin in &reg.plugins {
@@ -136,6 +140,7 @@ pub(crate) fn is_registered(name: &str) -> bool {
 }
 
 /// Run pre-query hooks. Returns Some(error) if a hook blocked the query.
+#[allow(dead_code, reason = "plugin hooks not yet wired into executor")]
 pub(crate) fn run_pre_query_hooks(sql: &str) -> Option<String> {
     let reg = PLUGIN_REGISTRY.lock().unwrap();
     for plugin in &reg.plugins {
@@ -151,6 +156,7 @@ pub(crate) fn run_pre_query_hooks(sql: &str) -> Option<String> {
 }
 
 /// Run post-query hooks.
+#[allow(dead_code, reason = "plugin hooks not yet wired into executor")]
 pub(crate) fn run_post_query_hooks(sql: &str, result: &str) {
     let reg = PLUGIN_REGISTRY.lock().unwrap();
     for plugin in &reg.plugins {
@@ -258,9 +264,16 @@ pub extern "C" fn a3sql_plugin_register_function(
     min_args: i32,
     max_args: i32,
 ) -> i32 {
+    // SAFETY: plugin_name points to a null-terminated C string allocated by
+    // the plugin's C ABI init context. The caller guarantees the pointer is
+    // valid and non-null for the duration of from_ptr. This function is only
+    // called during plugin registration, before any SQL execution.
     let pname = unsafe { std::ffi::CStr::from_ptr(plugin_name) }
         .to_string_lossy()
         .into_owned();
+    // SAFETY: Same guarantees as plugin_name above — func_name is a valid
+    // non-null C string provided by the plugin init context, and remains
+    // valid for the lifetime of the from_ptr call.
     let fname = unsafe { std::ffi::CStr::from_ptr(func_name) }
         .to_string_lossy()
         .into_owned();

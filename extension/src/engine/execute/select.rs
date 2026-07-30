@@ -332,6 +332,7 @@ pub(crate) fn exec_subquery(query: &Query) -> Result<Vec<DbValue>, EngineError> 
 }
 
 /// Apply ORDER BY and LIMIT from a Query to a parsed JSON result string.
+#[allow(dead_code, reason = "ORDER BY/LIMIT on UNION results not yet implemented")]
 pub(crate) fn apply_order_limit(json_str: &str, query: &Query) -> Result<String, EngineError> {
     if query.order_by.is_none() && query.limit_clause.is_none() {
         return Ok(json_str.to_string());

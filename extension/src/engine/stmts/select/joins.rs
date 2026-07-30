@@ -385,7 +385,11 @@ fn eval_expr_on_flat_row(
                 Some(&pos) => Ok(row[pos].clone()),
                 None => {
                     // Try just the last part
-                    let last = parts.last().unwrap().value.to_lowercase();
+                    let last = parts
+                        .last()
+                        .ok_or_else(|| EngineError::ColumnNotFound(name.clone()))?
+                        .value
+                        .to_lowercase();
                     match col_map.get(&last) {
                         Some(&pos) => Ok(row[pos].clone()),
                         None => Err(EngineError::ColumnNotFound(name.clone())),

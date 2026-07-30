@@ -2,6 +2,12 @@
 
 //! TCP server — standalone and in-game TCP query interface.
 //! Supports LOGIN auth, multi-client, and optional file persistence.
+//!
+//! # Security boundary — auth bypass note
+//! The TCP LOGIN auth prevents _external_ network access, but SQF running in
+//! the same game client can bypass it entirely via `RVExtensionArgs` which
+//! has full DB access. This is an accepted design constraint in the Arma
+//! threat model: SQF already owns the process and its memory.
 
 use crate::dispatch;
 use crate::ffi::{CREDENTIALS, LISTENER};
@@ -17,16 +23,13 @@ fn serve_client(stream: std::net::TcpStream) {
         Err(_) => return,
     };
 
-    fn has_auth() -> bool {
-        let (user, pass) = CREDENTIALS.lock().unwrap().clone();
-        !user.is_empty() || !pass.is_empty()
-    }
-    fn check_login(user: &str, pass: &str) -> bool {
-        let expected = CREDENTIALS.lock().unwrap().clone();
-        user == expected.0 && pass == expected.1
-    }
+    // Snapshot credentials once per connection to avoid TOCTOU between
+    // the has-auth check and login comparison (credentials are read via
+    // RwLock in the FFI layer and could change between calls).
+    let (expected_user, expected_pass) = CREDENTIALS.lock().unwrap().clone();
 
-    let mut authenticated = !has_auth();
+    let has_auth = !expected_user.is_empty() || !expected_pass.is_empty();
+    let mut authenticated = !has_auth;
     let mut line = String::new();
     loop {
         line.clear();
@@ -44,7 +47,7 @@ fn serve_client(stream: std::net::TcpStream) {
         if !authenticated {
             if let Some(rest) = trimmed.strip_prefix("LOGIN ") {
                 let parts: Vec<&str> = rest.splitn(2, ' ').collect();
-                if parts.len() >= 2 && check_login(parts[0], parts[1]) {
+                if parts.len() >= 2 && parts[0] == expected_user && parts[1] == expected_pass {
                     let _ = writeln!(stream, "[0,\"OK\",\"Authenticated\"]");
                     authenticated = true;
                 } else {
@@ -59,7 +62,8 @@ fn serve_client(stream: std::net::TcpStream) {
             }
             continue;
         }
-        let result = dispatch::dispatch(trimmed, &[]);
+        let mut db = crate::ffi::DB.lock().unwrap();
+        let result = dispatch::dispatch_inner(&mut db, trimmed, &[]);
         let _ = writeln!(stream, "{}", result);
     }
 }
@@ -73,7 +77,8 @@ pub fn start_server(bind: &str, port: u16, db_path: Option<&str>) -> Result<Stri
 
     if let Some(path) = db_path {
         // Load existing database if file exists
-        let r = dispatch::dispatch(&format!("load {}", path), &[]);
+        let mut db = crate::ffi::DB.lock().unwrap();
+        let r = dispatch::dispatch_inner(&mut db, &format!("load {}", path), &[]);
         eprintln!("[a3sql-server] Loaded from {}: {}", path, r);
     }
 
@@ -84,7 +89,8 @@ pub fn start_server(bind: &str, port: u16, db_path: Option<&str>) -> Result<Stri
         let path = path.to_string();
         std::thread::spawn(move || loop {
             std::thread::sleep(std::time::Duration::from_secs(30));
-            let r = dispatch::dispatch(&format!("save {}", path), &[]);
+            let mut db = crate::ffi::DB.lock().unwrap();
+            let r = dispatch::dispatch_inner(&mut db, &format!("save {}", path), &[]);
             if r.contains("ERR") {
                 eprintln!("[a3sql-server] auto-save: {}", r);
             }

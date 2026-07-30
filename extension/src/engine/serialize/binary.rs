@@ -163,7 +163,11 @@ pub(crate) fn import_binary(data: &[u8], db: &mut Database) -> Result<(), String
     if pos + 4 > data.len() {
         return Err("Truncated binary data".into());
     }
-    let table_count = u32::from_le_bytes(data[pos..pos + 4].try_into().unwrap()) as usize;
+    let table_count = u32::from_le_bytes(
+        data[pos..pos + 4]
+            .try_into()
+            .map_err(|_| "truncated binary data: table count".to_string())?,
+    ) as usize;
     pos += 4;
 
     for _ in 0..table_count {
