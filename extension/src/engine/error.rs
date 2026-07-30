@@ -38,12 +38,14 @@ pub(crate) enum EngineError {
     IndexNotFound(String),
 
     #[error("Index '{0}' already exists")]
+    #[allow(dead_code, reason = "not yet raised by any execution path")]
     IndexAlreadyExists(String),
 
     #[error("View '{0}' not found")]
     ViewNotFound(String),
 
     #[error("Trigger '{0}' already exists")]
+    #[allow(dead_code, reason = "not yet raised by any execution path")]
     TriggerAlreadyExists(String),
 
     #[error("Parse error: {0}")]
@@ -59,12 +61,15 @@ pub(crate) enum EngineError {
     Io(#[from] std::io::Error),
 
     #[error("Savepoint '{0}' already exists")]
+    #[allow(dead_code, reason = "not yet raised by any execution path")]
     SavepointExists(String),
 
     #[error("Savepoint '{0}' not found")]
+    #[allow(dead_code, reason = "not yet raised by any execution path")]
     SavepointNotFound(String),
 
     #[error("Internal error: {0}")]
+    #[allow(dead_code, reason = "not yet raised by any execution path")]
     Internal(String),
 }
 
