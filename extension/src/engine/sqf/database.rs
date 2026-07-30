@@ -106,7 +106,13 @@ impl Database {
         let mut commands: HashMap<String, CmdInfo> = HashMap::new();
 
         // Load arma3-wiki data FIRST (primary source)
-        let wiki = std::panic::catch_unwind(|| arma3_wiki::Wiki::load(false)).ok();
+        // Guard: Miri blocks file I/O, so skip under miri even though it's wrapped in catch_unwind.
+        // The wiki data is purely additive metadata — the DB falls back to static native metadata.
+        let wiki = if cfg!(not(miri)) {
+            std::panic::catch_unwind(|| arma3_wiki::Wiki::load(false)).ok()
+        } else {
+            None
+        };
         let meta = match &wiki {
             Some(w) => {
                 let v = w.version();
