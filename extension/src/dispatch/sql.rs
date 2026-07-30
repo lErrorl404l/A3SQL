@@ -169,8 +169,17 @@ pub(super) fn exec_sql_statements(db: &mut engine::Database, statements: &[Strin
                 for stmt in &stmts {
                     // Set COPY STDIN data from callExtension args before execution
                     if !args.is_empty() && matches!(stmt, sqlparser::ast::Statement::Copy { to: false, .. }) {
+                        let data = &args[0];
+                        if data.len() > 1024 * 1024 {
+                            let err = A3sqlError::new(ErrorCode::Io, "COPY FROM stdin data exceeds 1MB limit");
+                            return err.to_response();
+                        }
+                        if data.trim().is_empty() {
+                            let err = A3sqlError::new(ErrorCode::Io, "COPY FROM stdin: empty data");
+                            return err.to_response();
+                        }
                         execute::COPY_STDIN.with(|s| {
-                            *s.borrow_mut() = Some(args[0].to_string());
+                            *s.borrow_mut() = Some(data.to_string());
                         });
                     }
                     match execute::execute(stmt, db) {
