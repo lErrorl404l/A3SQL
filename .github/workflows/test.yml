@@ -23,4 +23,7 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659
         with:
           components: miri
+          toolchain: nightly
       - run: cargo miri test --manifest-path extension/Cargo.toml --lib
+        env:
+          MIRIFLAGS: -Zmiri-isolation-error=warn
