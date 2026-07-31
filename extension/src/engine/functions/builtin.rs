@@ -892,6 +892,42 @@ pub(crate) fn resolve_single_table<'a>(from: &[TableWithJoins], db: &'a Database
 
 /// Try to use a BTreeIndex for a simple `col = literal` WHERE clause.
 /// Returns `Some(rows)` if an index was used, `None` to fall back to full scan.
+/// O(1) PK lookup: `WHERE pk_col = literal` via pk_row_index.
+/// Returns Some(row) for exactly the matching row, Some(empty) when the key
+/// is absent, None to fall back to scan-based resolution.
+pub(crate) fn try_pk_index<'a>(where_expr: Option<&Expr>, table: &'a Table) -> Option<Vec<&'a [DbValue]>> {
+    let expr = where_expr?;
+    let (col_name, value) = match expr {
+        Expr::BinaryOp {
+            left,
+            op: BinaryOperator::Eq,
+            right,
+        } => match (left.as_ref(), right.as_ref()) {
+            (Expr::Identifier(ident), Expr::Value(v)) | (Expr::Value(v), Expr::Identifier(ident)) => {
+                (ident.value.to_lowercase(), sql_val_to_db(&v.value))
+            }
+            _ => return None,
+        },
+        _ => return None,
+    };
+    let ci = table.col_index.get(&col_name)?;
+    // Only single-column PKs can use the O(1) path. A composite PK matched on
+    // one column produces a partial key (other cols NULL) that never hits —
+    // returning Some(empty) would wrongly hide real rows, so fall back to scan.
+    let pk_count = table.columns.iter().filter(|c| c.primary_key).count();
+    if pk_count != 1 || !table.columns[*ci].primary_key {
+        return None;
+    }
+    // Build the pk_key for this value (mirrors pk_key() formatting)
+    let mut key_row: Vec<DbValue> = (0..table.columns.len()).map(|_| DbValue::Null).collect();
+    key_row[*ci] = value;
+    let key = table.pk_key(&key_row)?;
+    match table.pk_row_index.get(&key) {
+        Some(&idx) => Some(vec![table.rows[idx].as_slice()]),
+        None => Some(Vec::new()),
+    }
+}
+
 pub(crate) fn try_btree_index<'a>(where_expr: Option<&Expr>, table: &'a Table) -> Option<Vec<&'a [DbValue]>> {
     let expr = where_expr?;
     let (col_name, value) = match expr {

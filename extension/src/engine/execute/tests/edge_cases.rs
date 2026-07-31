@@ -319,3 +319,58 @@ fn insert_or_replace_updates_in_place() {
     let cnt = parse_and_exec("SELECT count(*) FROM t", &mut db).unwrap();
     assert!(cnt.contains("1"), "count unchanged: {}", cnt);
 }
+
+#[test]
+fn select_by_pk_uses_fast_path_and_subqueries_still_work() {
+    // Bug regression: SELECT by PK was a full scan (O(n)); now O(1) via
+    // pk_row_index. The subquery DB snapshot is only cloned when the query
+    // contains a subquery — verify both paths work.
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE b (id TEXT PRIMARY KEY, val INT)", &mut db).unwrap();
+    for i in 0..5000 {
+        parse_and_exec(&format!("INSERT INTO b VALUES ('k_{}', {})", i, i * 10), &mut db).unwrap();
+    }
+    // PK point lookup (fast path)
+    let r = parse_and_exec("SELECT val FROM b WHERE id = 'k_2500'", &mut db).unwrap();
+    assert!(r.contains("25000"), "pk lookup: {}", r);
+    // Missing PK returns empty
+    let r = parse_and_exec("SELECT val FROM b WHERE id = 'missing'", &mut db).unwrap();
+    assert!(!r.contains("25000"), "missing pk: {}", r);
+    // Subquery still needs the snapshot — IN-subquery in WHERE
+    let r = parse_and_exec(
+        "SELECT val FROM b WHERE val IN (SELECT val FROM b WHERE id = 'k_3')",
+        &mut db,
+    )
+    .unwrap();
+    assert!(r.contains("30"), "in-subquery: {}", r);
+    // Scalar subquery in projection
+    let r = parse_and_exec("SELECT (SELECT max(val) FROM b) AS m FROM b WHERE id = 'k_1'", &mut db).unwrap();
+    assert!(r.contains("49990"), "scalar subquery: {}", r);
+}
+
+#[test]
+fn composite_pk_partial_match_falls_back_to_scan() {
+    // Bug regression: SELECT on ONE column of a composite PK wrongly used the
+    // single-PK fast path, built a partial key (NULL |value) that never hit,
+    // and returned empty — hiding real rows. Must fall back to the scan.
+    let mut db = Database::new();
+    parse_and_exec(
+        "CREATE TABLE settings (ns TEXT, set_key TEXT, val TEXT, PRIMARY KEY (ns, set_key))",
+        &mut db,
+    )
+    .unwrap();
+    parse_and_exec(
+        "INSERT INTO settings VALUES ('mission', 'log_level', '2'), ('profile', 'radio', 'x')",
+        &mut db,
+    )
+    .unwrap();
+    // Query by ONE PK column only — must return the row(s)
+    let r = parse_and_exec("SELECT val FROM settings WHERE set_key = 'log_level'", &mut db).unwrap();
+    assert!(r.contains("2"), "partial-PK match: {}", r);
+    let r2 = parse_and_exec(
+        "SELECT val FROM settings WHERE set_key = 'log_level' AND ns = 'mission'",
+        &mut db,
+    )
+    .unwrap();
+    assert!(r2.contains("2"), "full composite match: {}", r2);
+}

@@ -18,6 +18,7 @@ use super::format_projected_result;
 use super::SUBQ_DB;
 
 use crate::engine::error::EngineError;
+use crate::engine::prelude::expr_has_subquery;
 
 /// Execute a SELECT query (single table, no JOINs).
 pub(crate) fn exec_select(query: &Query, db: &mut Database) -> Result<String, EngineError> {
@@ -33,8 +34,8 @@ pub(crate) fn exec_select(query: &Query, db: &mut Database) -> Result<String, En
 
     // Handle bare SELECT without FROM clause
     if select.from.is_empty() {
-        // Set thread-local DB snapshot so subqueries/EXISTS work in bare SELECT
-        SUBQ_DB.with(|snap| *snap.borrow_mut() = Some(db.clone()));
+        // Snapshot DB only if subqueries/EXISTS are present (clone is O(rows))
+        set_subq_snapshot_if_needed(select, db);
 
         // Evaluate WHERE clause (SELECT 1 WHERE 1=0 should return empty)
         if let Some(where_expr) = &select.selection {
@@ -115,12 +116,15 @@ pub(crate) fn exec_select(query: &Query, db: &mut Database) -> Result<String, En
     let where_expr = select.selection.as_ref();
 
     // 1. Filter rows by WHERE — index-assisted when possible
-    // Set thread-local DB snapshot for subquery evaluation
-    SUBQ_DB.with(|snap| *snap.borrow_mut() = Some(db.clone()));
+    // Snapshot DB only if subqueries/EXISTS are present (clone is O(rows))
+    set_subq_snapshot_if_needed(select, db);
 
-    // Try trigram index first (fuzzy_match candidates); still re-eval WHERE for accuracy
+    // PK fast path first (O(1) via pk_row_index) — point lookups by primary
+    // key are the most common SELECT shape in mod workloads.
     let filtered_rows: Vec<&[DbValue]> =
-        if let Some(candidates) = super::super::functions::builtin::try_trigram_index(where_expr, table) {
+        if let Some(row) = super::super::functions::builtin::try_pk_index(where_expr, table) {
+            row
+        } else if let Some(candidates) = super::super::functions::builtin::try_trigram_index(where_expr, table) {
             candidates
                 .into_iter()
                 .filter(|row| {
@@ -276,6 +280,24 @@ pub(crate) fn exec_select(query: &Query, db: &mut Database) -> Result<String, En
         let _ = db.drop_table(name);
     }
     Ok(result)
+}
+
+/// Set the thread-local DB snapshot only when the query needs it (contains a
+/// subquery). Cloning the whole DB per SELECT is O(total rows) — the snapshot
+/// exists only so nested SELECTs can read a consistent view.
+fn set_subq_snapshot_if_needed(select: &Select, db: &Database) {
+    let needs_snapshot = select.projection.iter().any(|item| match item {
+        SelectItem::UnnamedExpr(e) | SelectItem::ExprWithAlias { expr: e, .. } => expr_has_subquery(e),
+        _ => false,
+    }) || select.selection.as_ref().is_some_and(expr_has_subquery)
+        || match &select.group_by {
+            sqlparser::ast::GroupByExpr::Expressions(exprs, _) => exprs.iter().any(expr_has_subquery),
+            sqlparser::ast::GroupByExpr::All(_) => false,
+        }
+        || select.having.as_ref().is_some_and(expr_has_subquery);
+    if needs_snapshot {
+        SUBQ_DB.with(|snap| *snap.borrow_mut() = Some(db.clone()));
+    }
 }
 
 /// Execute a subquery (SELECT) and return the first column of each row.
