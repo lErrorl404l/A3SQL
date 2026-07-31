@@ -43,7 +43,7 @@ if (_isUpdate) then {
     private _ruleId = parseNumber (_list lbData _sel);
     private _sql = format [
         "UPDATE patch_rules SET name = '%1', active = %2, priority = %3, target_type = '%4', property = '%5', operator = '%6', value = '%7' WHERE id = %8",
-        _name, _activeInt, _priorityInt, _targetType, _property, _operator, _value, _ruleId
+        [_name] call a3sql_database_fnc_sqlEscape, _activeInt, _priorityInt, [_targetType] call a3sql_database_fnc_sqlEscape, [_property] call a3sql_database_fnc_sqlEscape, [_operator] call a3sql_database_fnc_sqlEscape, [_value] call a3sql_database_fnc_sqlEscape, _ruleId
     ];
     _result = [_sql] call a3sql_database_fnc_execute;
 
@@ -57,7 +57,7 @@ if (_isUpdate) then {
 } else {
     private _sql = format [
         "INSERT INTO patch_rules (name, active, priority, target_type, property, operator, value) VALUES ('%1', %2, %3, '%4', '%5', '%6', '%7')",
-        _name, _activeInt, _priorityInt, _targetType, _property, _operator, _value
+        [_name] call a3sql_database_fnc_sqlEscape, _activeInt, _priorityInt, [_targetType] call a3sql_database_fnc_sqlEscape, [_property] call a3sql_database_fnc_sqlEscape, [_operator] call a3sql_database_fnc_sqlEscape, [_value] call a3sql_database_fnc_sqlEscape
     ];
     _result = [_sql] call a3sql_database_fnc_execute;
 

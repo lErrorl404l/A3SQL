@@ -26,7 +26,7 @@ if (_sampleInterval <= 0) then { _sampleInterval = 60; };
 
     private _sql = format [
         "INSERT INTO perf_metrics (timestamp, fps, fps_min, entities, vehicles, players, bandwidth, mission_name) VALUES ('%1', %2, %3, %4, %5, %6, %7, '%8')",
-        _now, _fps, _fpsMin, _entities, _vehicles, _players, _bandwidth, _mission
+        [_now] call a3sql_database_fnc_sqlEscape, _fps, _fpsMin, _entities, _vehicles, _players, _bandwidth, [_mission] call a3sql_database_fnc_sqlEscape
     ];
     _sql call a3sql_database_fnc_execute;
 

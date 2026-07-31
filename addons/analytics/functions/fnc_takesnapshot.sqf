@@ -12,8 +12,8 @@ private _batch = [];
 {
     private _pos = getPosASL _x;
     _batch pushBack format ["('%1', '%2', %3, %4, %5, %6, '%7', '%8')",
-        _now, typeOf _x, _pos select 0, _pos select 1, _pos select 2,
-        1 - damage _x, groupId (group _x), _mission
+        [_now] call a3sql_database_fnc_sqlEscape, [typeOf _x] call a3sql_database_fnc_sqlEscape, _pos select 0, _pos select 1, _pos select 2,
+        1 - damage _x, [groupId (group _x)] call a3sql_database_fnc_sqlEscape, [_mission] call a3sql_database_fnc_sqlEscape
     ];
     if (count _batch >= 50) then {
         private _sql = format ["INSERT INTO replay_snapshots (timestamp, entity_type, pos_x, pos_y, pos_z, health, group_id, mission_name) VALUES %1", _batch joinString ","];
@@ -26,8 +26,8 @@ private _batch = [];
 {
     private _pos = getPosASL _x;
     _batch pushBack format ["('%1', '%2', %3, %4, %5, %6, '%7', '%8')",
-        _now, typeOf _x, _pos select 0, _pos select 1, _pos select 2,
-        1 - damage _x, "", _mission
+        [_now] call a3sql_database_fnc_sqlEscape, [typeOf _x] call a3sql_database_fnc_sqlEscape, _pos select 0, _pos select 1, _pos select 2,
+        1 - damage _x, "", [_mission] call a3sql_database_fnc_sqlEscape
     ];
     if (count _batch >= 50) then {
         private _sql = format ["INSERT INTO replay_snapshots (timestamp, entity_type, pos_x, pos_y, pos_z, health, group_id, mission_name) VALUES %1", _batch joinString ","];

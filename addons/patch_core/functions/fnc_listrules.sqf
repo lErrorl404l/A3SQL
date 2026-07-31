@@ -11,7 +11,7 @@ if (_filter isEqualType "") then {
     if (_filter != "") then {
         _sql = format [
             "SELECT * FROM patch_rules WHERE name LIKE '%%%1%%' ORDER BY priority DESC, id ASC",
-            _filter
+            [_filter] call a3sql_database_fnc_sqlEscape
         ];
     };
 };
@@ -22,7 +22,7 @@ if (_filter isEqualType createHashMap) then {
         private _key = _x;
         private _val = _filter get _key;
         if (_val isEqualType "") then {
-            _conditions pushBack format ["%1 = '%2'", _key, _val];
+            _conditions pushBack format ["%1 = '%2'", _key, [_val] call a3sql_database_fnc_sqlEscape];
         } else {
             _conditions pushBack format ["%1 = %2", _key, _val];
         };

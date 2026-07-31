@@ -6,7 +6,7 @@ if (_uid == "") exitWith {};
 
 private _sql = format [
     "SELECT unit_type, pos_x, pos_y, pos_z, dir, damage, loadout_json, vehicle, vehicle_role FROM player_save WHERE uid = '%1' AND mission_name = '%2'",
-    _uid, missionName
+    [_uid] call a3sql_database_fnc_sqlEscape, [missionName] call a3sql_database_fnc_sqlEscape
 ];
 private _result = _sql call a3sql_database_fnc_selectAll;
 

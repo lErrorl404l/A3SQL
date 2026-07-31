@@ -14,7 +14,7 @@ addMissionEventHandler ["PlayerConnected", {
     if (_uid == "") exitWith {};
     private _sql = format [
         "INSERT OR REPLACE INTO players (uid, name, object_id, connected_at, last_seen, online) VALUES ('%1', '%2', '%3', datetime('now'), datetime('now'), 1)",
-        _uid, _name, _idStr
+        [_uid] call a3sql_database_fnc_sqlEscape, [_name] call a3sql_database_fnc_sqlEscape, [_idStr] call a3sql_database_fnc_sqlEscape
     ];
     _sql call a3sql_database_fnc_execute;
 
@@ -26,7 +26,7 @@ addMissionEventHandler ["HandleDisconnect", {
     if (_uid == "") exitWith {};
     private _sql = format [
         "UPDATE players SET online=0, last_seen=datetime('now') WHERE uid='%1'",
-        _uid
+        [_uid] call a3sql_database_fnc_sqlEscape
     ];
     _sql call a3sql_database_fnc_execute;
 
@@ -46,7 +46,7 @@ addMissionEventHandler ["HandleDisconnect", {
         private _posStr = format ["%1,%2,%3", _pos select 0, _pos select 1, _pos select 2];
         private _sql = format [
             "UPDATE players SET unit_type='%1', rank='%2', score=%3, side='%4', position='%5', last_seen=datetime('now') WHERE uid='%6'",
-            typeOf _x, rank _x, score _x, side _x, _posStr, _uid
+            [typeOf _x] call a3sql_database_fnc_sqlEscape, [rank _x] call a3sql_database_fnc_sqlEscape, score _x, [str (side _x)] call a3sql_database_fnc_sqlEscape, [_posStr] call a3sql_database_fnc_sqlEscape, [_uid] call a3sql_database_fnc_sqlEscape
         ];
         _sql call a3sql_database_fnc_execute;
     } forEach (allUnits select {isPlayer _x});
@@ -61,7 +61,7 @@ addMissionEventHandler ["HandleDisconnect", {
         private _result = str (serverCommand _fullCmd);
 
         private _status = ["failed", "executed"] select (_result == "true");
-        private _sql = format ["UPDATE server_commands SET status='%1', result='%2', executed_at=datetime('now') WHERE id=%3", _status, _result, _id];
+        private _sql = format ["UPDATE server_commands SET status='%1', result='%2', executed_at=datetime('now') WHERE id=%3", [_status] call a3sql_database_fnc_sqlEscape, [_result] call a3sql_database_fnc_sqlEscape, _id];
         _sql call a3sql_database_fnc_execute;
 
         ["a3sql_admin_command", [_cmd, _params, _status]] call CBA_fnc_globalEvent;

@@ -4,7 +4,7 @@ params [["_groupName", "", [""]]];
 
 if (_groupName == "") exitWith {};
 
-private _sql = format ["UPDATE patch_rules SET active=1 WHERE group_name = '%1'", _groupName];
+private _sql = format ["UPDATE patch_rules SET active=1 WHERE group_name = '%1'", [_groupName] call a3sql_database_fnc_sqlEscape];
 _sql call a3sql_database_fnc_execute;
 
 [_groupName] call a3sql_patch_core_fnc_applyGroup;

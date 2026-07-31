@@ -12,3 +12,4 @@ A3PREP(save);
 A3PREP(selectAll);
 A3PREP(selectArray);
 A3PREP(selectMap);
+A3PREP(sqlEscape);

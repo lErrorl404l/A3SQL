@@ -183,6 +183,15 @@ private _test = {
 ["LOAD", "LOAD sqf_save_test", true] call _test;
 
 // ═══════════════════════════════════════════
+// SQL injection guard
+// ═══════════════════════════════════════════
+["CREATE TABLE injection test", "CREATE TABLE sqf_inj_test (k STRING PRIMARY KEY)", true] call _test;
+private _payload = "'; DROP TABLE sqf_inj_test; --";
+["Injection payload escaped", format ["INSERT INTO sqf_inj_test VALUES ('%1')", [_payload] call a3sql_database_fnc_sqlEscape], true] call _test;
+["Injection table survives", "SELECT COUNT(*) FROM sqf_inj_test", true] call _test;
+["DROP TABLE inj test", "DROP TABLE sqf_inj_test", true] call _test;
+
+// ═══════════════════════════════════════════
 // Errors
 // ═══════════════════════════════════════════
 ["Table not found", "SELECT * FROM nonexistent", false] call _test;

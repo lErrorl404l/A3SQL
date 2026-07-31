@@ -7,7 +7,7 @@ if (_buffer isEqualTo []) exitWith {};
 private _values = [];
 {
     _x params ["_ts", "_uid", "_weapon", "_mission"];
-    _values pushBack format ["('%1', '%2', '%3', '%4')", _ts, _uid, _weapon, _mission];
+    _values pushBack format ["('%1', '%2', '%3', '%4')", [_ts] call a3sql_database_fnc_sqlEscape, [_uid] call a3sql_database_fnc_sqlEscape, [_weapon] call a3sql_database_fnc_sqlEscape, [_mission] call a3sql_database_fnc_sqlEscape];
 } forEach _buffer;
 
 private _sql = format ["INSERT INTO events_shots (timestamp, shooter_uid, weapon, mission_name) VALUES %1", _values joinString ","];

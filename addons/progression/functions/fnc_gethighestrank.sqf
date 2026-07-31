@@ -4,7 +4,7 @@ params [["_uid", "", [""]]];
 
 if (_uid == "") exitWith { "" };
 
-private _result = [format ["SELECT highest_rank FROM player_progression WHERE uid = '%1'", _uid]] call a3sql_database_fnc_selectMap;
+private _result = [format ["SELECT highest_rank FROM player_progression WHERE uid = '%1'", [_uid] call a3sql_database_fnc_sqlEscape]] call a3sql_database_fnc_selectMap;
 
 if (_result isEqualTo []) exitWith { "" };
 

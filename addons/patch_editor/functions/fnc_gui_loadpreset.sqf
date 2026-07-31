@@ -26,7 +26,7 @@ if (_presetName isEqualTo "") then {
         ["A3SQL Patch", format ["Preset '%1' not found", _presetName]] call CBA_fnc_notify;
     };
 
-    private _row = [format ["SELECT data FROM patch_presets WHERE name = '%1'", _presetName]] call a3sql_database_fnc_selectMap;
+    private _row = [format ["SELECT data FROM patch_presets WHERE name = '%1'", [_presetName] call a3sql_database_fnc_sqlEscape]] call a3sql_database_fnc_selectMap;
     if (_row isEqualTo []) exitWith {
         ["A3SQL Patch", format ["Could not load preset '%1'", _presetName]] call CBA_fnc_notify;
     };
@@ -61,7 +61,7 @@ if (_presetName isEqualTo "") then {
 
         private _insertSQL = format [
             "INSERT INTO patch_rules (name, active, priority, target_type, property, operator, value) VALUES ('%1', %2, %3, '%4', '%5', '%6', '%7')",
-            _name, _active, _priority, _targetType, _property, _operator, _value
+            [_name] call a3sql_database_fnc_sqlEscape, _active, _priority, [_targetType] call a3sql_database_fnc_sqlEscape, [_property] call a3sql_database_fnc_sqlEscape, [_operator] call a3sql_database_fnc_sqlEscape, [_value] call a3sql_database_fnc_sqlEscape
         ];
         private _res = [_insertSQL] call a3sql_database_fnc_execute;
         if ((_res select 0) == 0) then {

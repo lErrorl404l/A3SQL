@@ -8,8 +8,9 @@ params [
 
 if (_targetType isEqualTo "") exitWith { [1, "ERR_PARAM", "No target type specified"] };
 
-// Escape single quotes in the match_value for SQL safety
-private _mvEscaped = if (_matchValue isEqualType "") then {
+// Serialize match_value (string or array) for SQL string interpolation,
+// then escape single quotes for SQL safety
+private _mvStr = if (_matchValue isEqualType "") then {
     _matchValue
 } else {
     str _matchValue
@@ -17,7 +18,7 @@ private _mvEscaped = if (_matchValue isEqualType "") then {
 
 private _sql = format [
     "SELECT * FROM patch_rules WHERE active = 1 AND target_type = '%1' AND match_value = '%2' ORDER BY priority DESC, id ASC",
-    _targetType, _mvEscaped
+    [_targetType] call a3sql_database_fnc_sqlEscape, [_mvStr] call a3sql_database_fnc_sqlEscape
 ];
 private _response = _extension callExtension _sql;
 if (_response isEqualTo "") exitWith { [1, "ERR_CONN", "No response from extension"] };

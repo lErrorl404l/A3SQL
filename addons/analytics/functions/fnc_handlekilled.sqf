@@ -16,19 +16,19 @@ private _headshot = parseNumber _useEffects;
 
 private _sql = format [
     "INSERT INTO events_kills (timestamp, killer_uid, killer_unit, killer_weapon, killer_pos_x, killer_pos_y, killer_pos_z, victim_uid, victim_unit, victim_weapon, distance, headshot, mission_name) VALUES ('%1', '%2', '%3', '%4', %5, %6, %7, '%8', '%9', '%10', %11, %12, '%13')",
-    _now,
-    _killerUID,
-    _killerUnit,
-    _killerWeapon,
+    [_now] call a3sql_database_fnc_sqlEscape,
+    [_killerUID] call a3sql_database_fnc_sqlEscape,
+    [_killerUnit] call a3sql_database_fnc_sqlEscape,
+    [_killerWeapon] call a3sql_database_fnc_sqlEscape,
     _killerPos select 0,
     _killerPos select 1,
     _killerPos select 2,
-    _victimUID,
-    _victimUnit,
-    _victimWeapon,
+    [_victimUID] call a3sql_database_fnc_sqlEscape,
+    [_victimUnit] call a3sql_database_fnc_sqlEscape,
+    [_victimWeapon] call a3sql_database_fnc_sqlEscape,
     _distance,
     _headshot,
-    _mission
+    [_mission] call a3sql_database_fnc_sqlEscape
 ];
 _sql call a3sql_database_fnc_execute;
 
