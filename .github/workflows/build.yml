@@ -14,6 +14,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659
+        with:
+          cache-shared-key: a3sql-build-linux-${{ hashFiles('extension/Cargo.lock') }}
       - run: cargo build --release --manifest-path extension/Cargo.toml
       - name: Rename artifact
         run: |
@@ -28,6 +30,7 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659
         with:
           target: x86_64-pc-windows-gnu
+          cache-shared-key: a3sql-build-win64-${{ hashFiles('extension/Cargo.lock') }}
       - run: sudo apt-get update && sudo apt-get install -y mingw-w64
       - run: cargo build --release --manifest-path extension/Cargo.toml --target x86_64-pc-windows-gnu
       - name: Rename artifact
@@ -40,6 +43,7 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659
         with:
           target: i686-pc-windows-gnu
+          cache-shared-key: a3sql-build-win32-${{ hashFiles('extension/Cargo.lock') }}
       - run: sudo apt-get update && sudo apt-get install -y mingw-w64
       - run: cargo build --release --manifest-path extension/Cargo.toml --target i686-pc-windows-gnu
 
@@ -50,5 +54,6 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659
         with:
           target: i686-unknown-linux-gnu
+          cache-shared-key: a3sql-build-linux32-${{ hashFiles('extension/Cargo.lock') }}
       - run: sudo apt-get update && sudo apt-get install -y gcc-multilib
       - run: cargo build --release --manifest-path extension/Cargo.toml --target i686-unknown-linux-gnu

@@ -14,6 +14,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659
+        with:
+          # Stable cache key: replaces the automatic runner-image-hash key, so
+          # cache only regenerates when deps change (not every commit or runner
+          # image update) — one entry per job, no generation accumulation.
+          cache-shared-key: a3sql-test-${{ hashFiles('extension/Cargo.lock') }}
       - run: cargo test --manifest-path extension/Cargo.toml
 
   miri:
@@ -24,6 +29,7 @@ jobs:
         with:
           components: miri
           toolchain: nightly
+          cache-shared-key: a3sql-miri-${{ hashFiles('extension/Cargo.lock') }}
       - run: cargo miri test --manifest-path extension/Cargo.toml --lib
         env:
           MIRIFLAGS: -Zmiri-isolation-error=warn

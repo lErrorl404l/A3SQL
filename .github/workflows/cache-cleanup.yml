@@ -1,0 +1,48 @@
+name: Cache Cleanup
+
+# Prunes stale GitHub Actions caches. GitHub's cache is keyed, not
+# single-slot: every lockfile/runner-image change spawns a NEW cache entry
+# that lingers until evicted. The 7-day LRU only fires at quota pressure,
+# so generations accumulate. This deletes entries older than 7 days,
+# keeping quota flat.
+#
+# Runs weekly (Monday 03:00 UTC) + on demand via workflow_dispatch.
+
+on:
+  schedule:
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  actions: write # delete caches
+  contents: read
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete caches older than 7 days
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          now=$(date +%s)
+          cutoff=$(( now - 7*24*3600 ))
+          deleted=0
+          kept=0
+          # --paginate walks every cache on every ref (incl. orphaned ones
+          # from deleted branches that the plain list hides but still counts
+          # against the quota)
+          gh api "repos/${{ github.repository }}/actions/caches?per_page=100" \
+            --paginate \
+            --jq '.actions_caches[] | [.id, .created_at, .size_in_bytes, .key] | @tsv' \
+            | while IFS=$'\t' read -r id created size key; do
+                created_ts=$(date -d "$created" +%s)
+                if [ "$created_ts" -lt "$cutoff" ]; then
+                  echo "deleting cache $id ($(( size/1024/1024 ))MB, created $created): $key"
+                  gh api -X DELETE "repos/${{ github.repository }}/actions/caches/$id" --silent
+                  deleted=$((deleted+1))
+                else
+                  kept=$((kept+1))
+                fi
+              done
+          echo "pruned: deleted=$deleted kept=$kept"
