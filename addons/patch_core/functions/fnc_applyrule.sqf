@@ -12,11 +12,9 @@ private _targetType = "";
 private _property   = "";
 private _operator   = "set";
 private _value      = "";
-private _ruleId     = 0;
 
 if (_rule isEqualType []) then {
     // Raw DB row array — use ordinal indexes matching patch_rules column order
-    _ruleId     = _rule param [0, 0, [0]];
     _matchType  = _rule param [5, "exact", [""]];
     _matchValue = _rule param [6, "", ["", []]];
     _targetType = _rule param [7, "", [""]];
@@ -25,7 +23,6 @@ if (_rule isEqualType []) then {
     _value      = _rule param [10, "", [""]];
 } else {
     if (_rule isEqualType createHashMap) then {
-        _ruleId     = _rule getOrDefault ["id", 0];
         _matchType  = _rule getOrDefault ["match_type", "exact"];
         _matchValue = _rule getOrDefault ["match_value", ""];
         _targetType = _rule getOrDefault ["target_type", ""];
@@ -74,12 +71,7 @@ switch (toLower _targetType) do {
     };
     default {
         private _customHandler = missionNamespace getVariable [format [QGVAR(handler_%1), toLower _targetType], nil];
-        if (!isNil "_customHandler") then {
-            try {
-                _targets = [_matchValue, _property, _value] call _customHandler;
-                _handlerApplied = true;
-            } catch {};
-        } else {
+        if (isNil {_customHandler}) then {
             // ── Generic target collection ──
             switch (toLower _targetType) do {
                 case "all":     { _targets = allMissionObjects "All"; };
@@ -90,6 +82,11 @@ switch (toLower _targetType) do {
                 case "group":   { _targets = allGroups apply { _x }; };
                 default         { _targets = allMissionObjects "All"; };
             };
+        } else {
+            try {
+                _targets = [_matchValue, _property, _value] call _customHandler;
+                _handlerApplied = true;
+            } catch {};
         };
     };
 };
@@ -170,28 +167,34 @@ private _failed  = 0;
             } catch {};
         };
         case "sqf_exec": {
-            if !(["a3sql_patch_allow_sqf_exec"] call CBA_fnc_getSetting) then {
-                if (["a3sql_patch_log_level"] call CBA_fnc_getSetting >= 3) then {
-                    ["A3SQL Patch", "sqf_exec blocked — a3sql_patch_allow_sqf_exec is disabled"] call CBA_fnc_error;
-                };
-            } else {
+            if (["a3sql_patch_allow_sqf_exec"] call CBA_fnc_getSetting) then {
                 try {
                     private _code = compile _value;
                     [_target] call _code;
                     _success = true;
                 } catch {};
+            } else {
+                if (["a3sql_patch_log_level"] call CBA_fnc_getSetting >= 3) then {
+                    ["A3SQL Patch", "sqf_exec blocked — a3sql_patch_allow_sqf_exec is disabled"] call CBA_fnc_error;
+                };
             };
         };
         case "add": {
-            try {
-                private _code = compile _value;
-                private _handlerId = _target addEventHandler [_property, _code];
-                // Track handler ID so "remove" can find it
-                private _tracked = _target getVariable [QGVAR(ehRegistry), createHashMap];
-                _tracked set [_property, _handlerId];
-                _target setVariable [QGVAR(ehRegistry), _tracked];
-                _success = true;
-            } catch {};
+            if (["a3sql_patch_allow_sqf_exec"] call CBA_fnc_getSetting) then {
+                try {
+                    private _code = compile _value;
+                    private _handlerId = _target addEventHandler [_property, _code];
+                    // Track handler ID so "remove" can find it
+                    private _tracked = _target getVariable [QGVAR(ehRegistry), createHashMap];
+                    _tracked set [_property, _handlerId];
+                    _target setVariable [QGVAR(ehRegistry), _tracked];
+                    _success = true;
+                } catch {};
+            } else {
+                if (["a3sql_patch_log_level"] call CBA_fnc_getSetting >= 3) then {
+                    ["A3SQL Patch", "add blocked — a3sql_patch_allow_sqf_exec is disabled"] call CBA_fnc_error;
+                };
+            };
         };
         case "remove": {
             try {

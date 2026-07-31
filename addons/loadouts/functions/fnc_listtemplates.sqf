@@ -12,7 +12,6 @@ private _data = _parsed select 2;
 if !(_data isEqualType []) exitWith { [1, "ERR_PARSE", "Unexpected result format"] };
 if (count _data < 2) exitWith { [1, "ERR_PARSE", "No data in result"] };
 
-private _headers = _data select 0;
 private _rows = _data select [1];
 private _result = [];
 
