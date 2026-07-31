@@ -29,7 +29,11 @@ fn serve_client(stream: std::net::TcpStream) {
     // RwLock in the FFI layer and could change between calls).
     let (expected_user, expected_pass) = CREDENTIALS.lock().unwrap().clone();
 
-    let has_auth = !expected_user.is_empty() || !expected_pass.is_empty();
+    // Auth is mandatory when credentials are set OR the operator forced it
+    // via `listener_require_auth = true` in a3sql.toml (shared-host posture:
+    // reject anonymous local connections even with no credentials configured).
+    let has_auth =
+        !expected_user.is_empty() || !expected_pass.is_empty() || crate::config::CONFIG.listener_auth_required();
     let mut authenticated = !has_auth;
     let mut line = String::new();
     loop {
@@ -47,6 +51,16 @@ fn serve_client(stream: std::net::TcpStream) {
         }
         if !authenticated {
             if let Some(rest) = trimmed.strip_prefix("LOGIN ") {
+                if expected_user.is_empty() && expected_pass.is_empty() {
+                    // listener_require_auth is set but no credentials are
+                    // configured — LOGIN can never succeed. Say so plainly.
+                    let _ = writeln!(
+                        stream,
+                        "[-1,\"ERR_AUTH\",\"No credentials configured — set listener_user/password in CBA settings\"]"
+                    );
+                    let _ = stream.flush();
+                    break;
+                }
                 let parts: Vec<&str> = rest.splitn(2, ' ').collect();
                 if parts.len() >= 2 && parts[0] == expected_user && parts[1] == expected_pass {
                     let _ = writeln!(stream, "[0,\"OK\",\"Authenticated\"]");

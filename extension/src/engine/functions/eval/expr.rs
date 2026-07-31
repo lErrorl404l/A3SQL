@@ -305,6 +305,39 @@ pub(crate) fn eval_literal_expr(expr: &Expr) -> Result<DbValue, EngineError> {
         }
         // Double-quoted identifiers used as values: "hello" → string
         Expr::Identifier(ident) => Ok(DbValue::String(ident.value.clone())),
+        // ARRAY[...] literals — SQLite-style array constructor for
+        // STRINGS[]/FLOATS[] columns
+        Expr::Array(arr) => {
+            let mut strings: Option<Vec<String>> = None;
+            let mut floats: Option<Vec<f64>> = None;
+            for elem in &arr.elem {
+                let v = eval_literal_expr(elem)?;
+                match v {
+                    DbValue::String(s) => {
+                        strings.get_or_insert_with(Vec::new).push(s);
+                    }
+                    DbValue::Int(n) => {
+                        floats.get_or_insert_with(Vec::new).push(n as f64);
+                    }
+                    DbValue::Float(f) => {
+                        floats.get_or_insert_with(Vec::new).push(f);
+                    }
+                    other => {
+                        return Err(EngineError::Exec(format!(
+                            "Array elements must be strings or numbers, got {:?}",
+                            other
+                        )))
+                    }
+                }
+            }
+            if let Some(f) = floats {
+                Ok(DbValue::Floats(f))
+            } else if let Some(s) = strings {
+                Ok(DbValue::Strings(s))
+            } else {
+                Ok(DbValue::Strings(Vec::new()))
+            }
+        }
         // Function calls with no row context: datetime('now') and friends (SQLite-style)
         Expr::Function(func) => {
             let name = func.name.to_string().to_lowercase();

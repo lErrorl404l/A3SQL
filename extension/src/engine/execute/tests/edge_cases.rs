@@ -125,3 +125,47 @@ fn datetime_bad_modifier_rejected() {
     let r = parse_and_exec("INSERT INTO t VALUES (1, datetime('yesterday'))", &mut db);
     assert!(r.is_err(), "unsupported modifier must be rejected");
 }
+
+#[test]
+fn select_from_view_materializes() {
+    // Bug regression: SELECT on a created view reported "Table does not exist"
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE w (id TEXT, name TEXT, barrelLength FLOAT)", &mut db).unwrap();
+    parse_and_exec("INSERT INTO w VALUES ('a', 'A', 100.0)", &mut db).unwrap();
+    let r = parse_and_exec(
+        "CREATE VIEW v_short AS SELECT * FROM w WHERE barrelLength < 300",
+        &mut db,
+    );
+    assert!(r.is_ok(), "create view: {:?}", r);
+    let sel = parse_and_exec("SELECT * FROM v_short", &mut db);
+    assert!(sel.is_ok(), "select from view: {:?}", sel);
+}
+
+#[test]
+fn select_from_empty_view_resolves() {
+    // Bug regression: SELECT on a view over an EMPTY table reported
+    // "Table does not exist" because materialize_view skipped creating the
+    // table when the result had no data rows (header only).
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE w (id TEXT, name TEXT)", &mut db).unwrap();
+    parse_and_exec("CREATE VIEW v AS SELECT * FROM w", &mut db).unwrap();
+    let sel = parse_and_exec("SELECT * FROM v", &mut db);
+    assert!(sel.is_ok(), "select from empty view: {:?}", sel);
+    // And still works once rows exist
+    parse_and_exec("INSERT INTO w VALUES ('a', 'A')", &mut db).unwrap();
+    let sel2 = parse_and_exec("SELECT * FROM v", &mut db);
+    assert!(sel2.is_ok(), "select from populated view: {:?}", sel2);
+    assert!(sel2.unwrap().contains("a"));
+}
+
+#[test]
+fn array_columns_accept_array_literals() {
+    // Bug regression: STRINGS[]/FLOATS[] columns were downgraded to plain
+    // STRING/FLOAT by the preprocessor, so array values were rejected.
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE t_arr (s STRINGS[], f FLOATS[])", &mut db).unwrap();
+    let r = parse_and_exec("INSERT INTO t_arr VALUES (ARRAY['a','b'], ARRAY[1.5, 2.5])", &mut db);
+    assert!(r.is_ok(), "array insert: {:?}", r);
+    let sel = parse_and_exec("SELECT s FROM t_arr", &mut db).unwrap();
+    assert!(sel.contains("a"), "array value present: {}", sel);
+}

@@ -864,7 +864,7 @@ fn gap_list_type_column() {
         "CREATE TABLE a_list (id STRING PRIMARY KEY, tags STRINGS[])",
         "LIST type",
     );
-    ok("INSERT INTO a_list VALUES ('a', '[\"x\",\"y\"]')", "insert STRINGS[]");
+    ok("INSERT INTO a_list VALUES ('a', ARRAY['x','y'])", "insert STRINGS[]");
     let r = dispatch("SELECT tags FROM a_list WHERE id = 'a'", &[]);
     assert!(r.contains("[0,"), "LIST select: {}", r);
 }

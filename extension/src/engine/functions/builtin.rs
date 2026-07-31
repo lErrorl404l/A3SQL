@@ -613,9 +613,12 @@ pub(crate) fn materialize_view(name: &str, db: &mut Database) -> Result<(), Engi
     let rows: Vec<Vec<serde_json::Value>> =
         serde_json::from_str(&result).map_err(|e| EngineError::Exec(format!("View result parse: {}", e)))?;
 
-    if rows.len() >= 2 {
+    // The SELECT always returns at least the header row — materialize the
+    // table even with zero data rows (an empty view must still resolve, or
+    // SELECT on it reports "Table does not exist"). Column types default to
+    // String when there is no data row to infer from.
+    if !rows.is_empty() {
         let header = &rows[0];
-        // Infer column types from the first data row (same approach as CTE code)
         let cols: Vec<Column> = header
             .iter()
             .enumerate()

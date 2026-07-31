@@ -58,13 +58,13 @@ pub(crate) static CREDENTIALS: LazyLock<Mutex<(String, String)>> =
     LazyLock::new(|| Mutex::new((String::new(), String::new())));
 pub(crate) static REMOTE: LazyLock<Mutex<Option<std::net::TcpStream>>> = LazyLock::new(|| Mutex::new(None));
 
-/// Output buffer size from Arma engine. Bumped to 20480 for fewer round-trips
-/// on larger result sets. Arma 3 v2.20 supports up to ~30 KB.
+/// Output buffer size from Arma engine. 30 KB matches Arma 3 v2.20's
+/// `callExtension` ceiling — bigger result sets fit without round-trips.
 #[allow(
     dead_code,
     reason = "OUTPUT_BUF_SIZE is a public constant checked in dispatch.rs and passed to Arma via RVExtensionArgs"
 )]
-pub(crate) const OUTPUT_BUF_SIZE: u32 = 20480;
+pub(crate) const OUTPUT_BUF_SIZE: u32 = 30720;
 
 /// Version string — max 32 bytes including null terminator.
 /// Derived from Cargo.toml so they stay in sync.

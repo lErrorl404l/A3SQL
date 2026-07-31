@@ -30,12 +30,25 @@ pub(crate) struct Config {
     #[allow(dead_code, reason = "phased auth implementation")]
     pub auth_required: Option<bool>,
 
+    /// When `true`, the TCP listener rejects anonymous connections — a
+    /// `LOGIN <user> <pass>` is mandatory even if CBA credentials are empty.
+    /// Intended for shared/dedicated hosts where any local process could
+    /// otherwise connect. Default: `false`.
+    pub listener_require_auth: Option<bool>,
+
     /// Directory for file I/O commands (SAVE, LOAD, export_to_file).
     /// Defaults to `./a3sql_data/` when not set.
     pub data_dir: Option<String>,
 }
 
 impl Config {
+    /// Whether the TCP listener requires LOGIN auth on every connection.
+    /// True when `listener_require_auth` is set, or when credentials are
+    /// configured (existing behavior: non-empty creds force LOGIN).
+    pub(crate) fn listener_auth_required(&self) -> bool {
+        self.listener_require_auth.unwrap_or(false)
+    }
+
     /// Whether auth verification is required.
     #[allow(dead_code, reason = "phased auth implementation")]
     pub(crate) fn auth_enabled(&self) -> bool {

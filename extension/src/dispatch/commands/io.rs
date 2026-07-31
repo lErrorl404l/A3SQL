@@ -10,6 +10,13 @@ use crate::engine::error::{error_response, ok_response, ErrorCode};
 /// Rejects absolute paths and paths containing `..` or `~`.
 /// Creates the data directory if it does not exist.
 /// Returns an error response string on failure.
+/// Swap a path's extension, e.g. `save.bin` + `tmp` -> `save.bin.tmp`.
+fn with_ext_suffix(path: &std::path::Path, suffix: &str) -> std::path::PathBuf {
+    let mut os = path.as_os_str().to_os_string();
+    os.push(format!(".{suffix}"));
+    std::path::PathBuf::from(os)
+}
+
 fn safe_data_path(filename: &str) -> Result<std::path::PathBuf, String> {
     // ponytail: global data_dir lock; per-account dirs if multi-tenant needed
     let p = Path::new(filename);
@@ -142,10 +149,24 @@ pub(crate) fn handle_save(db: &engine::Database, args: &[&str]) -> String {
         Err(e) => return e,
     };
     let bytes = engine::serialize::export_binary(db);
-    match std::fs::write(&path, bytes) {
-        Ok(()) => ok_response(&format!("\"Saved to '{}/{}'\"", CONFIG.data_dir().display(), filename)),
-        Err(e) => error_response(ErrorCode::Io, &format!("Save failed: {}", e)),
+
+    // Atomic save: write to a temp file in the same dir, then rename over
+    // the target (rename is atomic on the same filesystem). A crash mid-write
+    // leaves only the temp file — the last good save survives untouched.
+    let tmp_path = with_ext_suffix(&path, "tmp");
+    if let Err(e) = std::fs::write(&tmp_path, &bytes) {
+        return error_response(ErrorCode::Io, &format!("Save failed: {}", e));
     }
+    // Keep the previous good save as .bak before replacing it.
+    let bak_path = with_ext_suffix(&path, "bak");
+    if path.exists() {
+        let _ = std::fs::rename(&path, &bak_path);
+    }
+    if let Err(e) = std::fs::rename(&tmp_path, &path) {
+        let _ = std::fs::remove_file(&tmp_path);
+        return error_response(ErrorCode::Io, &format!("Save failed: {}", e));
+    }
+    ok_response(&format!("\"Saved to '{}/{}'\"", CONFIG.data_dir().display(), filename))
 }
 
 pub(crate) fn handle_load(db: &mut engine::Database, args: &[&str]) -> String {
@@ -157,19 +178,40 @@ pub(crate) fn handle_load(db: &mut engine::Database, args: &[&str]) -> String {
         Ok(p) => p,
         Err(e) => return e,
     };
-    match std::fs::read(&path) {
-        Ok(bytes) => {
-            db.clear();
-            match engine::serialize::import_binary(&bytes, db) {
-                Ok(()) => ok_response(&format!(
-                    "\"Loaded from '{}/{}'\"",
-                    CONFIG.data_dir().display(),
-                    filename
-                )),
-                Err(e) => error_response(ErrorCode::Exec, &format!("Load failed: {}", e)),
+    let bytes = match std::fs::read(&path) {
+        Ok(b) => b,
+        Err(e) => return error_response(ErrorCode::Io, &format!("Read failed: {}", e)),
+    };
+    db.clear();
+    match engine::serialize::import_binary(&bytes, db) {
+        Ok(()) => ok_response(&format!(
+            "\"Loaded from '{}/{}'\"",
+            CONFIG.data_dir().display(),
+            filename
+        )),
+        Err(e) => {
+            // Main save corrupt/truncated — fall back to the last good .bak
+            // (created by handle_save before each successful rename).
+            let bak_path = with_ext_suffix(&path, "bak");
+            match std::fs::read(&bak_path) {
+                Ok(bak_bytes) => {
+                    db.clear();
+                    match engine::serialize::import_binary(&bak_bytes, db) {
+                        Ok(()) => ok_response(&format!(
+                            "\"Loaded from backup '{}/{}' (main save corrupt: {})\"",
+                            CONFIG.data_dir().display(),
+                            bak_path.file_name().and_then(|f| f.to_str()).unwrap_or(""),
+                            e
+                        )),
+                        Err(bak_e) => error_response(
+                            ErrorCode::Exec,
+                            &format!("Load failed (main: {}; backup: {})", e, bak_e),
+                        ),
+                    }
+                }
+                Err(_) => error_response(ErrorCode::Exec, &format!("Load failed: {}", e)),
             }
         }
-        Err(e) => error_response(ErrorCode::Io, &format!("Read failed: {}", e)),
     }
 }
 

@@ -105,8 +105,11 @@ fn fix_scientific_notation(s: &str) -> String {
 pub fn preprocess(sql: &str) -> String {
     // Fix scientific notation before other transforms
     let mut result = fix_scientific_notation(sql);
-    result = result.replace("STRINGS[]", "STRING");
-    result = result.replace("FLOATS[]", "FLOAT");
+    // Map array type suffixes to the bare Custom names — `STRINGS`/`FLOATS`
+    // resolve to ColumnType::Strings/Floats in parse_data_type (the `[]`
+    // suffix is dropped because sqlparser can't parse `STRING[]`).
+    result = result.replace("STRINGS[]", "STRINGS");
+    result = result.replace("FLOATS[]", "FLOATS");
 
     // Map date/time types to STRING (engine stores values as JSON-compatible strings)
     result = result.replace(" DATE)", " STRING)");
@@ -347,7 +350,7 @@ mod tests {
     fn strings_array_type() {
         assert_eq!(
             preprocess("CREATE TABLE t (id STRING PRIMARY KEY, tags STRINGS[])"),
-            "CREATE TABLE t (id STRING PRIMARY KEY, tags STRING)"
+            "CREATE TABLE t (id STRING PRIMARY KEY, tags STRINGS)"
         );
     }
 
@@ -355,7 +358,7 @@ mod tests {
     fn floats_array_type() {
         assert_eq!(
             preprocess("CREATE TABLE t (id STRING PRIMARY KEY, vals FLOATS[])"),
-            "CREATE TABLE t (id STRING PRIMARY KEY, vals FLOAT)"
+            "CREATE TABLE t (id STRING PRIMARY KEY, vals FLOATS)"
         );
     }
 
@@ -363,7 +366,7 @@ mod tests {
     fn both_array_types() {
         assert_eq!(
             preprocess("CREATE TABLE t (id STRING PRIMARY KEY, tags STRINGS[], vals FLOATS[])"),
-            "CREATE TABLE t (id STRING PRIMARY KEY, tags STRING, vals FLOAT)"
+            "CREATE TABLE t (id STRING PRIMARY KEY, tags STRINGS, vals FLOATS)"
         );
     }
 

@@ -24,7 +24,20 @@ use super::super::table::Table;
 use super::super::value::{Column, ColumnType, DbValue};
 
 const BINARY_MAGIC: &[u8; 4] = b"A3SQ";
-const BINARY_VERSION: u8 = 0x01;
+// v0x02: adds the FNV-1a checksum trailer (8 bytes). v0x01 saves (no
+// checksum) are rejected with a migration hint — pre-1.0, not portable.
+const BINARY_VERSION: u8 = 0x02;
+const CHECKSUM_LEN: usize = 8;
+
+/// FNV-1a 64-bit — fast, no deps, good enough to catch truncation/corruption.
+fn checksum(data: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in data {
+        hash ^= u64::from(*b);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    hash
+}
 
 #[repr(u8)]
 enum BinTag {
@@ -37,7 +50,8 @@ enum BinTag {
     Floats = 6,
 }
 
-/// Export full database as binary.
+/// Export full database as binary, with an FNV-1a checksum trailer so
+/// truncation/corruption is detected on load.
 pub(crate) fn export_binary(db: &Database) -> Vec<u8> {
     let mut buf = Vec::new();
     buf.extend_from_slice(BINARY_MAGIC);
@@ -55,6 +69,8 @@ pub(crate) fn export_binary(db: &Database) -> Vec<u8> {
         write_bin_table(&mut buf, table);
     }
 
+    // Trailer: FNV-1a over everything written so far.
+    buf.extend_from_slice(&checksum(&buf).to_le_bytes());
     buf
 }
 
@@ -147,20 +163,42 @@ fn write_bin_value(buf: &mut Vec<u8>, val: &DbValue) {
     }
 }
 
-/// Import database from binary.
+/// Import database from binary. Verifies the checksum trailer and gives an
+/// actionable message for old-format saves.
 pub(crate) fn import_binary(data: &[u8], db: &mut Database) -> Result<(), String> {
-    if data.len() < 5 {
+    if data.len() < 5 + CHECKSUM_LEN {
         return Err("Binary data too short".into());
     }
     if &data[0..4] != BINARY_MAGIC {
         return Err("Invalid binary magic".into());
     }
     if data[4] != BINARY_VERSION {
-        return Err(format!("Unsupported binary version {}", data[4]));
+        if data[4] < BINARY_VERSION {
+            return Err(format!(
+                "Save file uses format v{}, this build uses v{} — older saves are \
+                 not portable. Migrate via export_sql and re-import.",
+                data[4], BINARY_VERSION
+            ));
+        }
+        return Err(format!(
+            "Save file uses format v{}, this build uses v{} — upgrade a3sql to load it.",
+            data[4], BINARY_VERSION
+        ));
+    }
+
+    // Verify checksum over everything before the trailer.
+    let payload_end = data.len() - CHECKSUM_LEN;
+    let expected = u64::from_le_bytes(
+        data[payload_end..]
+            .try_into()
+            .map_err(|_| "Truncated binary data: checksum".to_string())?,
+    );
+    if checksum(&data[..payload_end]) != expected {
+        return Err("Checksum mismatch — save file is corrupt or truncated.".into());
     }
 
     let mut pos = 5usize;
-    if pos + 4 > data.len() {
+    if pos + 4 > payload_end {
         return Err("Truncated binary data".into());
     }
     let table_count = u32::from_le_bytes(

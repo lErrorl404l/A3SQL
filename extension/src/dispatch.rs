@@ -295,13 +295,13 @@ pub(crate) fn dispatch_inner(db: &mut engine::Database, input: &str, args: &[&st
     // ── Multi-statement SQL execution ─────────────────────────────────
     let response = sql::exec_sql_statements(db, &sql::split_sql(trimmed), args);
 
-    // Guard: Arma output buffer is ~20KB. If the response exceeds it, the
-    // engine would silently truncate. Return an error instead so the caller
-    // knows to use LIMIT/OFFSET for pagination.
-    if response.len() > (20480u32.saturating_sub(64)) as usize {
+    // Guard: Arma 3 v2.20's callExtension ceiling is ~30KB. If the response
+    // exceeds it, the engine would silently truncate. Return an error instead
+    // so the caller knows to use LIMIT/OFFSET for pagination.
+    if response.len() > (crate::ffi::OUTPUT_BUF_SIZE.saturating_sub(64)) as usize {
         return error_response(
             ErrorCode::Internal,
-            "Result exceeds output buffer (20KB). Use LIMIT/OFFSET to paginate.",
+            "Result exceeds output buffer (30KB). Use LIMIT/OFFSET to paginate.",
         );
     }
 

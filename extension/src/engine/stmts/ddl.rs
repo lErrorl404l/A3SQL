@@ -66,6 +66,14 @@ pub(crate) fn parse_data_type(dt: &DataType) -> Result<ColumnType, EngineError> 
                     Ok(ColumnType::Strings)
                 }
                 DataType::Float(_) | DataType::Double(_) | DataType::Real => Ok(ColumnType::Floats),
+                DataType::Custom(name, _) => {
+                    let s = name.to_string().to_uppercase();
+                    match s.as_str() {
+                        "STRINGS" => Ok(ColumnType::Strings),
+                        "FLOATS" => Ok(ColumnType::Floats),
+                        _ => Err(EngineError::Parse(format!("Unsupported array element type: {}", inner))),
+                    }
+                }
                 _ if inner.to_string().to_lowercase() == "string" => Ok(ColumnType::Strings),
                 _ => Err(EngineError::Parse(format!("Unsupported array element type: {}", inner))),
             }

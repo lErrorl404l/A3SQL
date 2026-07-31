@@ -257,8 +257,9 @@ fn dispatch_large_result_truncation_guard() {
     let _g = setup();
     let r = abi_call("CREATE TABLE int_trunc_test (id STRING PRIMARY KEY)");
     assert!(r.contains("\"OK\""), "create");
+    // ~5000 rows ≈ 60KB serialized — comfortably over the 30KB output cap
     let mut sql = "INSERT INTO int_trunc_test VALUES ".to_string();
-    let rows: Vec<String> = (0..2000).map(|i| format!("('row_{}')", i)).collect();
+    let rows: Vec<String> = (0..5000).map(|i| format!("('row_{}')", i)).collect();
     sql.push_str(&rows.join(", "));
     assert!(abi_call(&sql).contains("\"OK\""), "insert");
     assert!(
