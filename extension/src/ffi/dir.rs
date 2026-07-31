@@ -20,6 +20,8 @@
 //!
 //! Command routing and testing infrastructure provided by [`arma_rs`].
 
+use std::borrow::Cow;
+use std::ffi::CStr;
 use std::os::raw::{c_char, c_int};
 use std::sync::{LazyLock, Mutex, Once};
 
@@ -162,16 +164,30 @@ pub unsafe extern "C" fn RVExtensionVersion(output: *mut c_char, output_size: u3
 
 /// STRING callExtension STRING — compatibility entry point.
 ///
-/// Not supported with arma-rs command routing. The SQF wrapper should always
-/// use the array form: `callExtension ["sql", [payload]]`.
+/// The SQF wrapper uses the array form for bind params, but many call sites
+/// issue plain `"a3sql" callExtension _sql` / `callExtension "version"`.
+/// Route the string through the dispatcher so those calls work too.
 ///
 /// # Safety
-/// `output` must be a valid, writable buffer.
+/// `output` must be a valid, writable buffer of at least `output_size` bytes.
 #[no_mangle]
-pub unsafe extern "C" fn RVExtension(output: *mut c_char, output_size: u32, _function: *const c_char) {
-    if !output.is_null() && output_size > 0 {
-        // SAFETY: `output` is non-null and `output_size > 0` guarantees at least one byte.
-        unsafe { *output = 0 };
+pub unsafe extern "C" fn RVExtension(output: *mut c_char, output_size: u32, function: *const c_char) {
+    let input = if function.is_null() {
+        Cow::Borrowed("")
+    } else {
+        // SAFETY: `function` is a null-terminated string from the Arma engine contract.
+        unsafe { CStr::from_ptr(function) }.to_string_lossy()
+    };
+    let resp = dispatch::dispatch(&input, &[]);
+    let bytes = resp.as_bytes();
+    let len = bytes.len().min(output_size.saturating_sub(1) as usize);
+    if len > 0 && !output.is_null() {
+        // SAFETY: `output` is non-null and `len <= output_size - 1` guarantees
+        // the null terminator at `output.add(len)` is within the buffer.
+        unsafe {
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), output as *mut u8, len);
+            *output.add(len) = 0;
+        }
     }
 }
 
