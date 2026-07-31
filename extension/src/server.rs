@@ -184,6 +184,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // real TCP sockets are blocked by miri's isolation
     fn adversarial_inputs_return_envelopes_and_connection_survives() {
         let mut cases = vec![
             "SELECT admin_xor_key FROM auth_keys",
@@ -221,6 +222,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // real TCP sockets are blocked by miri's isolation
     fn empty_line_is_skipped_without_response() {
         let responses = serve_lines(&["", "PING"]);
         assert_eq!(responses, vec!["[0,\"OK\",\"PONG\"]"]);
