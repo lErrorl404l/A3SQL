@@ -281,6 +281,7 @@ fn composite_primary_key_enforced() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)] // DEFAULT datetime('now') — realtime clock blocked by miri's isolation
 fn default_function_expression_evaluated_at_insert() {
     // Bug regression: `DEFAULT datetime('now')` was rejected at CREATE
     // ("DEFAULT only supports literal values") — every real mod schema uses
