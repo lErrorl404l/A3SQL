@@ -70,7 +70,10 @@ def make_hermetic_config():
 
 
 def load_lib(path):
-    lib = ctypes.CDLL(path)
+    # Resolve to an absolute path: dlopen does NOT search the current
+    # directory for a bare filename, so ctypes.CDLL("a3sql_x64.so") would
+    # fail with 'cannot open shared object file' even when the file exists.
+    lib = ctypes.CDLL(os.path.abspath(path))
     lib.RVExtension.argtypes = [ctypes.c_char_p, ctypes.c_uint32, ctypes.c_char_p]
     lib.RVExtension.restype = None
     return lib
