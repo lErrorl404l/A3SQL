@@ -44,7 +44,7 @@ fn sv(v: &DbValue) -> String {
         DbValue::Bool(b) => format!("{}", if *b { 1 } else { 0 }),
         DbValue::Int(n) => format!("{}", n),
         DbValue::Float(f) => format!("{}", f),
-        DbValue::String(s) => format!("'{}'", s),
+        DbValue::String(s) => format!("'{}'", s.replace('\'', "''")),
         DbValue::Strings(v) => serde_json::to_string(v).unwrap_or_default(),
         DbValue::Floats(v) => serde_json::to_string(v).unwrap_or_default(),
     }
@@ -251,6 +251,39 @@ mod tests {
         assert_eq!(log.row_count(), 1, "trigger should have inserted one row");
         // DbValue::to_string() wraps strings in quotes, so check via debug or raw access
         assert_eq!(format!("{:?}", log.rows[0][0]), "String(\"x\")");
+    }
+
+    #[test]
+    fn trigger_string_literal_is_escaped() {
+        let mut db = make_trigger_test_db();
+        // Trigger body substitutes NEW.id into the INSERT — crafted value must
+        // be escaped so it cannot break out of the string literal.
+        let t = db.get_table_mut("a").unwrap();
+        t.triggers.push(TriggerInfo {
+            name: "t_escape".into(),
+            timing: "AFTER".into(),
+            event: "INSERT".into(),
+            body: "INSERT INTO log VALUES (NEW.id)".into(),
+        });
+        let _ = t;
+
+        let payload = "x'); DROP TABLE log; --";
+        parse_and_exec(
+            &format!("INSERT INTO a VALUES ('{}')", payload.replace('\'', "''")),
+            &mut db,
+        )
+        .unwrap();
+
+        // The injected DROP TABLE must NOT have executed — log still exists.
+        assert!(db.get_table("log").is_ok(), "log table must survive the injection");
+        // And the literal payload (not a truncated/empty string) was stored.
+        let log = db.get_table("log").unwrap();
+        assert!(
+            log.rows
+                .iter()
+                .any(|r| format!("{:?}", r[0]) == format!("String({:?})", payload)),
+            "log must contain the literal payload row"
+        );
     }
 
     #[test]
