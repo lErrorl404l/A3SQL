@@ -136,22 +136,27 @@ pub(crate) fn exec_create_table(def: &sqlparser::ast::CreateTable, db: &mut Data
             TableConstraint::Check(ck) => {
                 check_exprs.push(*ck.expr.clone());
             }
-            _ => {}
-        }
-        let text = format!("{}", constraint).to_uppercase();
-        if text.contains("PRIMARY KEY (") {
-            if let Some(start) = text.find('(') {
-                if let Some(end) = text.find(')') {
-                    let cname = text[start + 1..end].trim().to_lowercase();
-                    if let Some(col) = columns.iter_mut().find(|col| col.name == cname) {
-                        if has_pk {
-                            return Err(EngineError::Parse("Only one primary key supported".into()));
+            // Table-level PRIMARY KEY (col1, col2, ...) — composite PKs are
+            // stored as a joined "col1|col2" key in pk_set, so marking all
+            // listed columns primary_key is sufficient for uniqueness.
+            TableConstraint::PrimaryKey(pk) => {
+                for index_col in &pk.columns {
+                    let name = match &index_col.column.expr {
+                        Expr::Identifier(ident) => ident.value.to_lowercase(),
+                        _ => {
+                            return Err(EngineError::Parse(
+                                "PRIMARY KEY columns must be plain column names".into(),
+                            ))
                         }
-                        col.primary_key = true;
-                        has_pk = true;
-                    }
+                    };
+                    let col = columns
+                        .iter_mut()
+                        .find(|c| c.name == name)
+                        .ok_or_else(|| EngineError::Parse(format!("PRIMARY KEY column '{}' not found", name)))?;
+                    col.primary_key = true;
                 }
             }
+            _ => {}
         }
     }
 

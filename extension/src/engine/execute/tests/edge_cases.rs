@@ -258,3 +258,22 @@ fn update_self_referential_assignment() {
     let sel = parse_and_exec("SELECT bans FROM t", &mut db).unwrap();
     assert!(sel.contains("11"), "incremented twice: {}", sel);
 }
+
+#[test]
+fn composite_primary_key_enforced() {
+    // Corpus gap: table-level PRIMARY KEY (a, b) was silently dropped —
+    // CREATE accepted it but duplicates weren't rejected. Now enforced via
+    // the existing pk_set (joined "a|b" keys).
+    let mut db = Database::new();
+    parse_and_exec(
+        "CREATE TABLE ps (uid TEXT, state_key TEXT, state_value TEXT, PRIMARY KEY (uid, state_key))",
+        &mut db,
+    )
+    .unwrap();
+    assert!(parse_and_exec("INSERT INTO ps VALUES ('u1', 'role', 'medic')", &mut db).is_ok());
+    let dup = parse_and_exec("INSERT INTO ps VALUES ('u1', 'role', 'other')", &mut db);
+    assert!(dup.is_err(), "composite duplicate must be rejected: {:?}", dup);
+    assert!(parse_and_exec("INSERT INTO ps VALUES ('u1', 'squad', 'alpha')", &mut db).is_ok());
+    let sel = parse_and_exec("SELECT count(*) FROM ps", &mut db).unwrap();
+    assert!(sel.contains('2'), "exactly 2 rows: {}", sel);
+}
