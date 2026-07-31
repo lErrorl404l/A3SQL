@@ -35,6 +35,7 @@ pub(crate) fn create_table(name: &str, columns: &[(&str, ColumnType, bool)]) -> 
             not_null: false,
             default: None,
             auto_increment: false,
+            unique: false,
         })
         .collect();
     db.create_table(name, Table::new(name.to_string(), cols).unwrap())

@@ -12,6 +12,7 @@ fn cross_join() {
         not_null: false,
         default: None,
         auto_increment: false,
+        unique: false,
     }];
     let mut ta = Table::new("ta".into(), ca).unwrap();
     ta.insert(vec![DbValue::Int(1)]).unwrap();
@@ -24,6 +25,7 @@ fn cross_join() {
         not_null: false,
         default: None,
         auto_increment: false,
+        unique: false,
     }];
     let mut tb = Table::new("tb".into(), cb).unwrap();
     tb.insert(vec![DbValue::String("a".into())]).unwrap();
@@ -47,6 +49,7 @@ fn inner_join() {
             not_null: false,
             default: None,
             auto_increment: false,
+            unique: false,
         },
         Column {
             name: "v".into(),
@@ -55,6 +58,7 @@ fn inner_join() {
             not_null: false,
             default: None,
             auto_increment: false,
+            unique: false,
         },
     ];
     let mut ta = Table::new("a".into(), ca).unwrap();
@@ -69,6 +73,7 @@ fn inner_join() {
             not_null: false,
             default: None,
             auto_increment: false,
+            unique: false,
         },
         Column {
             name: "d".into(),
@@ -77,6 +82,7 @@ fn inner_join() {
             not_null: false,
             default: None,
             auto_increment: false,
+            unique: false,
         },
     ];
     let mut tb = Table::new("b".into(), cb).unwrap();
@@ -100,6 +106,7 @@ fn left_join() {
         not_null: false,
         default: None,
         auto_increment: false,
+        unique: false,
     }];
     let mut ta = Table::new("a".into(), ca).unwrap();
     ta.insert(vec![DbValue::String("x".into())]).unwrap();
@@ -112,6 +119,7 @@ fn left_join() {
         not_null: false,
         default: None,
         auto_increment: false,
+        unique: false,
     }];
     let mut tb = Table::new("b".into(), cb).unwrap();
     tb.insert(vec![DbValue::String("x".into())]).unwrap();
@@ -131,6 +139,7 @@ fn right_join() {
         not_null: false,
         default: None,
         auto_increment: false,
+        unique: false,
     }];
     let mut ta = Table::new("a".into(), ca).unwrap();
     ta.insert(vec![DbValue::String("x".into())]).unwrap();
@@ -142,6 +151,7 @@ fn right_join() {
         not_null: false,
         default: None,
         auto_increment: false,
+        unique: false,
     }];
     let mut tb = Table::new("b".into(), cb).unwrap();
     tb.insert(vec![DbValue::String("x".into())]).unwrap();
@@ -163,6 +173,7 @@ fn join_with_where() {
             not_null: false,
             default: None,
             auto_increment: false,
+            unique: false,
         },
         Column {
             name: "n".into(),
@@ -171,6 +182,7 @@ fn join_with_where() {
             not_null: false,
             default: None,
             auto_increment: false,
+            unique: false,
         },
     ];
     let mut ta = Table::new("u".into(), ca).unwrap();
@@ -186,6 +198,7 @@ fn join_with_where() {
             not_null: false,
             default: None,
             auto_increment: false,
+            unique: false,
         },
         Column {
             name: "r".into(),
@@ -194,6 +207,7 @@ fn join_with_where() {
             not_null: false,
             default: None,
             auto_increment: false,
+            unique: false,
         },
     ];
     let mut tb = Table::new("r".into(), cb).unwrap();
@@ -219,6 +233,7 @@ fn natural_join() {
             not_null: false,
             default: None,
             auto_increment: false,
+            unique: false,
         },
         Column {
             name: "name".into(),
@@ -227,6 +242,7 @@ fn natural_join() {
             not_null: false,
             default: None,
             auto_increment: false,
+            unique: false,
         },
     ];
     let mut a = Table::new("a".into(), ca).unwrap();
@@ -241,6 +257,7 @@ fn natural_join() {
             not_null: false,
             default: None,
             auto_increment: false,
+            unique: false,
         },
         Column {
             name: "val".into(),
@@ -249,6 +266,7 @@ fn natural_join() {
             not_null: false,
             default: None,
             auto_increment: false,
+            unique: false,
         },
     ];
     let mut b = Table::new("b".into(), cb).unwrap();
@@ -283,6 +301,7 @@ fn join_using() {
             not_null: false,
             default: None,
             auto_increment: false,
+            unique: false,
         },
         Column {
             name: "name".into(),
@@ -291,6 +310,7 @@ fn join_using() {
             not_null: false,
             default: None,
             auto_increment: false,
+            unique: false,
         },
     ];
     let mut a = Table::new("a".into(), ca).unwrap();
@@ -305,6 +325,7 @@ fn join_using() {
             not_null: false,
             default: None,
             auto_increment: false,
+            unique: false,
         },
         Column {
             name: "val".into(),
@@ -313,6 +334,7 @@ fn join_using() {
             not_null: false,
             default: None,
             auto_increment: false,
+            unique: false,
         },
     ];
     let mut b = Table::new("b".into(), cb).unwrap();
@@ -340,6 +362,7 @@ fn multi_table_join() {
         not_null: false,
         default: None,
         auto_increment: false,
+        unique: false,
     }];
     let mut a = Table::new("a".into(), ca).unwrap();
     a.insert(vec![DbValue::String("x".into())]).unwrap();
@@ -353,6 +376,7 @@ fn multi_table_join() {
             not_null: false,
             default: None,
             auto_increment: false,
+            unique: false,
         }],
     )
     .unwrap();
@@ -367,6 +391,7 @@ fn multi_table_join() {
             not_null: false,
             default: None,
             auto_increment: false,
+            unique: false,
         }],
     )
     .unwrap();
@@ -394,6 +419,7 @@ fn self_join() {
         not_null: false,
         default: None,
         auto_increment: false,
+        unique: false,
     }];
     let mut t = Table::new("t".into(), cols).unwrap();
     t.insert(vec![DbValue::String("x".into())]).unwrap();
@@ -413,6 +439,7 @@ fn join_with_aggregate() {
         not_null: false,
         default: None,
         auto_increment: false,
+        unique: false,
     }];
     let mut a = Table::new("a".into(), ca).unwrap();
     a.insert(vec![DbValue::Int(1)]).unwrap();
@@ -427,6 +454,7 @@ fn join_with_aggregate() {
             not_null: false,
             default: None,
             auto_increment: false,
+            unique: false,
         }],
     )
     .unwrap();
@@ -446,6 +474,7 @@ fn join_with_order_by() {
         not_null: false,
         default: None,
         auto_increment: false,
+        unique: false,
     }];
     let mut a = Table::new("a".into(), ca).unwrap();
     a.insert(vec![DbValue::String("b".into())]).unwrap();
@@ -460,6 +489,7 @@ fn join_with_order_by() {
             not_null: false,
             default: None,
             auto_increment: false,
+            unique: false,
         }],
     )
     .unwrap();

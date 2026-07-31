@@ -209,6 +209,7 @@ mod tests {
                 not_null: false,
                 default: None,
                 auto_increment: false,
+                unique: false,
             },
             Column {
                 name: "val".into(),
@@ -217,6 +218,7 @@ mod tests {
                 not_null: false,
                 default: None,
                 auto_increment: false,
+                unique: false,
             },
         ];
         let mut table = Table::new("items".into(), cols).unwrap();

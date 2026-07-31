@@ -36,6 +36,7 @@ fn bulk_insert_500() {
             not_null: false,
             default: None,
             auto_increment: false,
+            unique: false,
         },
         Column {
             name: "v".into(),
@@ -44,6 +45,7 @@ fn bulk_insert_500() {
             not_null: false,
             default: None,
             auto_increment: false,
+            unique: false,
         },
     ];
     let t = Table::new("bulk".into(), cols).unwrap();
@@ -87,4 +89,37 @@ fn fuzzy_fn_call_integration() {
     parse_and_exec("INSERT INTO items VALUES ('fn_test', 'hello', 1)", &mut db).unwrap();
     let r = parse_and_exec("SELECT * FROM items WHERE id %% 'fn_t'", &mut db).unwrap();
     assert!(r.contains("fn_test"), "fuzzy fn: {}", r);
+}
+#[test]
+fn datetime_now_in_insert_values() {
+    // Bug B regression: INSERT ... VALUES with datetime('now') must not fail
+    // (mod SQL: INSERT INTO server_commands ... datetime('now'))
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE t (id INTEGER PRIMARY KEY, created_at TEXT)", &mut db).unwrap();
+    let r = parse_and_exec("INSERT INTO t VALUES (1, datetime('now'))", &mut db);
+    assert!(r.is_ok(), "datetime('now') in VALUES: {:?}", r);
+    let sel = parse_and_exec("SELECT created_at FROM t", &mut db).unwrap();
+    // result shape: [["created_at"],["YYYY-MM-DD HH:MM:SS"]]
+    let row = sel.split("],[").nth(1).expect("row present");
+    let v = row.trim_matches(['[', ']', '"']);
+    let parts: Vec<&str> = v.split(' ').collect();
+    assert_eq!(parts.len(), 2, "expected 'date time', got: {}", v);
+    assert_eq!(parts[0].len(), 10, "date part: {}", parts[0]);
+    assert_eq!(parts[1].len(), 8, "time part: {}", parts[1]);
+}
+
+#[test]
+fn datetime_now_localtime_accepted() {
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE t (id INTEGER PRIMARY KEY, created_at TEXT)", &mut db).unwrap();
+    let r = parse_and_exec("INSERT INTO t VALUES (1, datetime('now','localtime'))", &mut db);
+    assert!(r.is_ok(), "datetime('now','localtime') in VALUES: {:?}", r);
+}
+
+#[test]
+fn datetime_bad_modifier_rejected() {
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE t (id INTEGER PRIMARY KEY, created_at TEXT)", &mut db).unwrap();
+    let r = parse_and_exec("INSERT INTO t VALUES (1, datetime('yesterday'))", &mut db);
+    assert!(r.is_err(), "unsupported modifier must be rejected");
 }

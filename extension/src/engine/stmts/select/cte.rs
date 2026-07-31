@@ -75,6 +75,7 @@ pub(crate) fn exec_cte_query(query: &Query, db: &mut Database) -> Result<String,
                         not_null: false,
                         default: None,
                         auto_increment: false,
+                        unique: false,
                     })
                     .collect();
                 if let Ok(mut cte_table) = Table::new(alias.clone(), cols) {
@@ -178,6 +179,7 @@ pub(crate) fn exec_cte_query(query: &Query, db: &mut Database) -> Result<String,
                                     not_null: false,
                                     default: None,
                                     auto_increment: false,
+                                    unique: false,
                                 }
                             })
                             .collect();

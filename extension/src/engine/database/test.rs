@@ -11,6 +11,7 @@ fn make_db() -> Database {
             not_null: false,
             default: None,
             auto_increment: false,
+            unique: false,
         },
         Column {
             name: "val".into(),
@@ -19,6 +20,7 @@ fn make_db() -> Database {
             not_null: false,
             default: None,
             auto_increment: false,
+            unique: false,
         },
     ];
     let table = Table::new("items".into(), cols).unwrap();
@@ -50,6 +52,7 @@ fn duplicate_table() {
         not_null: false,
         default: None,
         auto_increment: false,
+        unique: false,
     }];
     let t2 = Table::new("items".into(), cols).unwrap();
     assert!(db.create_table("items", t2).is_err());
@@ -65,6 +68,7 @@ fn list_tables() {
         not_null: false,
         default: None,
         auto_increment: false,
+        unique: false,
     }];
     db.create_table("a", Table::new("a".into(), cols.clone()).unwrap())
         .unwrap();
@@ -101,6 +105,7 @@ fn view_table_name_conflict() {
         not_null: false,
         default: None,
         auto_increment: false,
+        unique: false,
     }];
     db.create_table("t", Table::new("t".into(), cols).unwrap()).unwrap();
     assert!(db.create_view("t", "SELECT 1").is_err());

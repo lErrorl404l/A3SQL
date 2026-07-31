@@ -305,6 +305,21 @@ pub(crate) fn eval_literal_expr(expr: &Expr) -> Result<DbValue, EngineError> {
         }
         // Double-quoted identifiers used as values: "hello" → string
         Expr::Identifier(ident) => Ok(DbValue::String(ident.value.clone())),
+        // Function calls with no row context: datetime('now') and friends (SQLite-style)
+        Expr::Function(func) => {
+            let name = func.name.to_string().to_lowercase();
+            if matches!(
+                name.as_str(),
+                "datetime" | "now" | "current_timestamp" | "curdate" | "current_date" | "unix_timestamp"
+            ) {
+                exec_std_function(func, name, &[], &HashMap::new())
+            } else {
+                Err(EngineError::Exec(format!(
+                    "Complex expressions not supported in values: {:?}",
+                    expr
+                )))
+            }
+        }
         _ => Err(EngineError::Exec(format!(
             "Complex expressions not supported in values: {:?}",
             expr

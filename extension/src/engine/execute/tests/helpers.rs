@@ -15,6 +15,7 @@ pub(crate) fn make_test_db() -> Database {
             not_null: false,
             default: None,
             auto_increment: false,
+            unique: false,
         },
         Column {
             name: "name".into(),
@@ -23,6 +24,7 @@ pub(crate) fn make_test_db() -> Database {
             not_null: false,
             default: None,
             auto_increment: false,
+            unique: false,
         },
         Column {
             name: "value".into(),
@@ -31,6 +33,7 @@ pub(crate) fn make_test_db() -> Database {
             not_null: false,
             default: None,
             auto_increment: false,
+            unique: false,
         },
     ];
     let table = Table::new("items".into(), cols).unwrap();
@@ -48,6 +51,7 @@ pub(crate) fn make_indexed_db() -> Database {
             not_null: false,
             default: None,
             auto_increment: false,
+            unique: false,
         },
         Column {
             name: "v".into(),
@@ -56,6 +60,7 @@ pub(crate) fn make_indexed_db() -> Database {
             not_null: false,
             default: None,
             auto_increment: false,
+            unique: false,
         },
     ];
     let t = Table::new("idx_test".into(), cols).unwrap();

@@ -8,7 +8,7 @@
 use std::collections::HashMap;
 
 use sqlparser::ast::{
-    BinaryOperator, Expr, Function, FunctionArg, FunctionArgExpr, FunctionArguments, TableFactor, TableWithJoins,
+    BinaryOperator, Expr, Function, FunctionArg, FunctionArgExpr, FunctionArguments, TableFactor, TableWithJoins, Value,
 };
 
 use super::super::database::Database;
@@ -384,6 +384,47 @@ pub(crate) fn exec_std_function(
         }
         "now" | "current_timestamp" => Ok(now_value()),
         "curdate" | "current_date" => Ok(curdate_value()),
+        // SQLite-compatible datetime('now') / datetime('now','localtime') — space-separated, no T
+        "datetime" => {
+            let mods: Vec<String> = args
+                .iter()
+                .map(|a| match a {
+                    FunctionArg::Unnamed(FunctionArgExpr::Expr(Expr::Value(v))) => match &v.value {
+                        Value::SingleQuotedString(s)
+                        | Value::DoubleQuotedString(s)
+                        | Value::TripleSingleQuotedString(s)
+                        | Value::TripleDoubleQuotedString(s) => s.to_lowercase(),
+                        _ => String::new(),
+                    },
+                    _ => String::new(),
+                })
+                .collect();
+            let mut secs = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs() as i64;
+            // ponytail: localtime modifier accepted but UTC returned — real offset needs
+            // the time crate 'local-offset' feature; add when a caller actually needs it
+            let _ = &mut secs;
+            if !mods.is_empty() && mods.iter().all(|m| m == "now" || m == "localtime") {
+                let z = secs / 86400 + 719468;
+                let era = (z / 146097) as u64;
+                let doe = (z - era as i64 * 146097) as u64;
+                let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+                let y = yoe + era * 400;
+                let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+                let mp = (5 * doy + 2) / 153;
+                let d = doy - (153 * mp + 2) / 5 + 1;
+                let m = if mp < 10 { mp + 3 } else { mp - 9 };
+                let y = if m <= 2 { y + 1 } else { y };
+                let (h, min, s) = (secs / 3600 % 24, secs / 60 % 60, secs % 60);
+                Ok(DbValue::String(format!("{y:04}-{m:02}-{d:02} {h:02}:{min:02}:{s:02}")))
+            } else {
+                Err(EngineError::Exec(
+                    "datetime() only supports 'now'/'localtime' modifiers".into(),
+                ))
+            }
+        }
         "concat" => {
             let mut result = String::new();
             for a in args {
@@ -591,6 +632,7 @@ pub(crate) fn materialize_view(name: &str, db: &mut Database) -> Result<(), Engi
                     not_null: false,
                     default: None,
                     auto_increment: false,
+                    unique: false,
                 }
             })
             .collect();

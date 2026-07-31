@@ -3,6 +3,43 @@
 use super::helpers::*;
 
 #[test]
+fn unique_column_coexists_with_primary_key() {
+    // Bug A regression: UNIQUE must not be treated as a second primary key
+    // (mod SQL: CREATE TABLE patch_presets (id INTEGER PRIMARY KEY,
+    //  name TEXT UNIQUE NOT NULL, ...))
+    let mut db = Database::new();
+    let r = parse_and_exec(
+        "CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL)",
+        &mut db,
+    );
+    assert!(r.is_ok(), "UNIQUE + PK create: {:?}", r);
+    assert!(db.has_table("t"));
+}
+
+#[test]
+fn unique_column_rejects_duplicate_insert() {
+    let mut db = Database::new();
+    parse_and_exec(
+        "CREATE TABLE t (id INTEGER PRIMARY KEY, name TEXT UNIQUE NOT NULL)",
+        &mut db,
+    )
+    .unwrap();
+    parse_and_exec("INSERT INTO t VALUES (1, 'alpha')", &mut db).unwrap();
+    // same name, different PK -> UNIQUE violation
+    let r = parse_and_exec("INSERT INTO t VALUES (2, 'alpha')", &mut db);
+    assert!(r.is_err(), "duplicate UNIQUE value must be rejected");
+    if let Err(e) = r {
+        assert!(e.contains("Duplicate"), "msg: {}", e);
+    }
+    // different name, same PK -> PK violation
+    let r = parse_and_exec("INSERT INTO t VALUES (1, 'beta')", &mut db);
+    assert!(r.is_err(), "duplicate PK value must be rejected");
+    // and the table is still consistent afterwards
+    let ok = parse_and_exec("INSERT INTO t VALUES (2, 'beta')", &mut db);
+    assert!(ok.is_ok(), "fresh row: {:?}", ok);
+}
+
+#[test]
 fn check_table_level_constraint_create() {
     let mut db = Database::new();
     let r = parse_and_exec(

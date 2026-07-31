@@ -66,6 +66,7 @@ fn group_by() {
             not_null: false,
             default: None,
             auto_increment: false,
+            unique: false,
         },
         Column {
             name: "val".into(),
@@ -74,6 +75,7 @@ fn group_by() {
             not_null: false,
             default: None,
             auto_increment: false,
+            unique: false,
         },
     ];
     let mut table = Table::new("data".into(), cols).unwrap();

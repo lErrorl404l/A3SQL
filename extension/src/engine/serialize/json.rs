@@ -83,6 +83,7 @@ pub(crate) fn import_json(table_name: &str, json_str: &str, db: &mut Database) -
                     not_null: obj.get("not_null").and_then(|v| v.as_bool()).unwrap_or(false),
                     default: None,
                     auto_increment: false,
+                    unique: false,
                 });
             }
             cols

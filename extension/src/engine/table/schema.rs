@@ -57,6 +57,16 @@ impl Table {
         Self::pk_key_static(&self.columns, row)
     }
 
+    /// Build "col_idx|value" keys for every UNIQUE column in the row.
+    pub(crate) fn unique_keys(columns: &[Column], row: &[DbValue]) -> Vec<String> {
+        columns
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| c.unique)
+            .filter_map(|(i, _)| row.get(i).map(|v| format!("{}|{}", i, v)))
+            .collect()
+    }
+
     // ── Schema management ───────────────────────────────────────────
 
     /// Add a new column to the table. Existing rows get NULL for the new column.
@@ -72,6 +82,7 @@ impl Table {
             not_null: false,
             default: None,
             auto_increment: false,
+            unique: false,
         });
         self.col_index.insert(name, idx);
         for row in &mut self.rows {
@@ -126,22 +137,49 @@ impl Table {
     /// Returns true if coercion was applied.
     pub fn coerce_value(val: &mut DbValue, col_type: &ColumnType) -> bool {
         match col_type {
-            ColumnType::Float => {
-                if let DbValue::Int(n) = val {
+            ColumnType::Float => match val {
+                DbValue::Int(n) => {
                     *val = DbValue::Float(*n as f64);
                     true
-                } else {
-                    false
                 }
-            }
-            ColumnType::Int => {
-                if let DbValue::Float(f) = val {
+                // SQLite affinity: well-formed numeric text coerces to the column type
+                DbValue::String(s) => match s.parse::<f64>() {
+                    Ok(f) => {
+                        *val = DbValue::Float(f);
+                        true
+                    }
+                    Err(_) => false,
+                },
+                _ => false,
+            },
+            ColumnType::Int => match val {
+                DbValue::Float(f) => {
                     *val = DbValue::Int(*f as i64);
                     true
-                } else {
-                    false
                 }
-            }
+                // SQLite affinity: well-formed numeric text coerces to the column type
+                DbValue::String(s) => match s.parse::<i64>() {
+                    Ok(n) => {
+                        *val = DbValue::Int(n);
+                        true
+                    }
+                    Err(_) => false,
+                },
+                _ => false,
+            },
+            ColumnType::String => match val {
+                // SQLite affinity: numeric literals inserted into TEXT columns
+                // are stored as text (e.g. Steam IDs arriving via $n substitution)
+                DbValue::Int(n) => {
+                    *val = DbValue::String(n.to_string());
+                    true
+                }
+                DbValue::Float(f) => {
+                    *val = DbValue::String(f.to_string());
+                    true
+                }
+                _ => false,
+            },
             _ => false,
         }
     }

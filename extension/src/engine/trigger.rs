@@ -217,6 +217,7 @@ mod tests {
             not_null: false,
             default: None,
             auto_increment: false,
+            unique: false,
         }];
         db.create_table("a", Table::new("a".into(), cols_a).unwrap()).unwrap();
 
@@ -227,6 +228,7 @@ mod tests {
             not_null: false,
             default: None,
             auto_increment: false,
+            unique: false,
         }];
         db.create_table("log", Table::new("log".into(), cols_log).unwrap())
             .unwrap();
@@ -311,6 +313,7 @@ mod tests {
             not_null: false,
             default: None,
             auto_increment: false,
+            unique: false,
         }];
         db.create_table("self", Table::new("self".into(), cols).unwrap())
             .unwrap();

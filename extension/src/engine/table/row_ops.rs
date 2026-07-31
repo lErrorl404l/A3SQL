@@ -53,11 +53,28 @@ impl Table {
         }
 
         // Check PK uniqueness
-        if let Some(key) = self.pk_key(&row) {
-            if self.pk_set.contains(&key) {
-                return Err(EngineError::DuplicateKey(key));
+        let pk = self.pk_key(&row);
+        if let Some(ref key) = pk {
+            if self.pk_set.contains(key) {
+                return Err(EngineError::DuplicateKey(key.clone()));
             }
+        }
+
+        // Check UNIQUE columns (before mutating state — a rejected UNIQUE
+        // insert must not leave the PK registered)
+        let uniq = Self::unique_keys(&self.columns, &row);
+        for key in &uniq {
+            if self.unique_set.contains(key) {
+                return Err(EngineError::DuplicateKey(key.clone()));
+            }
+        }
+
+        // All constraints pass — commit the keys
+        if let Some(key) = pk {
             self.pk_set.insert(key);
+        }
+        for key in uniq {
+            self.unique_set.insert(key);
         }
 
         let row_idx = self.rows.len();
@@ -147,6 +164,10 @@ impl Table {
                 if let Some(key) = Self::pk_key_static(&self.columns, &row) {
                     self.pk_set.remove(&key);
                 }
+                // Remove UNIQUE keys
+                for key in Self::unique_keys(&self.columns, &row) {
+                    self.unique_set.remove(&key);
+                }
                 // Remove from indices
                 self.remove_from_indices(old_idx, &row);
                 deleted += 1;
@@ -218,6 +239,13 @@ impl Table {
             if let Some(new_k) = self.pk_key(&self.rows[row_idx]) {
                 self.pk_set.insert(new_k);
             }
+        }
+
+        // Update unique_set if this is a UNIQUE column
+        if self.columns[col_idx].unique {
+            self.unique_set.remove(&format!("{}|{}", col_idx, old_value));
+            self.unique_set
+                .insert(format!("{}|{}", col_idx, self.rows[row_idx][col_idx]));
         }
 
         // Update indices that track this column

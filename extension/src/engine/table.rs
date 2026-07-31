@@ -25,6 +25,8 @@ pub(crate) struct Table {
     pub(crate) col_index: HashMap<String, usize>,
     /// Set of primary key values for uniqueness enforcement.
     pub(crate) pk_set: HashSet<String>,
+    /// Unique-column keys for UNIQUE enforcement: "col_idx|value".
+    pub(crate) unique_set: HashSet<String>,
     /// Secondary indices (BTREE, TRIGRAM) created via CREATE INDEX.
     pub(crate) indices: Vec<(IndexMeta, IndexImpl)>,
     /// Next AUTO_INCREMENT counter value.
@@ -56,6 +58,7 @@ impl Table {
             rows: Vec::new(),
             col_index,
             pk_set: HashSet::new(),
+            unique_set: HashSet::new(),
             indices: Vec::new(),
             next_auto_inc: 1,
             check_constraints: Vec::new(),
@@ -67,9 +70,13 @@ impl Table {
     /// Rebuild pk_set and secondary indices after row mutation.
     pub fn rebuild_index(&mut self) {
         self.pk_set.clear();
+        self.unique_set.clear();
         for row in &self.rows {
             if let Some(key) = self.pk_key(row) {
                 self.pk_set.insert(key);
+            }
+            for key in Self::unique_keys(&self.columns, row) {
+                self.unique_set.insert(key);
             }
         }
         self.rebuild_indices();
@@ -167,6 +174,7 @@ mod tests {
                 not_null: false,
                 default: None,
                 auto_increment: false,
+                unique: false,
             },
             Column {
                 name: "name".into(),
@@ -175,6 +183,7 @@ mod tests {
                 not_null: false,
                 default: None,
                 auto_increment: false,
+                unique: false,
             },
             Column {
                 name: "value".into(),
@@ -183,6 +192,7 @@ mod tests {
                 not_null: false,
                 default: None,
                 auto_increment: false,
+                unique: false,
             },
         ];
         let mut t = Table::new("test".into(), cols).unwrap();
@@ -210,6 +220,7 @@ mod tests {
             not_null: false,
             default: None,
             auto_increment: false,
+            unique: false,
         }];
         assert!(Table::new("t".into(), cols).is_ok());
     }
@@ -229,6 +240,7 @@ mod tests {
             not_null: false,
             default: None,
             auto_increment: false,
+            unique: false,
         }];
         let mut t = Table::new("t".into(), cols).unwrap();
         t.insert(vec![DbValue::String("x".into())]).unwrap();

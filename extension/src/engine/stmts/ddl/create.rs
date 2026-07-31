@@ -33,11 +33,13 @@ pub(crate) fn exec_create_table(def: &sqlparser::ast::CreateTable, db: &mut Data
 
         let mut is_pk = false;
         let mut is_not_null = false;
+        let mut is_unique = false;
         let mut default_val: Option<DbValue> = None;
         let mut auto_inc = false;
         for opt_def in &col_def.options {
             match &opt_def.option {
-                ColumnOption::PrimaryKey(_) | ColumnOption::Unique { .. } => is_pk = true,
+                ColumnOption::PrimaryKey(_) => is_pk = true,
+                ColumnOption::Unique { .. } => is_unique = true,
                 ColumnOption::NotNull => is_not_null = true,
                 ColumnOption::DialectSpecific(tokens) => {
                     let has_auto = tokens.iter().any(|t| {
@@ -71,6 +73,7 @@ pub(crate) fn exec_create_table(def: &sqlparser::ast::CreateTable, db: &mut Data
             not_null: is_not_null,
             default: default_val,
             auto_increment: auto_inc,
+            unique: is_unique,
         });
     }
 
@@ -211,6 +214,7 @@ pub(crate) fn exec_create_table_as(
             not_null: false,
             default: None,
             auto_increment: false,
+            unique: false,
         });
     }
 
@@ -250,6 +254,7 @@ pub(crate) fn exec_create_sequence(
         not_null: false,
         default: Some(DbValue::Int(0)),
         auto_increment: false,
+        unique: false,
     }];
     let mut table =
         Table::new(format!("__seq_{}", sn), cols).map_err(|e| EngineError::Exec(format!("CREATE SEQUENCE: {}", e)))?;
@@ -363,6 +368,7 @@ pub(crate) fn exec_create_virtual_table(
             not_null: false,
             default: None,
             auto_increment: false,
+            unique: false,
         })
         .collect();
     if cols.is_empty() {

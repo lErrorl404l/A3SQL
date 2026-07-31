@@ -43,6 +43,7 @@ pub(crate) struct Column {
     pub not_null: bool,
     pub default: Option<DbValue>,
     pub auto_increment: bool,
+    pub unique: bool,
 }
 
 /// Runtime value stored in cells.
