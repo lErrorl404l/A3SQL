@@ -273,6 +273,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // creates/removes the data dir - fs blocked by miri isolation
     fn accepts_relative_paths() {
         let r = safe_data_path("a3sql.bin");
         assert!(r.is_ok(), "expected OK, got {}", err_msg(r));
