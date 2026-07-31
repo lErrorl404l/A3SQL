@@ -364,7 +364,7 @@ Output goes to `.hemttout/build/`.
 ### Run tests
 
 ```bash
-# All 118 tests (0.01s)
+# All 524 tests
 cargo test --manifest-path extension/Cargo.toml
 ```
 
@@ -376,12 +376,15 @@ cargo fmt --check
 cargo clippy --manifest-path extension/Cargo.toml --all-targets -- -D warnings
 
 # SQF + config
-python3 tools/sqfvmChecker.py
 python3 tools/sqf_validator.py addons/
 python3 tools/config_style_checker.py
 
 # Arma addon structure
 hemtt check -p -e
+
+# SQL smoke test — runs the mod's production SQL through the real extension
+# binary (the same C ABI Arma uses). Fails on any misbehaving statement:
+python3 tools/sql_smoke_test.py tools/smoke_test.sql
 ```
 
 ## CI/CD
@@ -390,8 +393,9 @@ The project includes a GitHub Actions workflow (`.github/workflows/ci.yml`) that
 
 1. Runs `cargo test`
 2. Builds for 4 targets: `x86_64-linux`, `i686-linux`, `x86_64-windows`, `i686-windows`
-3. Runs `hemtt build` to produce the addon PBOs
-4. On release: creates a `a3sql-<tag>.zip` with the complete mod
+3. Runs the SQL smoke test against the real release binary
+4. Runs `hemtt build` to produce the addon PBOs
+5. On release: creates a `a3sql-<tag>.zip` with the complete mod
 
 Test locally with [ACT](https://github.com/nektos/act):
 
@@ -408,53 +412,48 @@ a3sql/
 │   ├── Cargo.toml
 │   ├── .cargo/config.toml      # Cross-compilation linkers
 │   └── src/
-│       ├── lib.rs              # C ABI (RVExtension, RVExtensionArgs, RVExtensionVersion)
+│       ├── lib.rs              # Library root + FFI module layout
+│       ├── ffi/                # C ABI (RVExtension, RVExtensionArgs, RVExtensionVersion,
+│       │                       #   RVExtensionRegisterCallback)
+│       ├── dispatch/           # Command routing (SQL + control commands: save/load,
+│       │   │                   #   cursor*, prepare, listen, set_credentials, exports)
+│       │   ├── commands.rs     # Control-command handlers
+│       │   └── sql.rs          # SQL splitting + $1/$n parameter substitution
 │       ├── parser/             # SQL parser (sqlparser-rs + custom A3sqlDialect)
-│       │   ├── dialect.rs      # A3sqlDialect (GenericDialect-based, multi-dialect)
-│       │   ├── preprocessor.rs # %% → fuzzy_match(), string-literal-aware
-│       │   └── mod.rs          # parse_sql() entry point
-│       └── engine/             # In-memory database engine
-│           ├── database.rs     # Table storage + transaction snapshots
-│           ├── table.rs        # Row/column storage, CRUD, trigram similarity
-│           ├── value.rs        # ColumnType, Column, DbValue enums
-│           ├── execute.rs      # Statement executor + expression evaluator + JOINs
-│           ├── index.rs        # BTreeIndex + TrigramIndex (GIN-style)
-│           ├── serialize.rs    # JSON, CSV, SQL dump, Binary formats
-│           └── error.rs        # Structured error codes (ERR_*)
+│       ├── engine/             # In-memory database engine
+│       │   ├── database.rs     # Table storage + transaction snapshots
+│       │   ├── table/          # Row/column storage, PK/UNIQUE sets, triggers
+│       │   ├── stmts/          # DDL/DML statement execution
+│       │   ├── functions/      # Scalar + aggregate functions, expression evaluator
+│       │   ├── serialize/      # JSON, CSV, SQL dump, Binary formats
+│       │   ├── execute.rs      # Statement executor + JOINs
+│       │   ├── index.rs        # BTreeIndex + TrigramIndex (GIN-style)
+│       │   ├── error.rs        # Structured error codes (ERR_*)
+│       │   └── value.rs        # ColumnType, Column, DbValue enums
+│       ├── server.rs           # TCP listener (loopback, LOGIN auth, panic barrier)
+│       ├── config.rs           # Config (A3SQL_CONFIG env / a3sql.toml)
+│       └── bin/                # Standalone a3sql-server binary
 ├── addons/
 │   ├── main/                   # Main addon (CBA macro includes + CfgPatches)
-│   │   ├── config.cpp
-│   │   ├── script_mod.hpp
-│   │   └── $PBOPREFIX$
-│   └── sql/                    # SQL engine addon (CfgFunctions + SQF API)
-│       ├── config.cpp
-│       ├── script_component.hpp
-│       ├── fn_init.sqf
-│       ├── fn_settings.sqf
-│       ├── fn_postInit.sqf
-│       ├── fn_execute.sqf
-│       ├── fn_loadJSON.sqf
-│       ├── fn_dumpSQL.sqf
-│       ├── fn_exportJSON.sqf
-│       ├── fn_exportCSV.sqf
-│       ├── fn_exportSQL.sqf
-│       ├── fn_save.sqf
-│       ├── fn_load.sqf
-│       └── $PBOPREFIX$
+│   ├── database/               # SQL API (fnc_execute, fnc_save/load, exports, prepared)
+│   ├── admin/                  # Admin command execution (ban/kick/whitelist)
+│   ├── analytics/              # Kills/fired-event analytics snapshots
+│   ├── loadouts/               # Loadout templates persistence
+│   ├── persistence/            # Player persistence
+│   ├── progression/            # Progression tracking
+│   ├── patch_core/             # Dynamic live-patching rule engine
+│   ├── patch_editor/           # In-game rule/preset editor
+│   └── patch_operators/        # Patch operator definitions
 ├── include/
 │   └── x/cba/addons/           # CBA header stubs for build-time resolution
-│       ├── main/
-│       │   ├── script_mod.hpp
-│       │   ├── script_macros.hpp
-│       │   └── script_macros_common.hpp
-│       └── xeh/
-│           └── script_xeh.hpp
 ├── .hemtt/
 │   └── project.toml            # HEMTT v1 build config
 ├── .github/workflows/ci.yml    # GitHub Actions CI/CD
 ├── mod.cpp                     # Mod definition (name, logo, etc.)
 ├── meta.cpp                    # Steam Workshop metadata (publishedid)
 ├── tools/                      # Development utility scripts
+│   ├── sql_smoke_test.py       # Production SQL gate (runs against real binary)
+│   ├── smoke_test.sql          # The mod's own SQL as regression suite
 │   ├── build_current_addon.py
 │   ├── config_style_checker.py
 │   ├── getExtensionHash.py
