@@ -17,8 +17,8 @@ jobs:
       - run: cargo build --release --manifest-path extension/Cargo.toml
       - name: Rename artifact
         run: |
-          # Target dir is at project root (extension/ is a crate, not workspace)
-          cp target/release/liba3sql.so a3sql_x64.so
+          # Target dir is under extension/ (it is its own workspace)
+          cp extension/target/release/liba3sql.so a3sql_x64.so
           ls -la a3sql_x64.so
 
   windows:
@@ -31,7 +31,7 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y mingw-w64
       - run: cargo build --release --manifest-path extension/Cargo.toml --target x86_64-pc-windows-gnu
       - name: Rename artifact
-        run: cp target/x86_64-pc-windows-gnu/release/a3sql.dll a3sql_x64.dll
+        run: cp extension/target/x86_64-pc-windows-gnu/release/a3sql.dll a3sql_x64.dll
 
   windows-i686:
     runs-on: ubuntu-latest

@@ -9,7 +9,7 @@ echo "→ Building Rust DLL (Windows x86_64)..."
 cargo build --release --target x86_64-pc-windows-gnu --manifest-path extension/Cargo.toml
 
 echo "→ Copying DLL to project root..."
-cp target/x86_64-pc-windows-gnu/release/a3sql.dll a3sql.dll
+cp extension/target/x86_64-pc-windows-gnu/release/a3sql.dll a3sql.dll
 
 echo "→ Building addon with HEMTT..."
 hemtt build

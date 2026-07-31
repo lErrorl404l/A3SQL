@@ -88,9 +88,9 @@ python tools/a3sql-webhook.py --webhook-url "https://discord.com/api/webhooks/..
 ## Building
 
 ```bash
-cargo build --release -p a3sql
+cargo build --release --manifest-path extension/Cargo.toml
 hemtt build
-cargo test -p a3sql
+cargo test --manifest-path extension/Cargo.toml
 ```
 
 ## Contributing

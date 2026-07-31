@@ -1,3 +1,5 @@
+[workspace]
+
 [package]
 name = "a3sql"
 version = "0.2.0"
@@ -89,3 +91,9 @@ ignored = [
     "time",
     "uuid",
 ]
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
