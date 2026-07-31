@@ -20,13 +20,21 @@
 //!
 //! Command routing and testing infrastructure provided by [`arma_rs`].
 
-use std::os::raw::c_char;
+use std::os::raw::{c_char, c_int};
 use std::sync::{LazyLock, Mutex, Once};
 
 use arma_rs::Extension;
 
 use crate::dispatch;
 use crate::engine;
+
+/// SQF callback ABI — mirrors [`arma_rs::Callback`](https://docs.rs/arma-rs/latest/arma_rs/type.Callback.html):
+/// `extern "system" fn(*const c_char, *const c_char, *const c_char) -> c_int`.
+/// arma-rs does not re-export the type (it is `#[doc(hidden)]`), so it is
+/// defined locally to keep the [`CALLBACK`] static and
+/// [`RVExtensionRegisterCallback`] in lockstep with the engine's calling
+/// convention.
+pub(crate) type Callback = extern "system" fn(*const c_char, *const c_char, *const c_char) -> c_int;
 
 /// Global database instance (single-threaded, mutex-protected).
 pub(crate) static DB: LazyLock<Mutex<engine::Database>> = LazyLock::new(|| Mutex::new(engine::Database::new()));
@@ -39,8 +47,7 @@ pub(crate) static DB: LazyLock<Mutex<engine::Database>> = LazyLock::new(|| Mutex
 /// co-loaded extensions already run in the same process with the same
 /// privileges — they can read/write any memory reachable from the DLL.
 /// The callback pointer is a convenience, not a security boundary.
-pub(crate) static CALLBACK: LazyLock<Mutex<Option<unsafe extern "C" fn(i32, *mut std::os::raw::c_char)>>> =
-    LazyLock::new(|| Mutex::new(None));
+pub(crate) static CALLBACK: LazyLock<Mutex<Option<Callback>>> = LazyLock::new(|| Mutex::new(None));
 // ponytail: external TCP listener — global lock on a single listener
 pub(crate) static LISTENER: LazyLock<Mutex<Option<std::net::TcpListener>>> = LazyLock::new(|| Mutex::new(None));
 
@@ -218,7 +225,7 @@ pub unsafe extern "C" fn RVExtensionArgs(
 /// # Safety
 /// `callbackProc` must be a valid function pointer provided by the Arma engine.
 #[no_mangle]
-pub unsafe extern "C" fn RVExtensionRegisterCallback(callbackProc: Option<unsafe extern "C" fn(i32, *mut c_char)>) {
+pub unsafe extern "C" fn RVExtensionRegisterCallback(callbackProc: Option<Callback>) {
     let mut cb = CALLBACK.lock().unwrap();
     *cb = callbackProc;
 }

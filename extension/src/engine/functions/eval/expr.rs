@@ -345,14 +345,27 @@ pub(crate) fn exec_function(
                 if crate::engine::plugin::get_sqf_function_body(fn_name).is_some() {
                     let args = extract_func_args(func);
                     let args_str: Vec<String> = args.iter().map(|a| a.to_string()).collect();
-                    let cb_msg = format!("{}({})", name, args_str.join(", "));
+                    let cb_name = name.clone();
+                    let mut cb_args = args_str.join(", ");
+                    // Bound the args payload to 2048 bytes at a char boundary so
+                    // Arma's callback never receives an over-long buffer.
+                    if cb_args.len() > 2048 {
+                        let mut end = 2048;
+                        while !cb_args.is_char_boundary(end) {
+                            end -= 1;
+                        }
+                        cb_args.truncate(end);
+                    }
+                    let cb_ctx = String::new();
                     if let Some(cb) = crate::ffi::CALLBACK.lock().unwrap().as_ref() {
-                        if let Ok(cstr) = std::ffi::CString::new(cb_msg) {
-                            // Safety: CALLBACK is the function pointer registered by Arma
-                            unsafe {
-                                cb(0, cstr.as_ptr() as *mut i8);
-                                drop(cstr);
-                            }
+                        if let (Ok(name_c), Ok(args_c), Ok(ctx_c)) = (
+                            std::ffi::CString::new(cb_name),
+                            std::ffi::CString::new(cb_args),
+                            std::ffi::CString::new(cb_ctx),
+                        ) {
+                            // The CString buffers stay alive until the call returns,
+                            // matching arma_rs's Extension::run_callbacks contract.
+                            cb(name_c.as_ptr(), args_c.as_ptr(), ctx_c.as_ptr());
                         }
                     }
                     // ponytail: SQF handles the actual result; return placeholder
