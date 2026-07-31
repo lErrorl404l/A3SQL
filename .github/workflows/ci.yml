@@ -115,6 +115,11 @@ jobs:
             cp extension/target/release/a3sql_x86.dll a3sql.dll
           fi
           ls -la a3sql*.so a3sql*.dll 2>/dev/null || echo "(no extension binaries present)"
+      - name: SQL smoke test against real binary
+        run: |
+          # Run the mod's production SQL through the real extension ABI.
+          # Fails the build if any statement misbehaves (engine regression gate).
+          python3 tools/sql_smoke_test.py --bin a3sql_x64.so tools/smoke_test.sql
       - name: Build addon
         run: hemtt build
       - name: Upload addon
