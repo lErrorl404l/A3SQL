@@ -17,33 +17,23 @@ include = [
 path = "addons/main/script_version.hpp"
 git_hash = 1
 
-# ── Hooks ────────────────────────────────────────────────────────────────
-[hemtt.hooks]
-pre_build = ["01_set_version"]
-post_release = ["01_rename_zip"]
-
 # Launch profiles moved to .hemtt/launch.toml
 # Run: hemtt launch [profile]
 
 # ── Release ──────────────────────────────────────────────────────────────
 [hemtt.release]
 folder = "a3sql"
-# Files included in release ZIP (in addition to [files])
-include = [
-    "@a3sql",
-    "@a3sql/addons/*.pbo",
-    "@a3sql/*.so",
-    "@a3sql/*.dll",
-]
+sign = true
+archive = true
 
 # ── Signing ──────────────────────────────────────────────────────────────
-# Generate a key pair:
-#   hemtt key create
-# Place the .biprivatekey somewhere secure, commit the .bikey.
-# Then uncomment:
-# [hemtt.sign]
-# private_key = "./keys/a3sql.biprivatekey"
-# public_key  = "./a3sql.bikey"
+# Stable-key flow:
+#   hemtt keys generate   # run locally, interactive password prompt
+# Keep a3sql.hemttprivatekey OUT of VCS (it is gitignored).
+# Do NOT commit private_key_hash — HEMTT hard-fails encrypted keys in CI.
+# CI uses per-release ephemeral signing (hemtt build --release) instead.
+[signing]
+authority = "a3sql"
 
 # ── Workshop ─────────────────────────────────────────────────────────────
 # PublishedID set in meta.cpp (per-environment)

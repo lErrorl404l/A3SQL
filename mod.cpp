@@ -1,6 +1,7 @@
 name = "A3SQL";
+version = "0.0.0"; // HEMTT pre_build hook replaces this with project version
 actionName = "GitHub";
-action = "https://github.com/ABETeam/a3sql";
+action = "https://github.com/lErrorl404l/a3sql";
 description = "An embeddable SQL database engine for Arma 3 mods.";
 tooltip = "A3SQL";
 author = "ABE Team";

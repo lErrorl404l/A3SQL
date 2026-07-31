@@ -2,7 +2,7 @@
 #define MAJOR 0
 #endif
 #ifndef MINOR
-#define MINOR 1
+#define MINOR 2
 #endif
 #ifndef PATCHLVL
 #define PATCHLVL 0
