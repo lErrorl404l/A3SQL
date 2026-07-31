@@ -2,7 +2,7 @@
 
 ## Reporting a Vulnerability
 
-A3DB is a Rust DLL loaded into the Arma 3 game process. A security vulnerability
+A3SQL is a Rust DLL loaded into the Arma 3 game process. A security vulnerability
 could affect users' systems. If you find one:
 
 1. **Do not** open a public GitHub issue.
@@ -23,4 +23,4 @@ The following areas are in-scope:
 The following are NOT in-scope:
 
 - Arma 3 engine vulnerabilities (report to Bohemia Interactive instead)
-- Mods using A3DB that pass unsanitized user input (that's the mod's responsibility)
+- Mods using A3SQL that pass unsanitized user input (that's the mod's responsibility)

@@ -346,11 +346,11 @@ s.close()
 
 ```bash
 # Build for Linux x86_64
-cargo build --release
+cargo build --release --manifest-path extension/Cargo.toml
 
 # Build for Windows (cross-compile from Linux)
-cargo build --release --target x86_64-pc-windows-gnu
-cargo build --release --target i686-pc-windows-gnu
+cargo build --release --target x86_64-pc-windows-gnu --manifest-path extension/Cargo.toml
+cargo build --release --target i686-pc-windows-gnu --manifest-path extension/Cargo.toml
 ```
 
 ### Build the addon
@@ -365,7 +365,7 @@ Output goes to `.hemttout/build/`.
 
 ```bash
 # All 118 tests (0.01s)
-cargo test --lib -p a3sql
+cargo test --manifest-path extension/Cargo.toml
 ```
 
 ### Linting & validation
@@ -373,14 +373,15 @@ cargo test --lib -p a3sql
 ```bash
 # Rust
 cargo fmt --check
-cargo clippy --all-targets
+cargo clippy --manifest-path extension/Cargo.toml --all-targets -- -D warnings
 
-# SQF
-sqflint addons/a3sql/*.sqf
-sqfvm --parse-only -i addons/a3sql/fn_init.sqf
+# SQF + config
+python3 tools/sqfvmChecker.py
+python3 tools/sqf_validator.py addons/
+python3 tools/config_style_checker.py
 
 # Arma addon structure
-hemtt check
+hemtt check -p -e
 ```
 
 ## CI/CD
@@ -403,8 +404,7 @@ act --list           # List all jobs
 
 ```
 a3sql/
-├── Cargo.toml                  # Workspace → extension/
-├── extension/                  # Rust extension crate (cdylib + rlib)
+├── extension/                  # Rust extension workspace (cdylib + rlib)
 │   ├── Cargo.toml
 │   ├── .cargo/config.toml      # Cross-compilation linkers
 │   └── src/
@@ -475,7 +475,7 @@ Built following the same conventions as ACE3 and CBA_A3:
 | **Include path** | `\z\a3sql\addons\main\script_mod.hpp` |
 | **CBA dependency** | CBA_A3 required (`cba_main`, `cba_xeh`) |
 | **Build system** | HEMTT v1 (`.hemtt/project.toml`) |
-| **Rust workspace** | Workspace at root, crate in `extension/` |
+| **Rust workspace** | `extension/` (own `Cargo.toml`; target under `extension/target/`) |
 | **Release profile** | `opt-level = "z"`, `lto = true`, `strip = true` |
 
 ## License
