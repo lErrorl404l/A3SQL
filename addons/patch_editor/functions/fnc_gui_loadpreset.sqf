@@ -37,7 +37,7 @@ if (_presetName isEqualTo "") then {
     };
 
     // Parse the preset data (stored as SQF array serialization)
-    private _rules = call compile _data;
+    private _rules = parseSimpleArray _data;
     if !(_rules isEqualType []) exitWith {
         ["A3SQL Patch", "Invalid preset data format"] call CBA_fnc_notify;
     };
