@@ -24,6 +24,3 @@ enabled = true
 
 [sqf.not_private]
 enabled = true
-
-[config.source]
-options.sqf_mission_event_warnings = false
