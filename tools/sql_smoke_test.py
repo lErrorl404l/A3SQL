@@ -29,10 +29,19 @@ Exit code: 0 all passed, 1 any failed, 2 usage error.
 """
 
 import ctypes
+import faulthandler
 import os
 import shutil
 import sys
 import tempfile
+
+# Dump the Python traceback on SIGSEGV/SIGABRT — shows which statement
+# triggered a native crash in the extension instead of a bare exit 139.
+faulthandler.enable()
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+except (AttributeError, ValueError):
+    pass  # non-TTY stream without reconfigure — faulthandler still works
 
 BUF_SIZE = 20480  # must match OUTPUT_BUF_SIZE in the extension
 
