@@ -130,17 +130,44 @@ jobs:
     needs: [build-addon]
     runs-on: ubuntu-latest
     steps:
-      - name: Download addon
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          submodules: recursive
+      - name: Install HEMTT
+        uses: arma-actions/hemtt@a0570ddd80d2b7be9c0f052494c0f700b42668dd # v1
+      - name: Download all artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          name: a3sql-addon
-          path: a3sql
-      - name: Create archive
-        run: cd a3sql && zip -r ../a3sql-release.zip .
+          pattern: a3sql-*
+          merge-multiple: true
+          path: extension/target/release
+      - name: Rename extension binaries to Arma naming convention
+        run: |
+          # a3sql_x64.so (Linux 64-bit)
+          if [ -f extension/target/release/liba3sql.so ]; then
+            cp extension/target/release/liba3sql.so a3sql_x64.so
+          fi
+          # a3sql_x64.dll (Windows 64-bit)
+          if [ -f extension/target/release/a3sql_x64.dll ]; then
+            cp extension/target/release/a3sql_x64.dll a3sql_x64.dll
+          elif [ -f extension/target/release/a3sql.dll ]; then
+            cp extension/target/release/a3sql.dll a3sql_x64.dll
+          fi
+          # a3sql.so (Linux 32-bit) — already renamed by upstream job
+          if [ -f extension/target/release/a3sql_x86.so ]; then
+            cp extension/target/release/a3sql_x86.so a3sql.so
+          fi
+          # a3sql.dll (Windows 32-bit) — already renamed by upstream job
+          if [ -f extension/target/release/a3sql_x86.dll ]; then
+            cp extension/target/release/a3sql_x86.dll a3sql.dll
+          fi
+          ls -la a3sql*.so a3sql*.dll 2>/dev/null || echo "(no extension binaries present)"
+      - name: Build release
+        run: hemtt release
       - name: Upload release asset
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
         with:
-          files: ./a3sql-release.zip
+          files: releases/*.zip
           name: a3sql-${{ github.event.release.tag_name }}
 
   workshop:
@@ -150,15 +177,47 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          submodules: recursive
       - name: Install HEMTT
-        uses: arma-actions/hemtt@v1
-      - name: Download addon
+        uses: arma-actions/hemtt@a0570ddd80d2b7be9c0f052494c0f700b42668dd # v1
+      - name: Download all artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
-          name: a3sql-addon
-          path: .hemttout/build
+          pattern: a3sql-*
+          merge-multiple: true
+          path: extension/target/release
+      - name: Rename extension binaries to Arma naming convention
+        run: |
+          # a3sql_x64.so (Linux 64-bit)
+          if [ -f extension/target/release/liba3sql.so ]; then
+            cp extension/target/release/liba3sql.so a3sql_x64.so
+          fi
+          # a3sql_x64.dll (Windows 64-bit)
+          if [ -f extension/target/release/a3sql_x64.dll ]; then
+            cp extension/target/release/a3sql_x64.dll a3sql_x64.dll
+          elif [ -f extension/target/release/a3sql.dll ]; then
+            cp extension/target/release/a3sql.dll a3sql_x64.dll
+          fi
+          # a3sql.so (Linux 32-bit) — already renamed by upstream job
+          if [ -f extension/target/release/a3sql_x86.so ]; then
+            cp extension/target/release/a3sql_x86.so a3sql.so
+          fi
+          # a3sql.dll (Windows 32-bit) — already renamed by upstream job
+          if [ -f extension/target/release/a3sql_x86.dll ]; then
+            cp extension/target/release/a3sql_x86.dll a3sql.dll
+          fi
+          ls -la a3sql*.so a3sql*.dll 2>/dev/null || echo "(no extension binaries present)"
       - name: Set publishedid
-        run: echo 'publishedid = ${{ secrets.STEAM_WORKSHOP_PUBLISHEDID }}' > meta.cpp
+        run: |
+          ID=$(printf '%s' "${{ secrets.STEAM_WORKSHOP_PUBLISHEDID }}" | tr -dc '0-9')
+          if [ -z "$ID" ]; then
+            echo "::error::STEAM_WORKSHOP_PUBLISHEDID secret is missing or not numeric"
+            exit 1
+          fi
+          # HEMTT expects `publishedid = <digits>;` in meta.cpp (regex: publishedid\s*=\s*(\d+);)
+          sed -i "s/^publishedid = .*/publishedid = $ID;/" meta.cpp
+          cat meta.cpp
       - name: Fetch changelog from release
         run: |
           echo 'CHANGE_NOTES<<EOF' >> $GITHUB_ENV
