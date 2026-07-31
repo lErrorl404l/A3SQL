@@ -240,3 +240,21 @@ fn integer_primary_key_auto_assigns_rowid() {
         sel
     );
 }
+
+#[test]
+fn update_self_referential_assignment() {
+    // Corpus gap: SET col = col + N (increment pattern used by admin
+    // command systems and stat trackers) failed with "Complex expressions
+    // not supported in values" because UPDATE used eval_literal_expr.
+    let mut db = Database::new();
+    parse_and_exec(
+        "CREATE TABLE t (id INTEGER PRIMARY KEY, bans INTEGER DEFAULT 0)",
+        &mut db,
+    )
+    .unwrap();
+    parse_and_exec("INSERT INTO t VALUES (1, 0)", &mut db).unwrap();
+    assert!(parse_and_exec("UPDATE t SET bans = bans + 1 WHERE id = 1", &mut db).is_ok());
+    assert!(parse_and_exec("UPDATE t SET bans = bans + 10 WHERE id = 1", &mut db).is_ok());
+    let sel = parse_and_exec("SELECT bans FROM t", &mut db).unwrap();
+    assert!(sel.contains("11"), "incremented twice: {}", sel);
+}

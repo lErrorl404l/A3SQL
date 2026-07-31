@@ -124,6 +124,11 @@ jobs:
           # Run the mod's production SQL through the real extension ABI.
           # Fails the build if any statement misbehaves (engine regression gate).
           python3 tools/sql_smoke_test.py --bin a3sql_x64.so tools/smoke_test.sql
+      - name: SQL compatibility corpus
+        run: |
+          # Realistic SQL workloads (stats/admin/loadouts domains) through the
+          # real binary — surfaces dialect gaps vs real-mod query shapes.
+          python3 tools/sql_compat_report.py --bin a3sql_x64.so
       - name: Build addon
         run: hemtt build
       - name: Upload addon

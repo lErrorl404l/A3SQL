@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use super::super::database::Database;
 use super::super::error::EngineError;
 use super::super::execute::{format_projected_result, LAST_CHANGES};
-use super::super::functions::eval::{eval_expr, eval_literal_expr, is_truthy};
+use super::super::functions::eval::{eval_expr, is_truthy};
 use super::super::stmts::select::joins::resolve_table_from_joins;
 use super::super::value::DbValue;
 use crate::engine::trigger::{fire_triggers, fire_triggers_before};
@@ -57,7 +57,10 @@ pub(crate) fn exec_update(upd: &Update, db: &mut Database) -> Result<String, Eng
 
     for i in &indices {
         for (col_ci, val_expr) in &assign_indices {
-            let new_val = eval_literal_expr(val_expr)?;
+            // Evaluate with row context so `SET bans = bans + 1` works (the
+            // assignment can reference the current row's column values).
+            let row = &table.rows[*i];
+            let new_val = eval_expr(val_expr, row, &table.col_index)?;
             updates.push((*i, *col_ci, new_val));
         }
     }
