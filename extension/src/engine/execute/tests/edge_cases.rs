@@ -169,3 +169,74 @@ fn array_columns_accept_array_literals() {
     let sel = parse_and_exec("SELECT s FROM t_arr", &mut db).unwrap();
     assert!(sel.contains("a"), "array value present: {}", sel);
 }
+
+#[test]
+#[cfg_attr(miri, ignore)] // SystemTime::now() — realtime clock blocked by miri's isolation
+fn sqlite_date_modifiers_work() {
+    // Path B: SQLite-style datetime() arithmetic ('+1 day', '-30 days')
+    let mut db = Database::new();
+    let r = parse_and_exec("SELECT datetime('now', '+1 day')", &mut db);
+    assert!(r.is_ok(), "+1 day: {:?}", r);
+    let v = r.unwrap();
+    // 'YYYY-MM-DD HH:MM:SS' present
+    assert!(v.len() >= 19, "datetime shape: {}", v);
+    let r2 = parse_and_exec("SELECT datetime('now', '-30 days')", &mut db);
+    assert!(r2.is_ok(), "-30 days: {:?}", r2);
+    let r3 = parse_and_exec("SELECT datetime('now', '+3 hours')", &mut db);
+    assert!(r3.is_ok(), "+3 hours: {:?}", r3);
+}
+
+#[test]
+#[cfg_attr(miri, ignore)] // SystemTime::now() — realtime clock blocked by miri's isolation
+fn sqlite_string_functions_work() {
+    // Path B: instr/ltrim/rtrim/typeof/char/strftime/date/time
+    let mut db = Database::new();
+    assert!(parse_and_exec("SELECT instr('hello', 'll')", &mut db)
+        .unwrap()
+        .contains('3'));
+    assert!(parse_and_exec("SELECT ltrim('  x')", &mut db)
+        .unwrap()
+        .contains("\"x\""));
+    assert!(parse_and_exec("SELECT rtrim('x  ')", &mut db)
+        .unwrap()
+        .contains("\"x\""));
+    assert!(parse_and_exec("SELECT typeof(42)", &mut db)
+        .unwrap()
+        .contains("integer"));
+    assert!(parse_and_exec("SELECT char(65, 66)", &mut db).unwrap().contains("AB"));
+    assert!(parse_and_exec("SELECT strftime('%Y', 'now')", &mut db).is_ok());
+    assert!(parse_and_exec("SELECT date('now')", &mut db).is_ok());
+    assert!(parse_and_exec("SELECT time('now')", &mut db).is_ok());
+}
+
+#[test]
+fn insert_or_replace_ignores_work() {
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE t_ir (id INTEGER PRIMARY KEY, v TEXT)", &mut db).unwrap();
+    parse_and_exec("INSERT INTO t_ir VALUES (1, 'old')", &mut db).unwrap();
+    let r = parse_and_exec("INSERT OR REPLACE INTO t_ir VALUES (1, 'new')", &mut db);
+    assert!(r.is_ok(), "or replace: {:?}", r);
+    let sel = parse_and_exec("SELECT v FROM t_ir", &mut db).unwrap();
+    assert!(sel.contains("new"), "replaced value: {}", sel);
+    // OR IGNORE on duplicate: no error, 0 rows
+    let r2 = parse_and_exec("INSERT OR IGNORE INTO t_ir VALUES (1, 'other')", &mut db);
+    assert!(r2.is_ok(), "or ignore: {:?}", r2);
+    let sel2 = parse_and_exec("SELECT count(*) FROM t_ir", &mut db).unwrap();
+    assert!(sel2.contains('1'), "count unchanged: {}", sel2);
+}
+
+#[test]
+fn integer_primary_key_auto_assigns_rowid() {
+    // SQLite semantics: bare `INTEGER PRIMARY KEY` auto-assigns a rowid when
+    // omitted — the most common SQLite idiom (INSERT without id column).
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE t (id INTEGER PRIMARY KEY, v TEXT)", &mut db).unwrap();
+    assert!(parse_and_exec("INSERT INTO t (v) VALUES ('a')", &mut db).is_ok());
+    assert!(parse_and_exec("INSERT INTO t (v) VALUES ('b')", &mut db).is_ok());
+    let sel = parse_and_exec("SELECT id, v FROM t", &mut db).unwrap();
+    assert!(
+        sel.contains("[1,\"a\"]") && sel.contains("[2,\"b\"]"),
+        "auto rowids: {}",
+        sel
+    );
+}

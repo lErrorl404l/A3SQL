@@ -100,6 +100,110 @@ fn to_f64(v: &DbValue) -> Option<f64> {
 
 // ── Date/time helpers ──────────────────────────────────────────────────
 
+/// Evaluate a SQLite-style timeval + modifiers into a "YYYY-MM-DD HH:MM:SS"
+/// string. The first arg must be 'now' (a fixed timeval is not supported);
+/// remaining args are modifiers like '+1 day'. Validates all modifiers
+/// BEFORE reading the clock (miri's isolation blocks SystemTime).
+fn datetime_from_args(name: &str, args: &[FunctionArg]) -> Result<String, EngineError> {
+    let mods: Vec<String> = args
+        .iter()
+        .map(|a| match a {
+            FunctionArg::Unnamed(FunctionArgExpr::Expr(Expr::Value(v))) => match &v.value {
+                Value::SingleQuotedString(s)
+                | Value::DoubleQuotedString(s)
+                | Value::TripleSingleQuotedString(s)
+                | Value::TripleDoubleQuotedString(s) => s.to_lowercase(),
+                _ => String::new(),
+            },
+            _ => String::new(),
+        })
+        .collect();
+    if mods.is_empty() {
+        return Err(EngineError::Exec(format!("{name}() requires at least 'now'")));
+    }
+    if mods[0] != "now" {
+        return Err(EngineError::Exec(format!("{name}() base must be 'now'")));
+    }
+    let mut delta_secs: i64 = 0;
+    for m in &mods[1..] {
+        match parse_sqlite_date_modifier(m) {
+            Some(d) => delta_secs += d,
+            None => return Err(EngineError::Exec(format!("Unsupported {name}() modifier '{}'", m))),
+        }
+    }
+    // ponytail: localtime modifier accepted but UTC returned — real offset
+    // needs the time crate 'local-offset' feature
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64
+        + delta_secs;
+    Ok(epoch_to_datetime(secs))
+}
+
+/// Format unix seconds as "YYYY-MM-DD HH:MM:SS" (Howard Hinnant civil-from-days).
+fn epoch_to_datetime(secs: i64) -> String {
+    let z = secs / 86400 + 719468;
+    let era = (z / 146097) as u64;
+    let doe = (z - era as i64 * 146097) as u64;
+    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = if m <= 2 { y + 1 } else { y };
+    let (h, min, s) = (secs / 3600 % 24, secs / 60 % 60, secs % 60);
+    format!("{y:04}-{m:02}-{d:02} {h:02}:{min:02}:{s:02}")
+}
+
+/// Parse a SQLite `datetime()` modifier into a signed seconds delta.
+/// Supports `+N days/hours/minutes/seconds`, `N months`, `N years`, and the
+/// no-op markers `localtime`/`utc`. Unknown modifiers return None.
+///
+/// ponytail: month/year deltas are approximated as 30/365 days — exact
+/// calendar math needs a real date library; add when a caller depends on
+/// Jan-31 + 1 month semantics.
+fn parse_sqlite_date_modifier(m: &str) -> Option<i64> {
+    let m = m.trim();
+    if m == "localtime" || m == "utc" {
+        return Some(0);
+    }
+    let (num_str, unit) = if let Some(stripped) = m.strip_prefix('+') {
+        // '+1 day' — optional + sign
+        let mut it = stripped.splitn(2, char::is_whitespace);
+        (it.next()?, it.next()?.trim())
+    } else if let Some(stripped) = m.strip_prefix('-') {
+        let mut it = stripped.splitn(2, char::is_whitespace);
+        let n: i64 = it.next()?.parse().ok()?;
+        let unit = it.next()?.trim();
+        return match unit {
+            "seconds" | "second" => Some(-n),
+            "minutes" | "minute" => Some(-n * 60),
+            "hours" | "hour" => Some(-n * 3600),
+            "days" | "day" => Some(-n * 86400),
+            "weeks" | "week" => Some(-n * 7 * 86400),
+            "months" | "month" => Some(-n * 30 * 86400),
+            "years" | "year" => Some(-n * 365 * 86400),
+            _ => None,
+        };
+    } else {
+        let mut it = m.splitn(2, char::is_whitespace);
+        (it.next()?, it.next()?.trim())
+    };
+    let n: i64 = num_str.parse().ok()?;
+    match unit {
+        "seconds" | "second" => Some(n),
+        "minutes" | "minute" => Some(n * 60),
+        "hours" | "hour" => Some(n * 3600),
+        "days" | "day" => Some(n * 86400),
+        "weeks" | "week" => Some(n * 7 * 86400),
+        "months" | "month" => Some(n * 30 * 86400),
+        "years" | "year" => Some(n * 365 * 86400),
+        _ => None,
+    }
+}
+
 /// Return current date as YYYY-MM-DD string.
 pub(crate) fn curdate_value() -> DbValue {
     let secs = std::time::SystemTime::now()
@@ -384,46 +488,64 @@ pub(crate) fn exec_std_function(
         }
         "now" | "current_timestamp" => Ok(now_value()),
         "curdate" | "current_date" => Ok(curdate_value()),
-        // SQLite-compatible datetime('now') / datetime('now','localtime') — space-separated, no T
-        "datetime" => {
-            let mods: Vec<String> = args
-                .iter()
-                .map(|a| match a {
-                    FunctionArg::Unnamed(FunctionArgExpr::Expr(Expr::Value(v))) => match &v.value {
-                        Value::SingleQuotedString(s)
-                        | Value::DoubleQuotedString(s)
-                        | Value::TripleSingleQuotedString(s)
-                        | Value::TripleDoubleQuotedString(s) => s.to_lowercase(),
-                        _ => String::new(),
-                    },
-                    _ => String::new(),
-                })
-                .collect();
-            // Validate modifiers BEFORE reading the clock — lets the error path
-            // stay free of SystemTime (which miri's isolation blocks)
-            if mods.is_empty() || !mods.iter().all(|m| m == "now" || m == "localtime") {
-                return Err(EngineError::Exec(
-                    "datetime() only supports 'now'/'localtime' modifiers".into(),
-                ));
+        // SQLite-compatible datetime('now') / datetime('now','localtime') with
+        // date arithmetic modifiers: '+1 day', '-30 days', '+3 hours', etc.
+        "datetime" => Ok(DbValue::String(datetime_from_args("datetime", args)?)),
+        // SQLite date('now', modifiers) — YYYY-MM-DD
+        "date" => {
+            let dt = datetime_from_args(&name, args)?;
+            Ok(DbValue::String(dt.chars().take(10).collect::<String>()))
+        }
+        // SQLite time('now', modifiers) — HH:MM:SS
+        "time" => {
+            let dt = datetime_from_args(&name, args)?;
+            Ok(DbValue::String(dt.chars().skip(11).take(8).collect::<String>()))
+        }
+        // SQLite strftime(format, timeval, modifiers) — subset: %Y %m %d %H %M %S %j %w
+        "strftime" => {
+            let fmt = match args.first() {
+                Some(FunctionArg::Unnamed(FunctionArgExpr::Expr(Expr::Value(v)))) => {
+                    if let Value::SingleQuotedString(s) | Value::DoubleQuotedString(s) = &v.value {
+                        s.clone()
+                    } else {
+                        return Err(EngineError::Exec("strftime format must be a string".into()));
+                    }
+                }
+                _ => return Err(EngineError::Exec("strftime format must be a string".into())),
+            };
+            // Skip the format arg; the rest are timeval + modifiers
+            let rest = args.iter().skip(1).cloned().collect::<Vec<_>>();
+            let dt = datetime_from_args(&name, &rest)?;
+            // dt is "YYYY-MM-DD HH:MM:SS"
+            let y = &dt[0..4];
+            let m = &dt[5..7];
+            let d = &dt[8..10];
+            let h = &dt[11..13];
+            let mi = &dt[14..16];
+            let s = &dt[17..19];
+            let mut out = String::new();
+            let mut chars = fmt.chars().peekable();
+            while let Some(c) = chars.next() {
+                if c != '%' {
+                    out.push(c);
+                    continue;
+                }
+                match chars.next() {
+                    Some('Y') => out.push_str(y),
+                    Some('m') => out.push_str(m),
+                    Some('d') => out.push_str(d),
+                    Some('H') => out.push_str(h),
+                    Some('M') => out.push_str(mi),
+                    Some('S') => out.push_str(s),
+                    Some('%') => out.push('%'),
+                    Some(other) => {
+                        out.push('%');
+                        out.push(other);
+                    }
+                    None => out.push('%'),
+                }
             }
-            let secs = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs() as i64;
-            // ponytail: localtime modifier accepted but UTC returned — real offset needs
-            // the time crate 'local-offset' feature; add when a caller actually needs it
-            let z = secs / 86400 + 719468;
-            let era = (z / 146097) as u64;
-            let doe = (z - era as i64 * 146097) as u64;
-            let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
-            let y = yoe + era * 400;
-            let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-            let mp = (5 * doy + 2) / 153;
-            let d = doy - (153 * mp + 2) / 5 + 1;
-            let m = if mp < 10 { mp + 3 } else { mp - 9 };
-            let y = if m <= 2 { y + 1 } else { y };
-            let (h, min, s) = (secs / 3600 % 24, secs / 60 % 60, secs % 60);
-            Ok(DbValue::String(format!("{y:04}-{m:02}-{d:02} {h:02}:{min:02}:{s:02}")))
+            Ok(DbValue::String(out))
         }
         "concat" => {
             let mut result = String::new();
@@ -588,6 +710,72 @@ pub(crate) fn exec_std_function(
                 String::new()
             };
             Ok(DbValue::String(s.replace(&from, &to)))
+        }
+        // ── Common SQLite functions ─────────────────────────────────
+        "instr" => {
+            let vals = eval_args(2)?;
+            let hay = value_to_string(&vals[0]);
+            let needle = value_to_string(&vals[1]);
+            // SQLite instr is 1-based; 0 when not found
+            match hay.find(&needle) {
+                Some(idx) => Ok(DbValue::Int(idx as i64 + 1)),
+                None => Ok(DbValue::Int(0)),
+            }
+        }
+        "ltrim" => {
+            let vals = eval_args(2).or_else(|_| eval_args(1))?;
+            let s = value_to_string(&vals[0]);
+            let chars = if vals.len() >= 2 {
+                value_to_string(&vals[1])
+            } else {
+                " ".into()
+            };
+            Ok(DbValue::String(s.trim_start_matches(|c| chars.contains(c)).to_string()))
+        }
+        "rtrim" => {
+            let vals = eval_args(2).or_else(|_| eval_args(1))?;
+            let s = value_to_string(&vals[0]);
+            let chars = if vals.len() >= 2 {
+                value_to_string(&vals[1])
+            } else {
+                " ".into()
+            };
+            Ok(DbValue::String(s.trim_end_matches(|c| chars.contains(c)).to_string()))
+        }
+        "typeof" => {
+            let vals = eval_args(1)?;
+            let tp = match &vals[0] {
+                DbValue::Null => "null",
+                DbValue::Bool(_) => "integer",
+                DbValue::Int(_) => "integer",
+                DbValue::Float(_) => "real",
+                DbValue::String(_) => "text",
+                DbValue::Strings(_) => "array",
+                DbValue::Floats(_) => "array",
+            };
+            Ok(DbValue::String(tp.into()))
+        }
+        "random" => {
+            // SQLite random() returns a 64-bit signed int
+            let r: i64 = (std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos() as i64)
+                .unwrap_or(0))
+                ^ std::process::id() as i64;
+            Ok(DbValue::Int(r))
+        }
+        "char" => {
+            // SQLite char(N...) — build a string from code points
+            let mut out = String::new();
+            for i in 0..args.len() {
+                let v = eval_args(i + 1)?;
+                if let Some(n) = to_f64(&v[i]) {
+                    if let Some(c) = char::from_u32(n as u32) {
+                        out.push(c);
+                    }
+                }
+            }
+            Ok(DbValue::String(out))
         }
         _ => Err(EngineError::Exec(format!("Unknown function '{}'", name))),
     }

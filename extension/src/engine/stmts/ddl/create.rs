@@ -64,6 +64,13 @@ pub(crate) fn exec_create_table(def: &sqlparser::ast::CreateTable, db: &mut Data
                 return Err(EngineError::Parse("Only one primary key column supported".into()));
             }
             has_pk = true;
+            // SQLite semantics: a bare `INTEGER PRIMARY KEY` auto-assigns a
+            // rowid when NULL/omitted, exactly like AUTOINCREMENT. Setting the
+            // flag here makes `INSERT ... (v) VALUES` work without spelling
+            // the id column — the single most common SQLite idiom.
+            if matches!(dtype, ColumnType::Int) {
+                auto_inc = true;
+            }
         }
 
         columns.push(Column {

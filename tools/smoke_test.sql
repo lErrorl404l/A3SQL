@@ -19,7 +19,8 @@ INSERT INTO patch_rules (name, active, priority, match_type, match_value, target
 SELECT * FROM patch_rules WHERE active = 1 ORDER BY priority DESC, id ASC LIMIT 50 OFFSET 0
 # expect contains "fixAmmo"
 SELECT * FROM patch_rules ORDER BY priority DESC, id ASC
-# expect error
+# duplicate rule name is ALLOWED (no UNIQUE on name) — each row gets an
+# auto-assigned INTEGER PRIMARY KEY rowid, exactly like SQLite
 INSERT INTO patch_rules (name, active, priority, match_type, match_value, target_type, property, operator, value) VALUES ('fixAmmo', 1, 10, 'exact', '', 'CAManBase', 'ammo', 'set', '30') RETURNING id
 DELETE FROM patch_rules WHERE name = 'fixAmmo'
 
