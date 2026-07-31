@@ -91,6 +91,7 @@ fn fuzzy_fn_call_integration() {
     assert!(r.contains("fn_test"), "fuzzy fn: {}", r);
 }
 #[test]
+#[cfg_attr(miri, ignore)] // SystemTime::now() — realtime clock blocked by miri's isolation
 fn datetime_now_in_insert_values() {
     // Bug B regression: INSERT ... VALUES with datetime('now') must not fail
     // (mod SQL: INSERT INTO server_commands ... datetime('now'))
@@ -109,6 +110,7 @@ fn datetime_now_in_insert_values() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)] // SystemTime::now() — realtime clock blocked by miri's isolation
 fn datetime_now_localtime_accepted() {
     let mut db = Database::new();
     parse_and_exec("CREATE TABLE t (id INTEGER PRIMARY KEY, created_at TEXT)", &mut db).unwrap();
