@@ -90,6 +90,56 @@ fn fix_scientific_notation(s: &str) -> String {
 
     String::from_utf8(result).unwrap_or_else(|_| s.to_string())
 }
+/// Strip SQL comments (`--` line comments and `/* */` block comments) while
+/// respecting string literals — a `'--'` inside a quoted string must survive.
+/// Real-world SQL (e.g. mods' schema files) is full of `--` comments; without
+/// this, the trailing comment on a CREATE TABLE column swallowed the rest of
+/// the statement.
+fn strip_sql_comments(sql: &str) -> String {
+    let bytes = sql.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0usize;
+    let mut in_string = false;
+    while i < bytes.len() {
+        let b = bytes[i];
+        // Toggle string state on unescaped single quotes
+        if b == b'\'' {
+            // Handle '' escaped quote inside strings
+            if in_string && i + 1 < bytes.len() && bytes[i + 1] == b'\'' {
+                out.push(b);
+                out.push(bytes[i + 1]);
+                i += 2;
+                continue;
+            }
+            in_string = !in_string;
+            out.push(b);
+            i += 1;
+            continue;
+        }
+        if !in_string {
+            // Line comment: -- to end of line
+            if b == b'-' && i + 1 < bytes.len() && bytes[i + 1] == b'-' {
+                while i < bytes.len() && bytes[i] != b'\n' {
+                    i += 1;
+                }
+                continue;
+            }
+            // Block comment: /* ... */
+            if b == b'/' && i + 1 < bytes.len() && bytes[i + 1] == b'*' {
+                i += 2;
+                while i + 1 < bytes.len() && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                    i += 1;
+                }
+                i += 2; // skip closing */
+                continue;
+            }
+        }
+        out.push(b);
+        i += 1;
+    }
+    String::from_utf8(out).unwrap_or_else(|_| sql.to_string())
+}
+
 /// Transforms custom a3sql SQL syntax into standard SQL that sqlparser-rs can
 /// parse with GenericDialect:
 ///
@@ -103,8 +153,10 @@ fn fix_scientific_notation(s: &str) -> String {
 /// Finds each `%%` operator outside string literals and rewrites
 /// `left %% right` → `fuzzy_match(left,right)`.
 pub fn preprocess(sql: &str) -> String {
+    // Remove comments first so `--` / `/* */` can't swallow following tokens
+    let mut result = strip_sql_comments(sql);
     // Fix scientific notation before other transforms
-    let mut result = fix_scientific_notation(sql);
+    result = fix_scientific_notation(&result);
     // Map array type suffixes to the bare Custom names — `STRINGS`/`FLOATS`
     // resolve to ColumnType::Strings/Floats in parse_data_type (the `[]`
     // suffix is dropped because sqlparser can't parse `STRING[]`).
@@ -376,6 +428,28 @@ mod tests {
             preprocess("CREATE TABLE t (id STRING PRIMARY KEY, d DATE)"),
             "CREATE TABLE t (id STRING PRIMARY KEY, d STRING)"
         );
+    }
+
+    #[test]
+    fn strips_line_comments() {
+        // Real mod SQL is full of `--` comments; a trailing comment on a
+        // column definition must not swallow the rest of the statement.
+        let r = preprocess("CREATE TABLE t (\n  a TEXT,\n  b INTEGER DEFAULT 0 -- CHECKBOX bool\n);\nSELECT 1");
+        assert!(!r.contains("-- CHECKBOX"), "comment stripped: {}", r);
+        assert!(r.contains("b INTEGER DEFAULT 0"), "column survives: {}", r);
+        assert!(r.contains("SELECT 1"), "next statement survives: {}", r);
+    }
+
+    #[test]
+    fn preserves_dash_inside_string_literal() {
+        // `--` inside a quoted string must NOT be treated as a comment
+        let r = preprocess("SELECT '-- not a comment'");
+        assert!(r.contains("'-- not a comment'"), "string preserved: {}", r);
+    }
+
+    #[test]
+    fn strips_block_comments() {
+        assert_eq!(preprocess("SELECT 1 /* block */ + 1"), "SELECT 1  + 1");
     }
 
     #[test]

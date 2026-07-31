@@ -120,7 +120,11 @@ def run_file(lib, path):
 
         if buf_line is None:
             buf_line = lineno
-        buf.append(stripped)
+        # Strip `--` inline comments per line (line-scoped by definition);
+        # the engine also strips them, but joining lines with spaces would
+        # otherwise merge a comment into the next line's tokens.
+        line_no_comment = stripped.split(" --", 1)[0]
+        buf.append(line_no_comment)
         if stripped.endswith(";"):
             flush()
             pending = "ok"
