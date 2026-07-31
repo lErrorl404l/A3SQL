@@ -1,5 +1,10 @@
 # A3SQL — Arma 3 Database Engine
 
+> **Canonical documentation lives in the [wiki](wiki/) (`docs/wiki/`)** —
+> Module Guide, Patch Framework, SQL Dialect, TCP Connector, Security,
+> and the Production Readiness checklist. This page is the quick-start
+> summary; the wiki pages are the authoritative reference.
+
 An embeddable SQL database engine for Arma 3 mods. Like **SQLite for Arma** — a
 Rust `callExtension` that lets modders write SQL directly in SQF.
 
