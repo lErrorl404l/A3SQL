@@ -88,31 +88,33 @@ jobs:
           path: ~/.hemtt/cache
           key: hemtt-${{ hashFiles('.hemtt/**/*') }}
           restore-keys: hemtt-
-      - name: Download all artifacts
+      - name: Download extension binaries
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
+          # NO merge-multiple: several artifacts contain a file named
+          # liba3sql.so (the addon package embeds one too) — flattening them
+          # into one dir collides and overwrites nondeterministically, which
+          # made the smoke test load a stale/partial binary. Each artifact
+          # keeps its own subdirectory instead.
           pattern: a3sql-*
-          merge-multiple: true
           path: extension/target/release
       - name: Rename extension binaries to Arma naming convention
         run: |
           # a3sql_x64.so (Linux 64-bit)
-          if [ -f extension/target/release/liba3sql.so ]; then
-            cp extension/target/release/liba3sql.so a3sql_x64.so
+          if [ -f extension/target/release/a3sql-x86_64-unknown-linux-gnu/liba3sql.so ]; then
+            cp extension/target/release/a3sql-x86_64-unknown-linux-gnu/liba3sql.so a3sql_x64.so
           fi
           # a3sql_x64.dll (Windows 64-bit)
-          if [ -f extension/target/release/a3sql_x64.dll ]; then
-            cp extension/target/release/a3sql_x64.dll a3sql_x64.dll
-          elif [ -f extension/target/release/a3sql.dll ]; then
-            cp extension/target/release/a3sql.dll a3sql_x64.dll
+          if [ -f extension/target/release/a3sql-x86_64-pc-windows-gnu/a3sql.dll ]; then
+            cp extension/target/release/a3sql-x86_64-pc-windows-gnu/a3sql.dll a3sql_x64.dll
           fi
-          # a3sql.so (Linux 32-bit) — already renamed by upstream job
-          if [ -f extension/target/release/a3sql_x86.so ]; then
-            cp extension/target/release/a3sql_x86.so a3sql.so
+          # a3sql.so (Linux 32-bit)
+          if [ -f extension/target/release/a3sql-i686-unknown-linux-gnu/a3sql_x86.so ]; then
+            cp extension/target/release/a3sql-i686-unknown-linux-gnu/a3sql_x86.so a3sql.so
           fi
-          # a3sql.dll (Windows 32-bit) — already renamed by upstream job
-          if [ -f extension/target/release/a3sql_x86.dll ]; then
-            cp extension/target/release/a3sql_x86.dll a3sql.dll
+          # a3sql.dll (Windows 32-bit)
+          if [ -f extension/target/release/a3sql-i686-pc-windows-gnu/a3sql_x86.dll ]; then
+            cp extension/target/release/a3sql-i686-pc-windows-gnu/a3sql_x86.dll a3sql.dll
           fi
           ls -la a3sql*.so a3sql*.dll 2>/dev/null || echo "(no extension binaries present)"
       - name: SQL smoke test against real binary
