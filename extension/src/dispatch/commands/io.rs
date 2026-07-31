@@ -13,7 +13,10 @@ use crate::engine::error::{error_response, ok_response, ErrorCode};
 fn safe_data_path(filename: &str) -> Result<std::path::PathBuf, String> {
     // ponytail: global data_dir lock; per-account dirs if multi-tenant needed
     let p = Path::new(filename);
-    if p.is_absolute() {
+    // `has_root()` catches Windows root-relative paths like `/foo` or `\foo`
+    // that `is_absolute()` misses (no drive prefix) — those still escape the
+    // data dir when joined. On Unix the two are equivalent.
+    if p.is_absolute() || p.has_root() {
         return Err(error_response(ErrorCode::Io, "Absolute paths are not allowed"));
     }
     for component in p.components() {
@@ -229,5 +232,53 @@ pub(crate) fn handle_export_to_file(db: &engine::Database, trimmed: &str, args: 
     match std::fs::write(&path, &data) {
         Ok(()) => ok_response(&format!("\"Exported to '{}'\"", path_display)),
         Err(e) => error_response(ErrorCode::Io, &format!("Write failed: {}", e)),
+    }
+}
+
+// ── Tests ────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn err_msg(r: Result<std::path::PathBuf, String>) -> String {
+        match r {
+            Ok(_) => "OK".to_string(),
+            Err(e) => e,
+        }
+    }
+
+    #[test]
+    fn rejects_absolute_paths() {
+        assert!(err_msg(safe_data_path("/etc/passwd")).contains("Absolute paths"));
+        #[cfg(windows)]
+        assert!(err_msg(safe_data_path("C:\\windows\\system32\\evil.dll")).contains("Absolute paths"));
+    }
+
+    #[test]
+    fn rejects_root_relative_paths() {
+        // Windows treats `/foo` / `\foo` as root-relative (root, no drive
+        // prefix) — `is_absolute()` alone misses these, so the data dir can
+        // be escaped. `has_root()` catches them on both platforms.
+        assert!(err_msg(safe_data_path("/tmp/escape.sql")).contains("Absolute paths"));
+        #[cfg(windows)]
+        assert!(err_msg(safe_data_path("\\tmp\\escape.sql")).contains("Absolute paths"));
+    }
+
+    #[test]
+    fn rejects_parent_dir_and_tilde() {
+        assert!(err_msg(safe_data_path("../evil.sql")).contains("'..'"));
+        assert!(err_msg(safe_data_path("sub/../../evil.sql")).contains("'..'"));
+        assert!(err_msg(safe_data_path("~/evil.sql")).contains("'~'"));
+    }
+
+    #[test]
+    fn accepts_relative_paths() {
+        let r = safe_data_path("a3sql.bin");
+        assert!(r.is_ok(), "expected OK, got {}", err_msg(r));
+        let r = safe_data_path("subdir/a3sql.bin");
+        assert!(r.is_ok(), "expected OK, got {}", err_msg(r));
+        // cleanup side effects from the accepted cases
+        let _ = std::fs::remove_dir_all(CONFIG.data_dir());
     }
 }
