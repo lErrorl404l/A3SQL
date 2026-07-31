@@ -35,7 +35,7 @@ thread_local! {
 /// Prefer `dispatch_inner` for new code — it takes an explicit `&mut Database`
 /// handle so callers control lock duration.
 pub fn dispatch(input: &str, args: &[&str]) -> String {
-    let mut db = crate::ffi::DB.lock().unwrap();
+    let mut db = crate::ffi::DB.lock().unwrap_or_else(|e| e.into_inner());
     dispatch_inner(&mut db, input, args)
 }
 

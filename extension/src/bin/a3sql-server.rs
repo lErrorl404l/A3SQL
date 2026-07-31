@@ -15,6 +15,24 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 fn main() {
+    // Replace the default panic hook: panics recovered by the catch_unwind
+    // barriers still trigger the hook, and the default "thread 'main'
+    // panicked at ... / run with RUST_BACKTRACE" noise is not a clean
+    // operator-facing signal. Keep the message + location for debugging.
+    std::panic::set_hook(Box::new(|info| {
+        let msg = info
+            .payload()
+            .downcast_ref::<&str>()
+            .map(|s| (*s).to_string())
+            .or_else(|| info.payload().downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "unknown panic payload".to_string());
+        let loc = info
+            .location()
+            .map(|l| format!(" at {}:{}", l.file(), l.line()))
+            .unwrap_or_default();
+        eprintln!("[a3sql] internal error: {}{}", msg, loc);
+    }));
+
     let args: Vec<String> = std::env::args().collect();
     let mut port = 33306u16;
     let mut bind = "127.0.0.1".to_string();
@@ -135,7 +153,11 @@ fn repl(running: &AtomicBool) {
             }
         }
 
-        let result = a3sql::dispatch(trimmed, &[]);
+        // Panic barrier: a panic in dispatch must not abort the REPL. Respond
+        // with a clean internal error and keep reading lines. The fixed
+        // response leaks no panic message or backtrace to the console.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| a3sql::dispatch(trimmed, &[])))
+            .unwrap_or_else(|_| "[-1,\"ERR_INTERNAL\",\"Command failed\"]".to_string());
         println!("{}", result);
     }
 }

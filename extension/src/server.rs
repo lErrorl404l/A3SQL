@@ -10,6 +10,7 @@
 //! threat model: SQF already owns the process and its memory.
 
 use crate::dispatch;
+use crate::engine::error::{error_response, ErrorCode};
 use crate::ffi::{CREDENTIALS, LISTENER};
 
 /// Serve a single TCP client connection.
@@ -62,8 +63,17 @@ fn serve_client(stream: std::net::TcpStream) {
             }
             continue;
         }
-        let mut db = crate::ffi::DB.lock().unwrap();
-        let result = dispatch::dispatch_inner(&mut db, trimmed, &[]);
+        // Panic barrier: a panic in dispatch (e.g. an engine bug like integer
+        // div-by-zero in SQF_EVAL) must not escape the per-statement loop.
+        // The DB lock is taken inside the closure so its guard is released
+        // during the unwind; the poisoned-tolerant lock on later iterations
+        // keeps the connection usable. The fixed response leaks no panic
+        // message or backtrace to the client.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut db = crate::ffi::DB.lock().unwrap_or_else(|e| e.into_inner());
+            dispatch::dispatch_inner(&mut db, trimmed, &[])
+        }))
+        .unwrap_or_else(|_| error_response(ErrorCode::Internal, "Command failed"));
         let _ = writeln!(stream, "{}", result);
     }
 }
@@ -77,7 +87,7 @@ pub fn start_server(bind: &str, port: u16, db_path: Option<&str>) -> Result<Stri
 
     if let Some(path) = db_path {
         // Load existing database if file exists
-        let mut db = crate::ffi::DB.lock().unwrap();
+        let mut db = crate::ffi::DB.lock().unwrap_or_else(|e| e.into_inner());
         let r = dispatch::dispatch_inner(&mut db, &format!("load {}", path), &[]);
         eprintln!("[a3sql-server] Loaded from {}: {}", path, r);
     }
@@ -89,7 +99,7 @@ pub fn start_server(bind: &str, port: u16, db_path: Option<&str>) -> Result<Stri
         let path = path.to_string();
         std::thread::spawn(move || loop {
             std::thread::sleep(std::time::Duration::from_secs(30));
-            let mut db = crate::ffi::DB.lock().unwrap();
+            let mut db = crate::ffi::DB.lock().unwrap_or_else(|e| e.into_inner());
             let r = dispatch::dispatch_inner(&mut db, &format!("save {}", path), &[]);
             if r.contains("ERR") {
                 eprintln!("[a3sql-server] auto-save: {}", r);
@@ -126,4 +136,93 @@ fn try_bind(addr: &str) -> Result<std::net::TcpListener, String> {
         }
     }
     Err(last_err)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::serve_client;
+    use std::io::{BufRead, BufReader, Write};
+    use std::net::TcpListener;
+
+    /// Drive a real `serve_client` connection with one line per statement.
+    /// Half-closes the write side after sending (so the server loop sees EOF),
+    /// then collects every response line until the server closes the
+    /// connection. `join().unwrap()` re-propagates any panic from the server
+    /// thread into the test — so a crashing dispatch fails the test with the
+    /// original panic message.
+    fn serve_lines(lines: &[&str]) -> Vec<String> {
+        use std::net::Shutdown;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            serve_client(stream);
+        });
+        let client = std::net::TcpStream::connect(addr).unwrap();
+        let mut writer = client.try_clone().unwrap();
+        for line in lines {
+            writeln!(writer, "{}", line).unwrap();
+        }
+        writer.flush().unwrap();
+        client.shutdown(Shutdown::Write).unwrap(); // server loop reads EOF
+        drop(writer);
+
+        let mut reader = BufReader::new(client);
+        let mut responses = Vec::new();
+        let mut buf = String::new();
+        while reader.read_line(&mut buf).unwrap() > 0 {
+            responses.push(buf.trim().to_string());
+            buf.clear();
+        }
+        server.join().unwrap();
+        responses
+    }
+
+    fn is_envelope(resp: &str) -> bool {
+        resp.starts_with("[0,\"OK\",") || resp.starts_with("[-1,\"")
+    }
+
+    #[test]
+    fn adversarial_inputs_return_envelopes_and_connection_survives() {
+        let mut cases = vec![
+            "SELECT admin_xor_key FROM auth_keys",
+            "SELECT 'abc",
+            "'",
+            "''''''",
+            "SELECT * FROM no_such_table",
+            "SELECT ((((((((1))))))))",
+            "NULL",
+            "SELECT SQF_EVAL('1/0')",
+            "SELECT SQF_EVAL('%0')",
+        ];
+        let big = format!("SELECT {}", "1".repeat(100_000));
+        cases.push(big.as_str());
+
+        let responses = serve_lines(&cases);
+        assert_eq!(
+            responses.len(),
+            cases.len(),
+            "server must answer every line without dying; got: {:?}",
+            responses
+        );
+        for (input, resp) in cases.iter().zip(&responses) {
+            assert!(
+                is_envelope(resp),
+                "input {:?} produced non-envelope response: {}",
+                input,
+                resp
+            );
+        }
+        assert_eq!(
+            responses[7], "[-1,\"ERR_INTERNAL\",\"Command failed\"]",
+            "SELECT SQF_EVAL('1/0') must map to a clean internal error, not a crash"
+        );
+    }
+
+    #[test]
+    fn empty_line_is_skipped_without_response() {
+        let responses = serve_lines(&["", "PING"]);
+        assert_eq!(responses, vec!["[0,\"OK\",\"PONG\"]"]);
+    }
 }

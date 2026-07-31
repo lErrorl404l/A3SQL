@@ -131,7 +131,7 @@ pub fn build_extension() -> Extension {
 /// - `payload[0]` — SQL input string
 /// - `payload[1..]` — bind parameter strings (substituted for `$1`, `$2`, ...)
 fn sql_handler(payload: Vec<String>) -> String {
-    let mut db = DB.lock().unwrap();
+    let mut db = DB.lock().unwrap_or_else(|e| e.into_inner());
     if payload.is_empty() {
         return dispatch::dispatch_inner(&mut db, "", &[]);
     }
