@@ -216,6 +216,7 @@ mod tests {
             primary_key: true,
             not_null: false,
             default: None,
+            default_expr: None,
             auto_increment: false,
             unique: false,
         }];
@@ -227,6 +228,7 @@ mod tests {
             primary_key: false,
             not_null: false,
             default: None,
+            default_expr: None,
             auto_increment: false,
             unique: false,
         }];
@@ -312,6 +314,7 @@ mod tests {
             primary_key: true,
             not_null: false,
             default: None,
+            default_expr: None,
             auto_increment: false,
             unique: false,
         }];

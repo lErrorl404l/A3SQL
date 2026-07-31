@@ -35,6 +35,7 @@ fn bulk_insert_500() {
             primary_key: false,
             not_null: false,
             default: None,
+            default_expr: None,
             auto_increment: false,
             unique: false,
         },
@@ -44,6 +45,7 @@ fn bulk_insert_500() {
             primary_key: false,
             not_null: false,
             default: None,
+            default_expr: None,
             auto_increment: false,
             unique: false,
         },
@@ -276,4 +278,44 @@ fn composite_primary_key_enforced() {
     assert!(parse_and_exec("INSERT INTO ps VALUES ('u1', 'squad', 'alpha')", &mut db).is_ok());
     let sel = parse_and_exec("SELECT count(*) FROM ps", &mut db).unwrap();
     assert!(sel.contains('2'), "exactly 2 rows: {}", sel);
+}
+
+#[test]
+fn default_function_expression_evaluated_at_insert() {
+    // Bug regression: `DEFAULT datetime('now')` was rejected at CREATE
+    // ("DEFAULT only supports literal values") — every real mod schema uses
+    // timestamp defaults.
+    let mut db = Database::new();
+    let r = parse_and_exec(
+        "CREATE TABLE t (id INTEGER PRIMARY KEY, created_at TEXT DEFAULT datetime('now'))",
+        &mut db,
+    );
+    assert!(r.is_ok(), "create with fn default: {:?}", r);
+    let r2 = parse_and_exec("INSERT INTO t (id) VALUES (1)", &mut db);
+    assert!(r2.is_ok(), "insert: {:?}", r2);
+    let sel = parse_and_exec("SELECT created_at FROM t", &mut db).unwrap();
+    // 'YYYY-MM-DD HH:MM:SS'
+    assert!(sel.len() >= 19, "timestamp default: {}", sel);
+    // literal default still works alongside
+    let r3 = parse_and_exec("CREATE TABLE t2 (id INTEGER PRIMARY KEY, flag INT DEFAULT 0)", &mut db);
+    assert!(r3.is_ok(), "create with literal default: {:?}", r3);
+    let r4 = parse_and_exec("INSERT INTO t2 (id) VALUES (1)", &mut db);
+    assert!(r4.is_ok(), "insert literal default: {:?}", r4);
+    let sel2 = parse_and_exec("SELECT flag FROM t2", &mut db).unwrap();
+    assert!(sel2.contains("0"), "literal default applied: {}", sel2);
+}
+
+#[test]
+fn insert_or_replace_updates_in_place() {
+    // Bug regression: INSERT OR REPLACE did delete+reinsert (O(n) per op);
+    // replace_by_pk overwrites in place and keeps the row count stable.
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE t (id TEXT PRIMARY KEY, v TEXT)", &mut db).unwrap();
+    parse_and_exec("INSERT INTO t VALUES ('a', 'old')", &mut db).unwrap();
+    let r = parse_and_exec("INSERT OR REPLACE INTO t VALUES ('a', 'new')", &mut db);
+    assert!(r.is_ok(), "replace: {:?}", r);
+    let sel = parse_and_exec("SELECT v FROM t WHERE id = 'a'", &mut db).unwrap();
+    assert!(sel.contains("new"), "replaced in place: {}", sel);
+    let cnt = parse_and_exec("SELECT count(*) FROM t", &mut db).unwrap();
+    assert!(cnt.contains("1"), "count unchanged: {}", cnt);
 }

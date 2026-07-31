@@ -10,7 +10,7 @@ use super::super::functions::eval::{eval_expr, is_truthy};
 use super::super::stmts::select::joins::resolve_table_from_joins;
 use super::super::value::DbValue;
 use crate::engine::trigger::{fire_triggers, fire_triggers_before};
-use sqlparser::ast::{Expr, ReferentialAction, Update};
+use sqlparser::ast::{BinaryOperator, Expr, Ident, ReferentialAction, Update};
 
 pub(crate) fn exec_update(upd: &Update, db: &mut Database) -> Result<String, EngineError> {
     let table_name = resolve_table_from_joins(&upd.table)?;
@@ -20,21 +20,56 @@ pub(crate) fn exec_update(upd: &Update, db: &mut Database) -> Result<String, Eng
         .map_err(|_| EngineError::TableNotFound(table_name.clone()))?;
 
     let where_expr = upd.selection.as_ref();
-
-    // Collect row indices to update
-    let indices: Vec<usize> = {
-        let mut idxs = Vec::new();
-        for (i, row) in table.rows.iter().enumerate() {
-            let matches = match where_expr {
-                Some(expr) => is_truthy(&eval_expr(expr, row, &table.col_index)?),
-                None => true,
-            };
-            if matches {
-                idxs.push(i);
+    // Fast path: `WHERE pk_col = literal` → O(1) lookup via pk_row_index
+    // instead of scanning every row. This is the dominant UPDATE shape for
+    // mods (per-row stat increments, armaos file edits, admin commands).
+    let mut indices: Vec<usize> = Vec::new();
+    if let Some(expr) = where_expr {
+        let mut fast_path = false;
+        if let Expr::BinaryOp { left, right, op } = expr {
+            if matches!(op, BinaryOperator::Eq) {
+                // One side must be a column identifier, the other a literal
+                let (ident_opt, lit_opt): (Option<&Ident>, Option<&Expr>) = match (left.as_ref(), right.as_ref()) {
+                    (Expr::Identifier(i), v @ Expr::Value(_)) => (Some(i), Some(v)),
+                    (v @ Expr::Value(_), Expr::Identifier(i)) => (Some(i), Some(v)),
+                    _ => (None, None),
+                };
+                if let (Some(ident), Some(v)) = (ident_opt, lit_opt) {
+                    if let Ok(lit) = crate::engine::functions::eval::eval_literal_expr(v) {
+                        let col_name = ident.value.to_lowercase();
+                        if let Some(&ci) = table.col_index.get(&col_name) {
+                            if table.columns[ci].primary_key {
+                                // Build a full row of Nulls with the literal at
+                                // the PK column so pk_key formats correctly
+                                // (handles PK columns at any position).
+                                let mut key_row: Vec<DbValue> =
+                                    (0..table.columns.len()).map(|_| DbValue::Null).collect();
+                                key_row[ci] = lit;
+                                if let Some(key) = table.pk_key(&key_row) {
+                                    fast_path = true;
+                                    if let Some(idx) = table.pk_row_index.get(&key).copied() {
+                                        indices.push(idx);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
-        idxs
-    };
+        if !fast_path {
+            // Fallback: full scan
+            for (i, row) in table.rows.iter().enumerate() {
+                let matches = is_truthy(&eval_expr(expr, row, &table.col_index)?);
+                if matches {
+                    indices.push(i);
+                }
+            }
+        }
+    } else {
+        // No WHERE: update all rows
+        indices.extend(0..table.rows.len());
+    }
 
     // Pre-resolve column indices to avoid borrow conflict
     let assign_indices: Vec<(usize, &Expr)> = upd

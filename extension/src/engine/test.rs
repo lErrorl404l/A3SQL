@@ -34,6 +34,7 @@ pub(crate) fn create_table(name: &str, columns: &[(&str, ColumnType, bool)]) -> 
             primary_key: *pk,
             not_null: false,
             default: None,
+            default_expr: None,
             auto_increment: false,
             unique: false,
         })

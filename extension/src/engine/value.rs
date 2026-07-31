@@ -41,7 +41,11 @@ pub(crate) struct Column {
     pub dtype: ColumnType,
     pub primary_key: bool,
     pub not_null: bool,
+    /// Static literal default (e.g. `DEFAULT 0`, `DEFAULT 'x'`).
     pub default: Option<DbValue>,
+    /// Non-literal default expression (e.g. `DEFAULT datetime('now')`),
+    /// evaluated at INSERT time. Takes precedence over `default`.
+    pub default_expr: Option<sqlparser::ast::Expr>,
     pub auto_increment: bool,
     pub unique: bool,
 }

@@ -35,6 +35,7 @@ pub(crate) fn exec_create_table(def: &sqlparser::ast::CreateTable, db: &mut Data
         let mut is_not_null = false;
         let mut is_unique = false;
         let mut default_val: Option<DbValue> = None;
+        let mut default_expr: Option<Expr> = None;
         let mut auto_inc = false;
         for opt_def in &col_def.options {
             match &opt_def.option {
@@ -53,7 +54,9 @@ pub(crate) fn exec_create_table(def: &sqlparser::ast::CreateTable, db: &mut Data
                 }
                 ColumnOption::Default(expression) => match expression {
                     Expr::Value(v) => default_val = Some(sql_val_to_db(&v.value)),
-                    _ => return Err(EngineError::Parse("DEFAULT only supports literal values".into())),
+                    // Non-literal default (e.g. datetime('now')) — evaluate at
+                    // INSERT time, SQLite semantics
+                    other => default_expr = Some(other.clone()),
                 },
                 _ => {}
             }
@@ -79,6 +82,7 @@ pub(crate) fn exec_create_table(def: &sqlparser::ast::CreateTable, db: &mut Data
             primary_key: is_pk,
             not_null: is_not_null,
             default: default_val,
+            default_expr,
             auto_increment: auto_inc,
             unique: is_unique,
         });
@@ -225,6 +229,7 @@ pub(crate) fn exec_create_table_as(
             primary_key: false,
             not_null: false,
             default: None,
+            default_expr: None,
             auto_increment: false,
             unique: false,
         });
@@ -265,6 +270,7 @@ pub(crate) fn exec_create_sequence(
         primary_key: false,
         not_null: false,
         default: Some(DbValue::Int(0)),
+        default_expr: None,
         auto_increment: false,
         unique: false,
     }];
@@ -379,6 +385,7 @@ pub(crate) fn exec_create_virtual_table(
             primary_key: false,
             not_null: false,
             default: None,
+            default_expr: None,
             auto_increment: false,
             unique: false,
         })

@@ -51,6 +51,7 @@ pub(crate) fn import_csv(table_name: &str, csv_str: &str, db: &mut Database) -> 
             primary_key: false,
             not_null: false,
             default: None,
+            default_expr: None,
             auto_increment: false,
             unique: false,
         })

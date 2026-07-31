@@ -822,6 +822,7 @@ pub(crate) fn materialize_view(name: &str, db: &mut Database) -> Result<(), Engi
                     primary_key: false,
                     not_null: false,
                     default: None,
+                    default_expr: None,
                     auto_increment: false,
                     unique: false,
                 }

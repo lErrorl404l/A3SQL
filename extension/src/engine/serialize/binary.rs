@@ -243,6 +243,7 @@ fn read_bin_table(data: &[u8], mut pos: usize, db: &mut Database) -> Result<usiz
             primary_key,
             not_null: false,
             default: None,
+            default_expr: None,
             auto_increment: false,
             unique: false,
         });

@@ -28,9 +28,13 @@ impl Table {
 
         // Coerce, apply defaults, check NOT NULL, check types
         for (i, val) in row.iter_mut().enumerate() {
-            // Apply default if value is NULL and a default exists
+            // Apply default if value is NULL and a default exists. A
+            // non-literal default (DEFAULT datetime('now')) is evaluated at
+            // INSERT time; a literal default is cloned directly.
             if matches!(val, DbValue::Null) {
-                if let Some(ref def) = self.columns[i].default {
+                if let Some(expr) = &self.columns[i].default_expr {
+                    *val = crate::engine::functions::eval::eval_literal_expr(expr)?;
+                } else if let Some(ref def) = self.columns[i].default {
                     *val = def.clone();
                 }
             }
@@ -71,7 +75,8 @@ impl Table {
 
         // All constraints pass — commit the keys
         if let Some(key) = pk {
-            self.pk_set.insert(key);
+            self.pk_set.insert(key.clone());
+            self.pk_row_index.insert(key, self.rows.len());
         }
         for key in uniq {
             self.unique_set.insert(key);
@@ -139,15 +144,44 @@ impl Table {
         }
     }
 
-    /// Delete a row by primary key value. Returns true if a row was removed.
-    pub fn delete_by_pk(&mut self, pk_val: &DbValue) -> bool {
-        if let Some(pk_col) = self.columns.iter().position(|c| c.primary_key) {
-            let before = self.rows.len();
-            self.delete(|row| &row[pk_col] == pk_val);
-            before > self.rows.len()
-        } else {
-            false
+    /// Replace a row in place by primary key (INSERT OR REPLACE semantics).
+    /// O(1) via pk_row_index — no Vec::remove shifting. Returns true if the
+    /// row existed and was replaced, false if it did not exist.
+    pub fn replace_by_pk(&mut self, full_row: Vec<DbValue>) -> Result<bool, EngineError> {
+        let Some(pk_col) = self.columns.iter().position(|c| c.primary_key) else {
+            return Err(EngineError::Exec("REPLACE requires a primary key column".into()));
+        };
+        let pk_val = &full_row[pk_col];
+        let mut key_row: Vec<DbValue> = (0..self.columns.len()).map(|_| DbValue::Null).collect();
+        key_row[pk_col] = pk_val.clone();
+        if let Some(key) = self.pk_key(&key_row) {
+            if let Some(&idx) = self.pk_row_index.get(&key) {
+                // Remove old UNIQUE keys for the replaced row, then re-add
+                // for the new values (PK is unchanged so pk maps stay valid)
+                for ukey in Self::unique_keys(&self.columns, &self.rows[idx]) {
+                    self.unique_set.remove(&ukey);
+                }
+                self.rows[idx] = full_row;
+                self.unique_set
+                    .extend(Self::unique_keys(&self.columns, &self.rows[idx]));
+                return Ok(true);
+            }
         }
+        // Row didn't exist — normal insert (validates + maintains indexes)
+        self.insert(full_row)?;
+        Ok(false)
+    }
+
+    /// Find the row index for a primary key value (O(1) via pk_row_index).
+    pub fn find_by_pk(&self, pk_val: &DbValue) -> Option<usize> {
+        if let Some(pk_col) = self.columns.iter().position(|c| c.primary_key) {
+            let mut key_row: Vec<DbValue> = (0..self.columns.len()).map(|_| DbValue::Null).collect();
+            key_row[pk_col] = pk_val.clone();
+            if let Some(key) = self.pk_key(&key_row) {
+                return self.pk_row_index.get(&key).copied();
+            }
+        }
+        None
     }
 
     /// Delete rows matching a predicate. Returns count of deleted rows.
@@ -163,6 +197,7 @@ impl Table {
                 // Remove PK key
                 if let Some(key) = Self::pk_key_static(&self.columns, &row) {
                     self.pk_set.remove(&key);
+                    self.pk_row_index.remove(&key);
                 }
                 // Remove UNIQUE keys
                 for key in Self::unique_keys(&self.columns, &row) {
@@ -177,8 +212,8 @@ impl Table {
         }
 
         // Rebuild indices since row indices have shifted
-        // (simplest approach: clear and rebuild)
-        self.rebuild_indices();
+        // (simplest approach: clear and rebuild — also refreshes pk_row_index)
+        self.rebuild_index();
 
         deleted
     }
@@ -235,9 +270,11 @@ impl Table {
         if self.columns[col_idx].primary_key {
             if let Some(ref ok) = old_key {
                 self.pk_set.remove(ok);
+                self.pk_row_index.remove(ok);
             }
             if let Some(new_k) = self.pk_key(&self.rows[row_idx]) {
-                self.pk_set.insert(new_k);
+                self.pk_set.insert(new_k.clone());
+                self.pk_row_index.insert(new_k, row_idx);
             }
         }
 

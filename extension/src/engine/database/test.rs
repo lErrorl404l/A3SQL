@@ -10,6 +10,7 @@ fn make_db() -> Database {
             primary_key: true,
             not_null: false,
             default: None,
+            default_expr: None,
             auto_increment: false,
             unique: false,
         },
@@ -19,6 +20,7 @@ fn make_db() -> Database {
             primary_key: false,
             not_null: false,
             default: None,
+            default_expr: None,
             auto_increment: false,
             unique: false,
         },
@@ -51,6 +53,7 @@ fn duplicate_table() {
         primary_key: false,
         not_null: false,
         default: None,
+        default_expr: None,
         auto_increment: false,
         unique: false,
     }];
@@ -67,6 +70,7 @@ fn list_tables() {
         primary_key: false,
         not_null: false,
         default: None,
+        default_expr: None,
         auto_increment: false,
         unique: false,
     }];
@@ -104,6 +108,7 @@ fn view_table_name_conflict() {
         primary_key: false,
         not_null: false,
         default: None,
+        default_expr: None,
         auto_increment: false,
         unique: false,
     }];

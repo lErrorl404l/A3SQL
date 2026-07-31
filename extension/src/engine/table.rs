@@ -25,6 +25,8 @@ pub(crate) struct Table {
     pub(crate) col_index: HashMap<String, usize>,
     /// Set of primary key values for uniqueness enforcement.
     pub(crate) pk_set: HashSet<String>,
+    /// PK value → row index, for O(1) UPDATE/DELETE row lookup.
+    pub(crate) pk_row_index: HashMap<String, usize>,
     /// Unique-column keys for UNIQUE enforcement: "col_idx|value".
     pub(crate) unique_set: HashSet<String>,
     /// Secondary indices (BTREE, TRIGRAM) created via CREATE INDEX.
@@ -58,6 +60,7 @@ impl Table {
             rows: Vec::new(),
             col_index,
             pk_set: HashSet::new(),
+            pk_row_index: HashMap::new(),
             unique_set: HashSet::new(),
             indices: Vec::new(),
             next_auto_inc: 1,
@@ -70,10 +73,12 @@ impl Table {
     /// Rebuild pk_set and secondary indices after row mutation.
     pub fn rebuild_index(&mut self) {
         self.pk_set.clear();
+        self.pk_row_index.clear();
         self.unique_set.clear();
-        for row in &self.rows {
+        for (idx, row) in self.rows.iter().enumerate() {
             if let Some(key) = self.pk_key(row) {
-                self.pk_set.insert(key);
+                self.pk_set.insert(key.clone());
+                self.pk_row_index.insert(key, idx);
             }
             for key in Self::unique_keys(&self.columns, row) {
                 self.unique_set.insert(key);
@@ -173,6 +178,7 @@ mod tests {
                 primary_key: true,
                 not_null: false,
                 default: None,
+                default_expr: None,
                 auto_increment: false,
                 unique: false,
             },
@@ -182,6 +188,7 @@ mod tests {
                 primary_key: false,
                 not_null: false,
                 default: None,
+                default_expr: None,
                 auto_increment: false,
                 unique: false,
             },
@@ -191,6 +198,7 @@ mod tests {
                 primary_key: false,
                 not_null: false,
                 default: None,
+                default_expr: None,
                 auto_increment: false,
                 unique: false,
             },
@@ -219,6 +227,7 @@ mod tests {
             primary_key: false,
             not_null: false,
             default: None,
+            default_expr: None,
             auto_increment: false,
             unique: false,
         }];
@@ -239,6 +248,7 @@ mod tests {
             primary_key: true,
             not_null: false,
             default: None,
+            default_expr: None,
             auto_increment: false,
             unique: false,
         }];

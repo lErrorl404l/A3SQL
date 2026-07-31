@@ -200,16 +200,10 @@ pub(crate) fn exec_insert(ins: &Insert, db: &mut Database) -> Result<String, Eng
             }
             // INSERT OR REPLACE / INSERT OR REPLACE: delete and re-insert
             Err(ref e) if is_replace && matches!(e, EngineError::DuplicateKey(_)) => {
-                // REPLACE: find the old row by PK and replace it
-                if let Some(pk_col) = table.columns.iter().position(|c| c.primary_key) {
-                    let pk_val = &full_row[pk_col];
-                    table.delete_by_pk(pk_val);
-                    inserted_rows.push(full_row.clone());
-                    table.insert(full_row)?;
-                    inserted += 1;
-                } else {
-                    return Err(EngineError::DuplicateKey(e.to_string()));
-                }
+                // REPLACE: overwrite the existing row in place (O(1))
+                table.replace_by_pk(full_row.clone())?;
+                inserted_rows.push(full_row);
+                inserted += 1;
             }
             Err(ref e) if matches!(e, EngineError::DuplicateKey(_)) && ins.on.is_some() => {
                 // UPSERT: ON CONFLICT DO UPDATE or ON CONFLICT DO NOTHING
@@ -223,7 +217,7 @@ pub(crate) fn exec_insert(ins: &Insert, db: &mut Database) -> Result<String, Eng
                                 // Apply SET assignments to the existing row
                                 if let Some(pk_col) = table.columns.iter().position(|c| c.primary_key) {
                                     let pk_val = &full_row[pk_col];
-                                    if let Some(row_idx) = table.rows.iter().position(|r| &r[pk_col] == pk_val) {
+                                    if let Some(row_idx) = table.find_by_pk(pk_val) {
                                         for assign in &du.assignments {
                                             if let sqlparser::ast::AssignmentTarget::ColumnName(name) = &assign.target {
                                                 let col_name = name.to_string().to_lowercase();
@@ -242,11 +236,13 @@ pub(crate) fn exec_insert(ins: &Insert, db: &mut Database) -> Result<String, Eng
                                                                 col_name
                                                             ))
                                                         })?;
-                                                    table.rows[row_idx][ci] = new_val;
+                                                    // update_cell maintains pk_set,
+                                                    // pk_row_index, unique_set, and
+                                                    // secondary indices for this column
+                                                    table.update_cell(row_idx, ci, new_val);
                                                 }
                                             }
                                         }
-                                        table.rebuild_index();
                                         inserted += 1;
                                     }
                                 }
