@@ -227,17 +227,32 @@ pub(crate) fn dispatch_inner(db: &mut engine::Database, input: &str, args: &[&st
     }
 
     // ── Query cursor — iterate large result sets ───────────────────────
+    // Vanilla ARRAY form `["cursor create", [name, sql]]` arrives as
+    // function="cursor create" with args=[name, sql]; rejoin into the
+    // space-separated shape the handlers parse.
+    if lowered == "cursor create" && !args.is_empty() {
+        return commands::handle_cursor_create(db, &format!("cursor create {}", args.join(" ")));
+    }
     if lowered.strip_prefix("cursor create ").is_some() {
         return commands::handle_cursor_create(db, trimmed);
     }
+    if lowered == "cursor fetch" && !args.is_empty() {
+        return commands::handle_cursor_fetch(db, &format!("cursor fetch {}", args.join(" ")));
+    }
     if lowered.strip_prefix("cursor fetch ").is_some() {
         return commands::handle_cursor_fetch(db, trimmed);
+    }
+    if lowered == "cursor drop" && !args.is_empty() {
+        return commands::handle_cursor_drop(db, &format!("cursor drop {}", args.join(" ")));
     }
     if lowered.starts_with("cursor drop ") || lowered == "cursor drop" {
         return commands::handle_cursor_drop(db, trimmed);
     }
 
     // ── Prepared statements ────────────────────────────────────────────
+    if lowered == "prepare" && !args.is_empty() {
+        return commands::handle_prepare(db, &args.join(" "));
+    }
     if let Some(rest) = lowered.strip_prefix("prepare ") {
         return commands::handle_prepare(db, rest);
     }

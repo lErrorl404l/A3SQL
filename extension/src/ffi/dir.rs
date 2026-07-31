@@ -162,6 +162,26 @@ pub unsafe extern "C" fn RVExtensionVersion(output: *mut c_char, output_size: u3
     }
 }
 
+/// Write a response string into an Arma engine output buffer, bounded by
+/// `output_size - 1` bytes and null-terminated. A no-op for empty responses
+/// (leaves the buffer untouched, matching Arma's expectation of `""`).
+///
+/// # Safety
+/// `output` must be a valid, writable buffer of at least `output_size` bytes
+/// (or null, in which case nothing is written).
+unsafe fn write_output(output: *mut c_char, output_size: u32, resp: &str) {
+    let bytes = resp.as_bytes();
+    let len = bytes.len().min(output_size.saturating_sub(1) as usize);
+    if len > 0 && !output.is_null() {
+        // SAFETY: `output` is non-null and `len <= output_size - 1` guarantees
+        // the null terminator at `output.add(len)` is within the buffer.
+        unsafe {
+            std::ptr::copy_nonoverlapping(bytes.as_ptr(), output as *mut u8, len);
+            *output.add(len) = 0;
+        }
+    }
+}
+
 /// STRING callExtension STRING — compatibility entry point.
 ///
 /// The SQF wrapper uses the array form for bind params, but many call sites
@@ -179,27 +199,25 @@ pub unsafe extern "C" fn RVExtension(output: *mut c_char, output_size: u32, func
         unsafe { CStr::from_ptr(function) }.to_string_lossy()
     };
     let resp = dispatch::dispatch(&input, &[]);
-    let bytes = resp.as_bytes();
-    let len = bytes.len().min(output_size.saturating_sub(1) as usize);
-    if len > 0 && !output.is_null() {
-        // SAFETY: `output` is non-null and `len <= output_size - 1` guarantees
-        // the null terminator at `output.add(len)` is within the buffer.
-        unsafe {
-            std::ptr::copy_nonoverlapping(bytes.as_ptr(), output as *mut u8, len);
-            *output.add(len) = 0;
-        }
-    }
+    // SAFETY: `output`/`output_size` are the engine buffer contract.
+    unsafe { write_output(output, output_size, &resp) };
 }
 
 /// STRING callExtension ARRAY — main entry point.
 ///
-/// Delegates to [`arma_rs::Extension::handle_call`] for command routing. The
-/// command name is the first array element (`function`); remaining elements are
-/// passed as args to the command handler.
+/// Two call conventions are supported:
+/// - **arma-rs convention**: `"a3sql" callExtension ["sql", [_payload]]` where
+///   `_payload` is an SQF-encoded array string (`["stmt", "arg1", ...]`).
+///   Routed via [`arma_rs::Extension::handle_call`].
+/// - **Vanilla Arma convention**: `"a3sql" callExtension [cmd, [arg1, ...]]`
+///   where the first element is any command name (`save`, `load`, `prepare`,
+///   `cursor create`, ...) or a SQL statement with bind params
+///   (`[sql, [p1, p2]]`). Routed straight to [`dispatch::dispatch`], which
+///   understands every command the SQF wrapper issues.
 ///
 /// Returns arma-rs status codes:
 /// - `0` = success
-/// - `1` = command not found
+/// - `1` = command not found (arma-rs path only)
 /// - `2N` = wrong argument count (N = received count)
 /// - `9` = application error
 ///
@@ -216,19 +234,43 @@ pub unsafe extern "C" fn RVExtensionArgs(
     if output.is_null() || function.is_null() {
         return -1;
     }
-    with_extension(|ext| {
-        // SAFETY: All pointer arguments are guaranteed valid, non-null by the Arma engine contract.
-        unsafe {
-            ext.handle_call(
-                function as *mut c_char,
-                output,
-                output_size as usize,
-                Some(argv as *mut *mut i8),
-                Some(argc as i32),
-                true,
-            )
+    let function_str = unsafe { CStr::from_ptr(function) }.to_string_lossy();
+
+    // arma-rs path: only the "sql" command (SQF-encoded payload array).
+    if function_str == "sql" {
+        return with_extension(|ext| {
+            // SAFETY: All pointer arguments are guaranteed valid, non-null by the Arma engine contract.
+            unsafe {
+                ext.handle_call(
+                    function as *mut c_char,
+                    output,
+                    output_size as usize,
+                    Some(argv as *mut *mut i8),
+                    Some(argc as i32),
+                    true,
+                )
+            }
+        });
+    }
+
+    // Vanilla Arma convention: function is the command name or SQL statement,
+    // argv carries the args (bind params for SQL, operands for commands).
+    let mut args: Vec<&str> = Vec::with_capacity(argc as usize);
+    if !argv.is_null() {
+        for i in 0..argc as usize {
+            let p = unsafe { *argv.add(i) };
+            if !p.is_null() {
+                // SAFETY: `p` is a null-terminated string from the Arma engine contract.
+                if let Ok(s) = unsafe { CStr::from_ptr(p) }.to_str() {
+                    args.push(s);
+                }
+            }
         }
-    })
+    }
+    let resp = dispatch::dispatch(&function_str, &args);
+    // SAFETY: `output`/`output_size` are the engine buffer contract.
+    unsafe { write_output(output, output_size, &resp) };
+    0
 }
 
 // ── Callback registration ──────────────────────────────────────────────────
