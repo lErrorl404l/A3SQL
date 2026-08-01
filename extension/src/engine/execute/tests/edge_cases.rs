@@ -196,18 +196,26 @@ fn sqlite_date_modifiers_work() {
 fn sqlite_string_functions_work() {
     // Path B: instr/ltrim/rtrim/typeof/char/strftime/date/time
     let mut db = Database::new();
-    assert!(parse_and_exec("SELECT instr('hello', 'll')", &mut db)
-        .unwrap()
-        .contains('3'));
-    assert!(parse_and_exec("SELECT ltrim('  x')", &mut db)
-        .unwrap()
-        .contains("\"x\""));
-    assert!(parse_and_exec("SELECT rtrim('x  ')", &mut db)
-        .unwrap()
-        .contains("\"x\""));
-    assert!(parse_and_exec("SELECT typeof(42)", &mut db)
-        .unwrap()
-        .contains("integer"));
+    assert!(
+        parse_and_exec("SELECT instr('hello', 'll')", &mut db)
+            .unwrap()
+            .contains('3')
+    );
+    assert!(
+        parse_and_exec("SELECT ltrim('  x')", &mut db)
+            .unwrap()
+            .contains("\"x\"")
+    );
+    assert!(
+        parse_and_exec("SELECT rtrim('x  ')", &mut db)
+            .unwrap()
+            .contains("\"x\"")
+    );
+    assert!(
+        parse_and_exec("SELECT typeof(42)", &mut db)
+            .unwrap()
+            .contains("integer")
+    );
     assert!(parse_and_exec("SELECT char(65, 66)", &mut db).unwrap().contains("AB"));
     assert!(parse_and_exec("SELECT strftime('%Y', 'now')", &mut db).is_ok());
     assert!(parse_and_exec("SELECT date('now')", &mut db).is_ok());
@@ -516,4 +524,155 @@ fn subquery_result_is_cached_and_invalidated_per_statement() {
     parse_and_exec("UPDATE kv SET n = 42 WHERE k = 'k00000'", &mut db).unwrap();
     let r2 = parse_and_exec("SELECT COUNT(*) FROM kv WHERE n = (SELECT 42)", &mut db).unwrap();
     assert!(r2.contains("2"), "stale cache would give 1: {}", r2);
+}
+
+// ── M0 baseline red regressions ─────────────────────────────────────────
+// These tests assert CORRECT behavior the engine violates on HEAD (8599a5b).
+// They are the acceptance criteria for the fix milestones — each must fail
+// on HEAD for the documented reason, not for a typo. Do not fix the engine
+// here; the tests stay red until the corresponding bug is fixed.
+#[test]
+fn t1_btree_index_int_ordering_negatives() {
+    // Bug T1: index.rs encode_key shifts ints with n.wrapping_add(i64::MAX)
+    // then formats with {:020}. For every positive n, n + i64::MAX overflows
+    // i64 and wraps to a negative number that prints with a leading '-' — so
+    // in the BTreeMap the keys for v=3 and v=100 sort BEFORE the keys for
+    // v=-5 and v=-1. The index's ordered entries are scrambled: numeric order
+    // must be [-5, -1, 0, 3, 100]. (Range queries are not wired into the
+    // executor yet, so this asserts the encoding order directly — the fix
+    // milestone makes the index walkable in true numeric order.)
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE t (id INT PRIMARY KEY, v INT)", &mut db).unwrap();
+    parse_and_exec("CREATE INDEX idx_v ON t(v)", &mut db).unwrap();
+    parse_and_exec(
+        "INSERT INTO t VALUES (1, -5), (2, -1), (3, 0), (4, 3), (5, 100)",
+        &mut db,
+    )
+    .unwrap();
+    let table = db.get_table("t").unwrap();
+    let idx = table.find_index("v", crate::engine::index::IndexType::BTree).unwrap();
+    let ordered = match idx {
+        crate::engine::table::IndexImpl::BTree(b) => b.all_entries(),
+        crate::engine::table::IndexImpl::Trigram(_) => unreachable!(),
+    };
+    assert_eq!(
+        ordered,
+        vec![0, 1, 2, 3, 4],
+        "bug T1: btree int encode (n.wrapping_add(i64::MAX) + {{:020}}) mis-orders negatives — \
+         entries must walk in numeric order [-5,-1,0,3,100] i.e. row ids [0,1,2,3,4]"
+    );
+}
+
+#[test]
+fn t2_pk_key_pipe_collision_composite() {
+    // Bug T2: schema.rs pk_key_static joins PK column Displays with an
+    // unescaped '|' separator. String Display wraps values in quotes, so
+    // plain pipes don't collide — but separator chars INSIDE a value do:
+    // ('a'|'b', 'c') and ('a', 'b'|'c') both encode to "'a'|'b'|'c'" and the
+    // second row is wrongly rejected as DuplicateKey. Distinct composite
+    // keys must both be insertable.
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE t (a TEXT, b TEXT, PRIMARY KEY (a, b))", &mut db).unwrap();
+    parse_and_exec("INSERT INTO t VALUES ('a|b', 'c')", &mut db).unwrap();
+    match parse_and_exec("INSERT INTO t VALUES ('a''|''b', 'c')", &mut db) {
+        Ok(_) => {}
+        Err(e) => panic!(
+            "bug T2: pk_key joins Display parts with unescaped '|' — ('a''|''b','c') collides \
+             with ('a','b''|''c')... second of the pair wrongly rejected: {}",
+            e
+        ),
+    }
+    match parse_and_exec("INSERT INTO t VALUES ('a', 'b''|''c')", &mut db) {
+        Ok(_) => {}
+        Err(e) => panic!(
+            "bug T2: pk_key joins Display parts with unescaped '|' — ('a','b''|''c') collides \
+             with ('a''|''b','c') under the same encoded key; distinct composite keys must both \
+             insert, got: {}",
+            e
+        ),
+    }
+    let r = parse_and_exec("SELECT COUNT(*) FROM t", &mut db).unwrap();
+    assert!(
+        r.contains("[3]"),
+        "bug T2: all three composite keys are distinct (pk_key '|' collision): {}",
+        r
+    );
+}
+
+#[test]
+fn t4_btree_index_string_case_divergence() {
+    // Bug T4: index.rs encode_key lowercases string values (s.to_lowercase())
+    // on BOTH insert and lookup, so the index cannot distinguish rows that
+    // differ only by case: 'abc' and 'AbC' share the key "\x04abc". Equality
+    // is case-SENSITIVE — `WHERE name = 'AbC'` must return exactly the
+    // case-matching row, but the index path returns both.
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE t (id INT PRIMARY KEY, name TEXT)", &mut db).unwrap();
+    parse_and_exec("CREATE INDEX idx_name ON t(name)", &mut db).unwrap();
+    parse_and_exec("INSERT INTO t VALUES (1, 'abc'), (2, 'AbC')", &mut db).unwrap();
+    let r = parse_and_exec("SELECT id FROM t WHERE name = 'AbC'", &mut db).unwrap();
+    let ok = r.contains("[2]") && !r.contains("[1]");
+    assert!(
+        ok,
+        "bug T4: encode_key lowercases strings (index.rs to_lowercase) — case-sensitive \
+         equality `name = 'AbC'` must return exactly the case-matching row [2], got: {}",
+        r
+    );
+}
+
+#[test]
+fn t5_order_by_lexicographic_instead_of_numeric() {
+    // Bug T5: sort.rs sort_rows (and the GROUP BY path, aggregate.rs) order
+    // by value_to_string().cmp() — lexicographic. Ints 2, 10, 100 sort as
+    // "10" < "100" < "2". Numeric ORDER BY must return [2, 10, 100].
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE t (id INT PRIMARY KEY, v INT)", &mut db).unwrap();
+    parse_and_exec("INSERT INTO t VALUES (1, 2), (2, 10), (3, 100)", &mut db).unwrap();
+    let r = parse_and_exec("SELECT v FROM t ORDER BY v ASC", &mut db).unwrap();
+    let p2 = r.find("[2]").unwrap_or(usize::MAX);
+    let p10 = r.find("[10]").unwrap_or(usize::MAX);
+    let p100 = r.find("[100]").unwrap_or(usize::MAX);
+    assert!(
+        p2 < p10 && p10 < p100,
+        "bug T5: ORDER BY compares value_to_string() lexicographically — v ASC must be \
+         [2],[10],[100] (numeric), got: {}",
+        r
+    );
+}
+
+#[test]
+fn t6_float_negative_zero_index_lookup() {
+    // Bug T6: the pk/index key for floats encodes the raw f64 bits, so -0.0
+    // and +0.0 produce DIFFERENT keys even though cmp_values (ops.rs) treats
+    // them as equal. `WHERE f = 0.0` on an indexed column misses the -0.0
+    // row via the index path.
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE t (id INT PRIMARY KEY, f REAL)", &mut db).unwrap();
+    parse_and_exec("CREATE INDEX idx_f ON t(f)", &mut db).unwrap();
+    parse_and_exec("INSERT INTO t VALUES (1, -0.0)", &mut db).unwrap();
+    let r = parse_and_exec("SELECT id FROM t WHERE f = 0.0", &mut db).unwrap();
+    assert!(
+        r.contains("[1]"),
+        "bug T6: float key encoding separates -0.0 from 0.0 — `f = 0.0` must match the \
+         -0.0 row (cmp_values says -0.0 == 0.0), got: {}",
+        r
+    );
+}
+
+#[test]
+fn composite_pk_partial_conjunct_falls_back_to_scan() {
+    // Baseline lock (NOT a bug): WHERE on a single column of a composite PK
+    // (partial conjunct) must still find the row — the executor must NOT
+    // answer it with the composite-pk key path (which would produce a
+    // partial key that never matches and hide real rows). Locks current
+    // behavior so the M5 partial-match change cannot silently break it.
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE t (a TEXT, b TEXT, PRIMARY KEY (a, b))", &mut db).unwrap();
+    parse_and_exec("INSERT INTO t VALUES ('x', 'y')", &mut db).unwrap();
+    let r = parse_and_exec("SELECT b FROM t WHERE a = 'x'", &mut db).unwrap();
+    assert!(
+        r.contains("y"),
+        "partial conjunct on composite PK must fall back to scan and find the row: {}",
+        r
+    );
 }
