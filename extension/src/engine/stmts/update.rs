@@ -127,14 +127,24 @@ pub(crate) fn exec_update(upd: &Update, db: &mut Database) -> Result<String, Eng
         let t = db
             .get_table(&table_name)
             .map_err(|_| EngineError::TableNotFound(table_name.clone()))?;
-        // Pre-collect FK lookup data: local_column → (foreign_table, pk_set)
+        // Pre-collect FK lookup data: local_column → referenced-column values.
+        // Validation compares Display strings, so collect the referenced
+        // column's Display values — not pk_set, whose encoding is an internal
+        // uniqueness detail (see insert.rs).
         let fk_lookups: Vec<(String, HashSet<String>)> = t
             .foreign_keys
             .iter()
             .filter_map(|fk| {
-                db.get_table(&fk.foreign_table)
-                    .ok()
-                    .map(|ref_t| (fk.local_column.clone(), ref_t.pk_set.clone()))
+                db.get_table(&fk.foreign_table).ok().and_then(|ref_t| {
+                    ref_t.col_index.get(&fk.foreign_column).map(|&fci| {
+                        let ref_values: HashSet<String> = ref_t
+                            .rows
+                            .iter()
+                            .map(|row| row[fci].to_string().to_lowercase())
+                            .collect();
+                        (fk.local_column.clone(), ref_values)
+                    })
+                })
             })
             .collect();
         // Pre-collect referencing tables for PK updates (RESTRICT)

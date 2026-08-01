@@ -69,7 +69,11 @@ pub(crate) fn exec_insert(ins: &Insert, db: &mut Database) -> Result<String, Eng
         None => return Err(EngineError::Exec("INSERT must have a source".into())),
     };
 
-    // Pre-collect FOREIGN KEY lookup data (foreign table pk_sets) before mutable table borrow
+    // Pre-collect FOREIGN KEY lookup data (foreign table referenced-column
+    // values) before mutable table borrow. FK validation compares Display
+    // strings, so the set must hold the referenced column's Display values —
+    // NOT the internal pk_key encoding, which is an implementation detail of
+    // uniqueness enforcement and may change format.
     let fk_lookups: Vec<(String, HashSet<String>)> = {
         let self_table = db
             .get_table(&table_name)
@@ -78,9 +82,13 @@ pub(crate) fn exec_insert(ins: &Insert, db: &mut Database) -> Result<String, Eng
             .foreign_keys
             .iter()
             .filter_map(|fk| {
-                db.get_table(&fk.foreign_table)
-                    .ok()
-                    .map(|t| (fk.local_column.clone(), t.pk_set.clone()))
+                db.get_table(&fk.foreign_table).ok().and_then(|t| {
+                    t.col_index.get(&fk.foreign_column).map(|&fci| {
+                        let ref_values: HashSet<String> =
+                            t.rows.iter().map(|row| row[fci].to_string().to_lowercase()).collect();
+                        (fk.local_column.clone(), ref_values)
+                    })
+                })
             })
             .collect()
     };

@@ -96,11 +96,11 @@ fn pk_update_works_and_maintains_pk_set() {
     parse_and_exec("CREATE TABLE t (id STRING PRIMARY KEY, val INT)", &mut db).unwrap();
     parse_and_exec("INSERT INTO t VALUES ('a', 1)", &mut db).unwrap();
     let t = db.get_table("t").unwrap();
-    assert!(t.pk_set.contains("'a'"), "PK set should have 'a', got: {:?}", t.pk_set);
+    assert!(t.pk_set.contains("s1:a"), "PK set should have 'a', got: {:?}", t.pk_set);
     parse_and_exec("UPDATE t SET id = 'b' WHERE id = 'a'", &mut db).unwrap();
     let t = db.get_table("t").unwrap();
-    assert!(!t.pk_set.contains("'a'"), "PK set should no longer have 'a'");
-    assert!(t.pk_set.contains("'b'"), "PK set should have 'b'");
+    assert!(!t.pk_set.contains("s1:a"), "PK set should no longer have 'a'");
+    assert!(t.pk_set.contains("s1:b"), "PK set should have 'b'");
     parse_and_exec("INSERT INTO t VALUES ('a', 2)", &mut db).unwrap();
 }
 

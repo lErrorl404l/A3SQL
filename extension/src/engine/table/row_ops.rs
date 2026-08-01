@@ -276,9 +276,9 @@ impl Table {
 
         // Update unique_set if this is a UNIQUE column
         if self.columns[col_idx].unique {
-            self.unique_set.remove(&format!("{}|{}", col_idx, old_value));
-            self.unique_set
-                .insert(format!("{}|{}", col_idx, self.rows[row_idx][col_idx]));
+            let key_of = |v: &DbValue| format!("{}|{}", col_idx, super::schema::encode_part(v));
+            self.unique_set.remove(&key_of(&old_value));
+            self.unique_set.insert(key_of(&self.rows[row_idx][col_idx]));
         }
 
         // Update indices that track this column
