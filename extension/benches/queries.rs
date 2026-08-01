@@ -351,6 +351,69 @@ fn bench_patch_rules(c: &mut Criterion) {
     a3sql::dispatch("DROP TABLE bench_patch", &[]);
 }
 
+fn bench_frame_mix(c: &mut Criterion) {
+    // Per-op + full-frame benchmarks for the 60fps game-loop shape:
+    // per frame the mod does ~200 PK gets, a couple of row updates, one
+    // LIKE-prefix scan, one scalar subquery, one GROUP BY aggregate.
+    a3sql::dispatch("DROP TABLE IF EXISTS bench_fm", &[]);
+    a3sql::dispatch(
+        "CREATE TABLE bench_fm (k STRING PRIMARY KEY, grp STRING, v INT, name STRING)",
+        &[],
+    );
+    for i in 0..ROW_COUNT {
+        let grp = if i % 3 == 0 {
+            "a"
+        } else if i % 3 == 1 {
+            "b"
+        } else {
+            "c"
+        };
+        let sql = format!("INSERT INTO bench_fm VALUES ('k{}', '{}', {}, 'val{}')", i, grp, i, i);
+        a3sql::dispatch(&sql, &[]);
+    }
+
+    let mut group = c.benchmark_group("frame_mix");
+    group.sample_size(100);
+    group.bench_function("get_pk", |b| {
+        b.iter(|| a3sql::dispatch("SELECT * FROM bench_fm WHERE k = 'k500'", &[]))
+    });
+    group.bench_function("update_by_pk", |b| {
+        b.iter(|| a3sql::dispatch("UPDATE bench_fm SET v = v + 1 WHERE k = 'k500'", &[]))
+    });
+    group.bench_function("like_prefix", |b| {
+        b.iter(|| a3sql::dispatch("SELECT * FROM bench_fm WHERE name LIKE 'val5%'", &[]))
+    });
+    group.bench_function("subquery", |b| {
+        b.iter(|| {
+            a3sql::dispatch(
+                "SELECT COUNT(*) FROM bench_fm WHERE v = (SELECT v FROM bench_fm WHERE k = 'k777')",
+                &[],
+            )
+        })
+    });
+    group.bench_function("group_by", |b| {
+        b.iter(|| a3sql::dispatch("SELECT grp, SUM(v) FROM bench_fm GROUP BY grp", &[]))
+    });
+    // One full 60fps frame: 200 PK gets + 2 UPDATEs + 1 LIKE + 1 subquery + 1 GROUP BY.
+    group.bench_function("frame_mix", |b| {
+        b.iter(|| {
+            for _ in 0..200 {
+                a3sql::dispatch("SELECT * FROM bench_fm WHERE k = 'k500'", &[]);
+            }
+            a3sql::dispatch("UPDATE bench_fm SET v = v + 1 WHERE k = 'k500'", &[]);
+            a3sql::dispatch("UPDATE bench_fm SET name = 'hit' WHERE k = 'k501'", &[]);
+            a3sql::dispatch("SELECT * FROM bench_fm WHERE name LIKE 'val5%'", &[]);
+            a3sql::dispatch(
+                "SELECT COUNT(*) FROM bench_fm WHERE v = (SELECT v FROM bench_fm WHERE k = 'k777')",
+                &[],
+            );
+            a3sql::dispatch("SELECT grp, SUM(v) FROM bench_fm GROUP BY grp", &[]);
+        })
+    });
+    group.finish();
+    a3sql::dispatch("DROP TABLE bench_fm", &[]);
+}
+
 criterion_group!(
     benches,
     bench_full_scan,
@@ -362,5 +425,6 @@ criterion_group!(
     bench_cte,
     bench_window,
     bench_patch_rules,
+    bench_frame_mix,
 );
 criterion_main!(benches);
