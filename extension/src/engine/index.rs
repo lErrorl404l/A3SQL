@@ -247,6 +247,7 @@ fn value_to_plain(v: &DbValue) -> String {
 mod tests {
     use super::*;
     use crate::engine::value::*;
+    #[cfg(not(miri))] // only used by the proptests (cfg'd out under miri)
     use proptest::prelude::*;
 
     #[test]
