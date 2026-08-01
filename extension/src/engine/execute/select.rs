@@ -10,7 +10,7 @@ use sqlparser::ast::{Distinct, Expr, OrderByKind, Query, Select, SelectItem, Set
 
 use super::super::database::Database;
 use super::super::functions::aggregate::projection_expr_name;
-use super::super::functions::eval::{eval_expr, is_truthy};
+use super::super::functions::eval::{eval_expr, is_truthy, query_has_nondeterministic};
 use super::super::stmts::ddl::object_name_str;
 use super::super::stmts::select::sort::sort_rows;
 use super::super::value::{DbValue, json_val_to_dbvalue};
@@ -18,6 +18,7 @@ use super::SUBQ_DB;
 use super::format_projected_result;
 
 use crate::engine::error::EngineError;
+use crate::engine::functions::eval::query_has_from;
 use crate::engine::prelude::expr_has_subquery;
 
 /// Execute a SELECT query (single table, no JOINs).
@@ -335,24 +336,63 @@ fn set_subq_snapshot_if_needed(select: &Select, db: &Database) {
 /// the cache, `WHERE n=(SELECT 1)` over 100k rows is O(n²). The cache key is
 /// the (correlation-rewritten) query string, so correlated subqueries —
 /// which inline distinct literals per row — never hit a stale entry.
-pub(crate) fn exec_subquery(query: &Query) -> Result<Vec<DbValue>, EngineError> {
-    let key = format!("{:?}", query);
-    if let Some(hit) = super::SUBQ_CACHE.with(|c| c.borrow().get(&key).cloned()) {
-        return Ok(hit);
+///
+/// Soundness skips (no lookup, no insert):
+///   - `nondeterministic`: random()/datetime('now')/current_* have a
+///     row-invariant AST — and therefore key — but a row-varying value;
+///     caching them freezes one value for the whole statement.
+///   - `correlated`: the rewritten key is distinct per outer-row value combo,
+///     so the cache would miss anyway; skipping it avoids the per-row
+///     Debug-format key and the 10k-cap insert churn.
+pub(crate) fn exec_subquery(query: &Query, correlated: bool) -> Result<Vec<DbValue>, EngineError> {
+    let nondet = query_has_nondeterministic(query);
+    if !correlated && !nondet {
+        let key = format!("{:?}", query);
+        if let Some(hit) = super::SUBQ_CACHE.with(|c| c.borrow().get(&key).cloned()) {
+            return Ok(hit);
+        }
+        let mut db_copy = subq_db_snapshot(query)?;
+        let result_str = exec_select(query, &mut db_copy)?;
+        let values = parse_subquery_result(&result_str);
+        // Store in per-statement cache (key = rewritten query string). Cap growth:
+        // a pathological number of DISTINCT correlated rewrites per statement is
+        // bounded, and the cache is cleared on every statement anyway.
+        super::SUBQ_CACHE.with(|c| {
+            let mut cache = c.borrow_mut();
+            if cache.len() < 10_000 {
+                cache.insert(key, values.clone());
+            }
+        });
+        return Ok(values);
     }
-    let db_snapshot = super::SUBQ_DB.with(|snap| {
+    // Uncacheable path — evaluate fresh against a per-call DB copy.
+    let mut db_copy = subq_db_snapshot(query)?;
+    let result_str = exec_select(query, &mut db_copy)?;
+    Ok(parse_subquery_result(&result_str))
+}
+
+/// Clone the database a subquery executes against. A FROM-less subquery
+/// (`SELECT random()`, `SELECT 1`) reads no table data, so a fresh empty
+/// Database is equivalent — and avoids cloning the whole snapshot (O(rows))
+/// on every row of a per-row-evaluated subquery.
+fn subq_db_snapshot(query: &Query) -> Result<Database, EngineError> {
+    if !query_has_from(query) && !crate::engine::prelude::query_has_subquery(query) {
+        return Ok(Database::new());
+    }
+    super::SUBQ_DB.with(|snap| {
         snap.borrow()
             .as_ref()
             .cloned()
             .ok_or_else(|| EngineError::Exec("Subquery not supported in this context".to_string()))
-    })?;
-    let mut db_copy = db_snapshot;
-    let result_str = exec_select(query, &mut db_copy)?;
+    })
+}
 
-    // Parse the JSON result (format: [[header], [row1], [row2], ...])
-    // exec_select returns raw data, NOT [code, msg, data] wrapped format
+/// Parse a subquery's exec_select JSON result (format: [[header], [row1], ...])
+/// into the first column of each data row. exec_select returns raw data, NOT
+/// [code, msg, data] wrapped format.
+fn parse_subquery_result(result_str: &str) -> Vec<DbValue> {
     let mut values = Vec::new();
-    match serde_json::from_str::<Vec<serde_json::Value>>(&result_str) {
+    match serde_json::from_str::<Vec<serde_json::Value>>(result_str) {
         Ok(rows) => {
             for row in rows.iter().skip(1) {
                 if let Some(arr) = row.as_array()
@@ -387,16 +427,7 @@ pub(crate) fn exec_subquery(query: &Query) -> Result<Vec<DbValue>, EngineError> 
             }
         }
     }
-    // Store in per-statement cache (key = rewritten query string). Cap growth:
-    // a pathological number of DISTINCT correlated rewrites per statement is
-    // bounded, and the cache is cleared on every statement anyway.
-    super::SUBQ_CACHE.with(|c| {
-        let mut cache = c.borrow_mut();
-        if cache.len() < 10_000 {
-            cache.insert(key, values.clone());
-        }
-    });
-    Ok(values)
+    values
 }
 
 /// Apply ORDER BY and LIMIT from a Query to a parsed JSON result string.

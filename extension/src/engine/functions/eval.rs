@@ -9,6 +9,7 @@
 mod cast;
 mod corr;
 mod expr;
+mod nondet;
 pub(crate) mod ops;
 
 // Re-export all pub(crate) items from submodules so they remain accessible
@@ -17,6 +18,11 @@ pub(crate) mod ops;
 //   crate::engine::functions::eval::{eval_expr, apply_binary_op, is_truthy, ...}
 pub(crate) use expr::{eval_expr, eval_literal_expr, exec_function};
 pub(crate) use ops::{apply_binary_op, is_truthy, to_float};
+
+// Subquery correlation + nondeterminism detection, used by the executor's
+// subquery cache (execute/select.rs).
+pub(crate) use corr::query_has_from;
+pub(crate) use nondet::query_has_nondeterministic;
 
 // ── Tests ─────────────────────────────────────────────────────────────────
 

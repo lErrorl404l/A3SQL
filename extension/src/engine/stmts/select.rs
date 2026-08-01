@@ -24,16 +24,11 @@ use self::joins::{exec_select_joins, has_multiple_tables};
 use self::sort::{apply_limit_offset, sort_rows};
 use self::window::{compute_window_functions, has_window_function};
 
-// ponytail: thread-local DB snapshot for subquery evaluation (avoids deadlock
-// when exec_subquery is called inside eval_expr while DB lock is held).
-thread_local! {
-    pub(crate) static SUBQ_DB: std::cell::RefCell<Option<Database>> =
-        const { std::cell::RefCell::new(None) };
-}
-
 /// Set the thread-local DB snapshot only when the query needs it (contains a
 /// subquery). Cloning the whole DB per SELECT is O(total rows) — the snapshot
-/// exists only so nested SELECTs can read a consistent view.
+/// exists only so nested SELECTs can read a consistent view. Written to the
+/// executor's SUBQ_DB (the one exec_subquery reads — a per-module twin here
+/// would be written but never read).
 fn set_subq_snapshot_if_needed(select: &Select, db: &Database) {
     let needs_snapshot = select.projection.iter().any(|item| match item {
         SelectItem::UnnamedExpr(e) | SelectItem::ExprWithAlias { expr: e, .. } => expr_has_subquery(e),
@@ -45,7 +40,7 @@ fn set_subq_snapshot_if_needed(select: &Select, db: &Database) {
         }
         || select.having.as_ref().is_some_and(expr_has_subquery);
     if needs_snapshot {
-        SUBQ_DB.with(|snap| *snap.borrow_mut() = Some(db.clone()));
+        super::super::execute::SUBQ_DB.with(|snap| *snap.borrow_mut() = Some(db.clone()));
         super::super::execute::clear_subq_cache();
     }
 }

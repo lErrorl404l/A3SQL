@@ -160,7 +160,8 @@ pub(crate) fn eval_expr(
         Expr::Function(func) => exec_function(func, row, col_map),
         Expr::Subquery(query) => {
             let subq_q = rewrite_if_correlated(query, row, col_map);
-            let vals = exec_subquery(&subq_q)?;
+            let correlated = matches!(&subq_q, std::borrow::Cow::Owned(_));
+            let vals = exec_subquery(&subq_q, correlated)?;
             Ok(vals.into_iter().next().unwrap_or(DbValue::Null))
         }
         Expr::InSubquery {
@@ -170,7 +171,8 @@ pub(crate) fn eval_expr(
         } => {
             let val = eval_expr(expr, row, col_map)?;
             let subq_q = rewrite_if_correlated(subquery, row, col_map);
-            let subq_result = exec_subquery(&subq_q)?;
+            let correlated = matches!(&subq_q, std::borrow::Cow::Owned(_));
+            let subq_result = exec_subquery(&subq_q, correlated)?;
             let found = subq_result.contains(&val);
             Ok(DbValue::Bool(if *negated { !found } else { found }))
         }
@@ -211,7 +213,8 @@ pub(crate) fn eval_expr(
         }
         Expr::Exists { subquery, negated } => {
             let subq_q = rewrite_if_correlated(subquery, row, col_map);
-            let vals = exec_subquery(&subq_q)?;
+            let correlated = matches!(&subq_q, std::borrow::Cow::Owned(_));
+            let vals = exec_subquery(&subq_q, correlated)?;
             Ok(DbValue::Bool(if *negated { vals.is_empty() } else { !vals.is_empty() }))
         }
         Expr::Cast { expr, data_type, .. } => {
@@ -300,7 +303,9 @@ pub(crate) fn eval_literal_expr(expr: &Expr) -> Result<DbValue, EngineError> {
             apply_unary_op(op, &val)
         }
         Expr::Subquery(query) => {
-            let vals = exec_subquery(query)?;
+            // VALUES rows have no outer row context — a scalar subquery here
+            // is always uncorrelated.
+            let vals = exec_subquery(query, false)?;
             Ok(vals.into_iter().next().unwrap_or(DbValue::Null))
         }
         // Double-quoted identifiers used as values: "hello" → string

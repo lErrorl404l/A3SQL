@@ -26,6 +26,19 @@ pub(crate) use util::{
 // ── Public entry point ──────────────────────────────────────────────────
 
 pub(crate) fn execute(stmt: &Statement, db: &mut Database) -> Result<String, EngineError> {
+    // Subquery cache/snapshot soundness: clear_subq_cache fires only inside the
+    // single-table SELECT dispatchers, so any other statement that changes data
+    // (INSERT/UPDATE/DELETE/MERGE/DDL) would otherwise leave stale results and a
+    // stale SUBQ_DB snapshot for the next subquery. Clear the per-statement
+    // result cache on EVERY non-Query dispatch, and refresh the snapshot only
+    // when the statement itself contains a subquery — cloning the whole DB per
+    // statement is O(total rows), far too slow for bulk DML loops.
+    if !matches!(stmt, Statement::Query(_)) {
+        clear_subq_cache();
+        if crate::engine::prelude::stmt_has_subquery(stmt) {
+            SUBQ_DB.with(|snap| *snap.borrow_mut() = Some(db.clone()));
+        }
+    }
     match stmt {
         Statement::CreateView(cv) => stmts::ddl::exec_create_view(cv, db),
         Statement::CreateTable(def) => stmts::ddl::exec_create_table(def, db),

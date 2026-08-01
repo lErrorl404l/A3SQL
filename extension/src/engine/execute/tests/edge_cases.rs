@@ -676,3 +676,172 @@ fn composite_pk_partial_conjunct_falls_back_to_scan() {
         r
     );
 }
+
+// ── M6 subquery per-row overhead + cache soundness regressions ──────────
+// These lock the M6 fixes: the correlation-rewrite Cow refactor (no per-row
+// AST clone for uncorrelated subqueries), the correlated/nondeterministic
+// cache skips (a structurally-identical AST must never freeze a value that
+// must vary per row), the dispatch-level cache/snapshot refresh for
+// non-Query statements, and the INSERT...VALUES((SELECT ...)) support.
+
+#[test]
+fn m6_random_in_subquery_varies_per_row() {
+    // Bug: `SELECT a.id, (SELECT random()) FROM t` is structurally identical
+    // on every row → same Debug-format cache key → the first evaluation was
+    // cached forever and every row got the SAME frozen random value. The
+    // nondeterminism cache skip (lookup AND insert) must force a fresh
+    // random() per row.
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE t (id INT PRIMARY KEY)", &mut db).unwrap();
+    let vals: Vec<String> = (0..50i64).map(|i| format!("({})", i)).collect();
+    parse_and_exec(&format!("INSERT INTO t VALUES {}", vals.join(",")), &mut db).unwrap();
+    let r = parse_and_exec("SELECT id, (SELECT random()) FROM t", &mut db).unwrap();
+    let rows: Vec<Vec<serde_json::Value>> = serde_json::from_str(&r).unwrap();
+    let mut distinct: std::collections::HashSet<i64> = std::collections::HashSet::new();
+    for row in rows.iter().skip(1) {
+        if let Some(v) = row.get(1).and_then(|v| v.as_i64()) {
+            distinct.insert(v);
+        }
+    }
+    assert!(
+        distinct.len() >= 2,
+        "M6: random() in a subquery must vary per row (nondeterministic cache skip), got {} distinct values: {}",
+        distinct.len(),
+        r
+    );
+}
+
+#[test]
+fn m6_insert_then_select_with_subquery_is_fresh() {
+    // Bug: subqueries inside INSERT read a stale (or missing) SUBQ_DB snapshot
+    // because clear_subq_cache + the snapshot reset fired only in the
+    // single-table SELECT dispatchers. Each INSERT must see the count of the
+    // table AS IT WAS before that insert — never a cached value from an
+    // earlier statement.
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE kv (k TEXT PRIMARY KEY, v INT)", &mut db).unwrap();
+    parse_and_exec("INSERT INTO kv VALUES ('a', 1), ('b', 2)", &mut db).unwrap();
+    // Subquery inside INSERT...VALUES reads kv itself — must see count=2.
+    parse_and_exec("INSERT INTO kv VALUES ('c', (SELECT count(*) FROM kv))", &mut db).unwrap();
+    let r = parse_and_exec("SELECT v FROM kv WHERE k = 'c'", &mut db).unwrap();
+    assert!(
+        r.contains("2"),
+        "M6: INSERT subquery must see pre-insert count 2: {}",
+        r
+    );
+    // Second self-read — a stale cache/snapshot from the first INSERT would
+    // freeze count=2 forever; the fresh pre-insert count is now 3.
+    parse_and_exec("INSERT INTO kv VALUES ('d', (SELECT count(*) FROM kv))", &mut db).unwrap();
+    let r2 = parse_and_exec("SELECT v FROM kv WHERE k = 'd'", &mut db).unwrap();
+    assert!(
+        r2.contains("3"),
+        "M6: INSERT subquery must see pre-insert count 3 (stale snapshot/cache would give 2): {}",
+        r2
+    );
+}
+
+#[test]
+fn m6_insert_values_scalar_subquery_correct_count() {
+    // Bug: `INSERT INTO t VALUES ((SELECT count(*) FROM t))` errored with
+    // "Subquery not supported in this context" (no snapshot for the INSERT
+    // dispatch) or read stale state. The inserted value must be the count of
+    // t BEFORE this insert, and the statement must succeed.
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE t (id INT PRIMARY KEY, n INT)", &mut db).unwrap();
+    parse_and_exec("INSERT INTO t VALUES (1, 100), (2, 200), (3, 300)", &mut db).unwrap();
+    parse_and_exec("INSERT INTO t VALUES (4, (SELECT count(*) FROM t))", &mut db).unwrap();
+    // The inserted row carries the pre-insert count (3), not the post-insert 4.
+    let r = parse_and_exec("SELECT n FROM t WHERE id = 4", &mut db).unwrap();
+    assert!(
+        r.contains("3"),
+        "M6: INSERT...VALUES((SELECT count(*))) must insert the pre-insert count: {}",
+        r
+    );
+    let r2 = parse_and_exec("SELECT COUNT(*) FROM t", &mut db).unwrap();
+    assert!(r2.contains("4"), "M6: table must now have 4 rows: {}", r2);
+}
+
+#[test]
+fn m6_correlated_subquery_random_not_frozen() {
+    // Bug: a correlated subquery whose outer values are constant rewrites to
+    // the SAME query on every row — identical cache key — so a cached
+    // random() froze one value for the whole statement. The correlated +
+    // nondeterministic cache skips must re-evaluate per row.
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE t1 (id INT PRIMARY KEY, g INT)", &mut db).unwrap();
+    parse_and_exec("CREATE TABLE t2 (id INT PRIMARY KEY)", &mut db).unwrap();
+    parse_and_exec("INSERT INTO t1 VALUES (1, 5), (2, 5), (3, 5), (4, 5), (5, 5)", &mut db).unwrap();
+    parse_and_exec("INSERT INTO t2 VALUES (5)", &mut db).unwrap();
+    let r = parse_and_exec("SELECT (SELECT random() FROM t2 WHERE t2.id = t1.g) FROM t1", &mut db).unwrap();
+    let rows: Vec<Vec<serde_json::Value>> = serde_json::from_str(&r).unwrap();
+    let mut distinct: std::collections::HashSet<i64> = std::collections::HashSet::new();
+    for row in rows.iter().skip(1) {
+        if let Some(v) = row.first().and_then(|v| v.as_i64()) {
+            distinct.insert(v);
+        }
+    }
+    assert!(
+        distinct.len() >= 2,
+        "M6: correlated subquery with random() must not freeze one value (cache skip), got {} distinct: {}",
+        distinct.len(),
+        r
+    );
+}
+
+#[test]
+fn m6_dml_subqueries_reflect_fresh_data() {
+    // Bug: UPDATE SET / DELETE WHERE / JOIN-path statements containing
+    // subqueries read a stale snapshot/cache (clear_subq_cache fired only in
+    // single-table SELECT dispatchers). Every statement must refresh the
+    // snapshot and clear the cache before evaluating its subqueries.
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE items (id INT PRIMARY KEY, grp INT, qty INT)", &mut db).unwrap();
+    parse_and_exec("CREATE TABLE refs (gid INT PRIMARY KEY, total INT)", &mut db).unwrap();
+    parse_and_exec("INSERT INTO items VALUES (1, 1, 10), (2, 1, 20), (3, 2, 5)", &mut db).unwrap();
+    parse_and_exec("INSERT INTO refs VALUES (1, 0), (2, 0)", &mut db).unwrap();
+
+    // UPDATE SET with an uncorrelated subquery over the same table.
+    parse_and_exec("UPDATE refs SET total = (SELECT count(*) FROM items)", &mut db).unwrap();
+    let r = parse_and_exec("SELECT total FROM refs WHERE gid = 1", &mut db).unwrap();
+    assert!(r.contains("3"), "M6: UPDATE SET subquery sees count 3: {}", r);
+
+    // DML changes the data, then the same UPDATE must see the new count.
+    parse_and_exec("INSERT INTO items VALUES (4, 3, 7)", &mut db).unwrap();
+    parse_and_exec("UPDATE refs SET total = (SELECT count(*) FROM items)", &mut db).unwrap();
+    let r2 = parse_and_exec("SELECT total FROM refs WHERE gid = 1", &mut db).unwrap();
+    assert!(r2.contains("4"), "M6: stale cache would give 3, got: {}", r2);
+
+    // DELETE WHERE with a subquery — avg over the CURRENT 4 rows is 10.5, so
+    // only qty < 5.5 (the qty=5 row) is removed, leaving 3 rows.
+    parse_and_exec(
+        "DELETE FROM items WHERE qty < (SELECT avg(qty) FROM items) - 5",
+        &mut db,
+    )
+    .unwrap();
+    let r3 = parse_and_exec("SELECT COUNT(*) FROM items", &mut db).unwrap();
+    assert!(
+        r3.contains("3"),
+        "M6: DELETE WHERE subquery: only qty < avg-5 must go: {}",
+        r3
+    );
+
+    // JOIN-path subquery — a subquery whose inner query is a JOIN must see
+    // fresh data after more DML (items grp 1,1,3 now; refs gid 1,2).
+    let r4 = parse_and_exec(
+        "SELECT (SELECT count(*) FROM items JOIN refs ON items.grp = refs.gid)",
+        &mut db,
+    )
+    .unwrap();
+    assert!(r4.contains("2"), "M6: JOIN subquery sees 2 matches: {}", r4);
+    parse_and_exec("INSERT INTO items VALUES (5, 2, 50)", &mut db).unwrap();
+    let r5 = parse_and_exec(
+        "SELECT (SELECT count(*) FROM items JOIN refs ON items.grp = refs.gid)",
+        &mut db,
+    )
+    .unwrap();
+    assert!(
+        r5.contains("3"),
+        "M6: stale JOIN subquery would give 2 matches, got: {}",
+        r5
+    );
+}
