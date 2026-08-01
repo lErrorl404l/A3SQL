@@ -89,7 +89,7 @@ Options → Addon Configuration → A3SQL:
 | Enable TCP Listener | CHECKBOX | true | Auto-start on game boot |
 | Listener Port | EDIT | 33306 | TCP port |
 | Listener Bind Address | EDIT | 127.0.0.1 | Bind IP |
-| Listener Username | EDIT | (empty) | TCP login (empty = anonymous) |
+| Listener Username | EDIT | (empty) | TCP login (empty credentials are refused — fail-closed) |
 | Listener Password | EDIT | (empty) | TCP login |
 | Auto-Save | CHECKBOX | false | Save on mission end |
 | Auto-Load | CHECKBOX | false | Load on mission start |
@@ -123,12 +123,14 @@ _result = ["SELECT name, score FROM stats ORDER BY score DESC LIMIT 10"] call a3
 
 ### 6. External query (TCP)
 
-Enable the TCP listener in CBA settings, then connect from any tool:
+Enable the TCP listener in CBA settings, set a username/password, then connect from any tool (`LOGIN` is required by default):
 
 ```python
 import socket
 s = socket.socket()
 s.connect(("127.0.0.1", 33306))
+s.sendall(b"LOGIN admin mypassword\n")
+print(s.recv(65536).decode())  # [0,"OK","Authenticated"]
 s.sendall(b"SELECT * FROM stats ORDER BY score DESC LIMIT 5\n")
 print(s.recv(65536).decode())
 s.close()
@@ -322,7 +324,8 @@ private _sql = format ["SELECT * FROM users WHERE name = '%1'", _userInput];
 ### TCP Authentication
 
 Set a username and password in CBA Settings (Options → Addon Configuration → A3SQL).
-When credentials are non-empty, clients must `LOGIN` before querying:
+`LOGIN` is required on every connection by default (fail-closed). With credentials
+configured, clients must `LOGIN` before querying:
 
 ```python
 import socket

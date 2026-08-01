@@ -2,6 +2,11 @@
 
 #[test]
 fn test_tcp_listener() {
+    // TCP auth is fail-closed by default (listener_require_auth = true), so
+    // set credentials and LOGIN before issuing any query.
+    let r = a3sql::dispatch("set_credentials", &["admin", "secret"]);
+    assert!(r.contains("\"OK\""), "set_credentials: {}", r);
+
     // Start the TCP listener on a test port
     let r = a3sql::dispatch("listen 33307", &[]);
     assert!(r.contains("\"OK\""), "listen start: {}", r);
@@ -30,6 +35,7 @@ fn test_tcp_listener() {
         }};
     }
 
+    tcp_cmd!("LOGIN admin secret", "Authenticated");
     tcp_cmd!("CREATE TABLE tcp_test (id STRING PRIMARY KEY, val STRING)", "\"OK\"");
     tcp_cmd!("INSERT INTO tcp_test VALUES ('1', 'hello')", "\"OK\"");
     tcp_cmd!("SELECT * FROM tcp_test", "hello");

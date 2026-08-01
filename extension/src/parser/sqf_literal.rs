@@ -21,9 +21,13 @@ use nom::{
     character::complete::{char, multispace0, one_of},
     combinator::{opt, recognize, value},
     error::Error,
-    multi::separated_list0,
-    sequence::{delimited, pair, preceded},
+    sequence::{pair, preceded},
 };
+
+/// Maximum array nesting depth. Mirrors serde_json's default recursion limit
+/// (128) so both decoders share one policy. Deeper input is rejected with a
+/// clean error instead of overflowing the stack (SIGSEGV/abort).
+const MAX_DEPTH: usize = 128;
 
 // ── nil ─────────────────────────────────────────────────────────────────
 
@@ -91,23 +95,52 @@ fn parse_string(input: &str) -> IResult<&str, Value> {
 
 // ── array ───────────────────────────────────────────────────────────────
 
-fn ws_value(input: &str) -> IResult<&str, Value> {
-    preceded(multispace0, parse_value).parse(input)
+/// Parse one value, tracking the current array nesting depth. `depth` is the
+/// number of enclosing arrays; exceeding `MAX_DEPTH` is a hard `Failure` (not
+/// recoverable by backtracking) so a hostile input cannot recurse deeper than
+/// the limit and blow the stack.
+fn parse_value(input: &str, depth: usize) -> IResult<&str, Value> {
+    if depth > MAX_DEPTH {
+        return Err(nom::Err::Failure(Error::new(input, nom::error::ErrorKind::TooLarge)));
+    }
+    match input.as_bytes().first().copied() {
+        Some(b'n') => parse_nil(input),
+        Some(b't') | Some(b'f') => parse_bool(input),
+        Some(b'"') => parse_string(input),
+        Some(b'[') => parse_array(input, depth),
+        Some(b'-' | b'0'..=b'9') => parse_number(input),
+        _ => Err(nom::Err::Error(Error::new(input, nom::error::ErrorKind::Tag))),
+    }
 }
 
-fn parse_array(input: &str) -> IResult<&str, Value> {
-    delimited(
-        preceded(multispace0, char('[')),
-        separated_list0(preceded(multispace0, char(',')), ws_value).map(Value::Array),
-        preceded(multispace0, char(']')),
-    )
-    .parse(input)
+fn ws_value(input: &str, depth: usize) -> IResult<&str, Value> {
+    preceded(multispace0, |i| parse_value(i, depth)).parse(input)
 }
 
-// ── value (dispatch) ────────────────────────────────────────────────────
-
-fn parse_value(input: &str) -> IResult<&str, Value> {
-    alt((parse_nil, parse_bool, parse_number, parse_string, parse_array)).parse(input)
+fn parse_array(input: &str, depth: usize) -> IResult<&str, Value> {
+    let (input, _) = preceded(multispace0, char('[')).parse(input)?;
+    let mut values = Vec::new();
+    let (mut input, _) = multispace0(input)?;
+    if let Some(rest) = input.strip_prefix(']') {
+        return Ok((rest, Value::Array(values)));
+    }
+    loop {
+        let (rest, v) = ws_value(input, depth + 1)?;
+        values.push(v);
+        let (rest, _) = multispace0(rest)?;
+        if let Some(rest) = rest.strip_prefix(',') {
+            // Allow a trailing comma: `[1, 2,]` is a valid empty tail.
+            let (rest, _) = multispace0(rest)?;
+            if let Some(rest) = rest.strip_prefix(']') {
+                return Ok((rest, Value::Array(values)));
+            }
+            input = rest;
+        } else if let Some(rest) = rest.strip_prefix(']') {
+            return Ok((rest, Value::Array(values)));
+        } else {
+            return Err(nom::Err::Error(Error::new(rest, nom::error::ErrorKind::Tag)));
+        }
+    }
 }
 
 // ── public API ──────────────────────────────────────────────────────────
@@ -134,7 +167,7 @@ pub fn parse_sqf_literal(input: &str) -> Result<Value, String> {
     if trimmed.is_empty() {
         return Err("empty input".to_string());
     }
-    match preceded(multispace0, parse_value).parse(trimmed) {
+    match preceded(multispace0, |i| parse_value(i, 0)).parse(trimmed) {
         Ok((remaining, value)) => {
             let remaining = remaining.trim();
             if remaining.is_empty() {
@@ -143,11 +176,16 @@ pub fn parse_sqf_literal(input: &str) -> Result<Value, String> {
                 Err(format!("trailing characters after SQF literal: {:?}", remaining))
             }
         }
-        Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => Err(format!(
-            "SQF parse error near byte {}: {:?}",
-            trimmed.len() - e.input.len(),
-            e.code
-        )),
+        Err(nom::Err::Error(e)) | Err(nom::Err::Failure(e)) => {
+            if matches!(e.code, nom::error::ErrorKind::TooLarge) {
+                return Err(format!("maximum nesting depth exceeded ({} levels)", MAX_DEPTH));
+            }
+            Err(format!(
+                "SQF parse error near byte {}: {:?}",
+                trimmed.len() - e.input.len(),
+                e.code
+            ))
+        }
         Err(nom::Err::Incomplete(_)) => Err("incomplete SQF literal".to_string()),
     }
 }
@@ -257,6 +295,32 @@ mod tests {
         assert_eq!(v[0], json!(1));
         assert_eq!(v[1], json!("a"));
         assert_eq!(v[2], json!(true));
+    }
+
+    #[test]
+    fn test_array_trailing_comma() {
+        let v = parse_sqf_literal("[1, 2,]").unwrap();
+        assert_eq!(v, json!([1, 2]));
+    }
+
+    #[test]
+    fn test_array_nesting_within_limit_ok() {
+        // 100 levels deep — well inside MAX_DEPTH — must still parse.
+        let input = format!("{}1{}", "[".repeat(100), "]".repeat(100));
+        assert!(parse_sqf_literal(&input).is_ok());
+    }
+
+    #[test]
+    fn test_array_deep_nesting_is_capped_cleanly() {
+        // 10_000 levels deep must be a clean error, not a stack overflow
+        // (SIGSEGV would abort the whole test process).
+        let input = format!("{}1{}", "[".repeat(10_000), "]".repeat(10_000));
+        let err = parse_sqf_literal(&input).expect_err("deep nesting must be rejected");
+        assert!(
+            err.contains("maximum nesting depth"),
+            "error must name the depth limit, got: {}",
+            err
+        );
     }
 
     #[test]

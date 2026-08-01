@@ -13,6 +13,24 @@ use crate::dispatch;
 use crate::engine::error::{ErrorCode, error_response};
 use crate::ffi::{CREDENTIALS, LISTENER};
 
+/// Constant-time byte-string equality.
+///
+/// XOR-folds over `max(a.len(), b.len())`, zero-padding the shorter side, so
+/// the number of loop iterations (and thus the timing) does not depend on
+/// where the first mismatch is, nor on the shorter length. The result is
+/// `false` whenever the lengths differ (a length bit is folded into the
+/// accumulator before the loop, so `b"ab"` never compares equal to `b"ab\0"`).
+/// The loop length still leaks `max(len)` — acceptable here: the credential
+/// length is already visible on the wire in the `LOGIN` line.
+fn ct_eq(a: &[u8], b: &[u8]) -> bool {
+    let max = a.len().max(b.len());
+    let mut acc: u8 = u8::from(a.len() != b.len());
+    for i in 0..max {
+        acc |= a.get(i).copied().unwrap_or(0) ^ b.get(i).copied().unwrap_or(0);
+    }
+    acc == 0
+}
+
 /// Serve a single TCP client connection.
 /// Reads lines, handles LOGIN/auth, dispatches SQL, responds.
 /// Used by both the in-game TCP listener and the standalone server.
@@ -62,7 +80,13 @@ fn serve_client(stream: std::net::TcpStream) {
                     break;
                 }
                 let parts: Vec<&str> = rest.splitn(2, ' ').collect();
-                if parts.len() >= 2 && parts[0] == expected_user && parts[1] == expected_pass {
+                // Constant-time compare on both fields (no short-circuit): a
+                // timing side-channel here would let a local attacker probe
+                // the username/password byte-by-byte via response latency.
+                if parts.len() >= 2
+                    && ct_eq(parts[0].as_bytes(), expected_user.as_bytes())
+                    && ct_eq(parts[1].as_bytes(), expected_pass.as_bytes())
+                {
                     let _ = writeln!(stream, "[0,\"OK\",\"Authenticated\"]");
                     authenticated = true;
                 } else {
@@ -156,7 +180,8 @@ fn try_bind(addr: &str) -> Result<std::net::TcpListener, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::serve_client;
+    use super::{ct_eq, serve_client};
+    use crate::dispatch;
     use std::io::{BufRead, BufReader, Write};
     use std::net::TcpListener;
 
@@ -200,6 +225,33 @@ mod tests {
     }
 
     #[test]
+    fn ct_eq_matches_equal_bytes() {
+        assert!(ct_eq(b"admin", b"admin"));
+        assert!(ct_eq(b"", b""));
+        assert!(ct_eq(b"secret with spaces", b"secret with spaces"));
+        assert!(ct_eq("héllo".as_bytes(), "héllo".as_bytes()));
+    }
+
+    #[test]
+    fn ct_eq_rejects_different_bytes() {
+        assert!(!ct_eq(b"admin", b"admine"));
+        assert!(!ct_eq(b"admin", b"Admin"));
+        assert!(!ct_eq(b"a", b"b"));
+        assert!(!ct_eq("héllo".as_bytes(), "hello".as_bytes()));
+    }
+
+    #[test]
+    fn ct_eq_rejects_different_lengths() {
+        assert!(!ct_eq(b"admin", b"adminx"));
+        assert!(!ct_eq(b"adminx", b"admin"));
+        assert!(!ct_eq(b"", b"x"));
+        // Zero-padding must never make a shorter value equal a longer one that
+        // happens to end in NUL bytes.
+        assert!(!ct_eq(b"", b"\0"));
+        assert!(!ct_eq(b"ab", b"ab\0"));
+    }
+
+    #[test]
     #[cfg_attr(miri, ignore)] // real TCP sockets are blocked by miri's isolation
     fn adversarial_inputs_return_envelopes_and_connection_survives() {
         let mut cases = vec![
@@ -216,14 +268,23 @@ mod tests {
         let big = format!("SELECT {}", "1".repeat(100_000));
         cases.push(big.as_str());
 
-        let responses = serve_lines(&cases);
+        // Auth is fail-closed by default — authenticate before dispatching.
+        dispatch("set_credentials", &["admin", "secret"]);
+        let mut lines = vec!["LOGIN admin secret"];
+        lines.extend_from_slice(&cases);
+        let responses = serve_lines(&lines);
         assert_eq!(
             responses.len(),
-            cases.len(),
+            lines.len(),
             "server must answer every line without dying; got: {:?}",
             responses
         );
-        for (input, resp) in cases.iter().zip(&responses) {
+        assert!(
+            responses[0].contains("Authenticated"),
+            "LOGIN must succeed with the right credentials: {:?}",
+            responses[0]
+        );
+        for (input, resp) in cases.iter().zip(&responses[1..]) {
             assert!(
                 is_envelope(resp),
                 "input {:?} produced non-envelope response: {}",
@@ -232,7 +293,7 @@ mod tests {
             );
         }
         assert_eq!(
-            responses[7], "[-1,\"ERR_INTERNAL\",\"Command failed\"]",
+            responses[8], "[-1,\"ERR_INTERNAL\",\"Command failed\"]",
             "SELECT SQF_EVAL('1/0') must map to a clean internal error, not a crash"
         );
     }
@@ -240,7 +301,8 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)] // real TCP sockets are blocked by miri's isolation
     fn empty_line_is_skipped_without_response() {
-        let responses = serve_lines(&["", "PING"]);
-        assert_eq!(responses, vec!["[0,\"OK\",\"PONG\"]"]);
+        dispatch("set_credentials", &["admin", "secret"]);
+        let responses = serve_lines(&["LOGIN admin secret", "", "PING"]);
+        assert_eq!(responses, vec!["[0,\"OK\",\"Authenticated\"]", "[0,\"OK\",\"PONG\"]"]);
     }
 }

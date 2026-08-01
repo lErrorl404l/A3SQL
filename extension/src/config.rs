@@ -33,7 +33,9 @@ pub(crate) struct Config {
     /// When `true`, the TCP listener rejects anonymous connections — a
     /// `LOGIN <user> <pass>` is mandatory even if CBA credentials are empty.
     /// Intended for shared/dedicated hosts where any local process could
-    /// otherwise connect. Default: `false`.
+    /// otherwise connect. Default: `true` (fail-closed — the listener refuses
+    /// connections when no credentials are configured; set this to `false`
+    /// only for trusted loopback-only deployments that want anonymous access).
     pub listener_require_auth: Option<bool>,
 
     /// Directory for file I/O commands (SAVE, LOAD, export_to_file).
@@ -43,10 +45,10 @@ pub(crate) struct Config {
 
 impl Config {
     /// Whether the TCP listener requires LOGIN auth on every connection.
-    /// True when `listener_require_auth` is set, or when credentials are
-    /// configured (existing behavior: non-empty creds force LOGIN).
+    /// True by default (fail-closed): when `listener_require_auth` is unset or
+    /// true, or when credentials are configured (non-empty creds force LOGIN).
     pub(crate) fn listener_auth_required(&self) -> bool {
-        self.listener_require_auth.unwrap_or(false)
+        self.listener_require_auth.unwrap_or(true)
     }
 
     /// Whether auth verification is required.

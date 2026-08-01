@@ -36,24 +36,48 @@ fn safe_data_path(filename: &str) -> Result<std::path::PathBuf, String> {
         }
     }
     let data_dir = CONFIG.data_dir().to_path_buf();
-    if !data_dir.exists() {
-        std::fs::create_dir_all(&data_dir)
-            .map_err(|e| error_response(ErrorCode::Io, &format!("Cannot create data dir: {}", e)))?;
-    }
     let resolved = data_dir.join(filename);
-    // Reject extension of already-resolved path that tries to escape via
-    // intermediate symlinks outside data_dir (canonicalize only when the
-    // resolved path already exists; if it doesn't exist yet (writing), the
-    // check is best-effort).
-    if resolved.exists() {
-        let canonical = resolved
+    ensure_within_data_dir(&resolved, &data_dir)?;
+    Ok(resolved)
+}
+
+/// Reject `p` (a path already lexically inside `data_dir`) if any component
+/// resolves outside `data_dir` via a symlink.
+///
+/// Two checks, both on the canonical (symlink-resolved) filesystem:
+/// - the parent directory must live inside `data_dir` — this catches a
+///   symlinked *subdirectory* (e.g. `data_dir/evil -> /etc`) even when the
+///   final file does not exist yet (the write would otherwise follow the
+///   subdir symlink out of the sandbox);
+/// - an *existing* final component must resolve inside `data_dir` — this
+///   rejects a pre-placed symlink at the target path itself.
+///
+/// Missing parent dirs are created first so the check runs against the real
+/// resolved directories, not the lexical ones. The atomic-save format and
+/// checksum scheme are untouched.
+fn ensure_within_data_dir(p: &std::path::Path, data_dir: &std::path::Path) -> Result<(), String> {
+    if let Some(parent) = p.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| error_response(ErrorCode::Io, &format!("Cannot create dir: {}", e)))?;
+        let canon_parent = parent
             .canonicalize()
             .map_err(|_| error_response(ErrorCode::Io, "Cannot resolve path"))?;
-        if !canonical.starts_with(data_dir.canonicalize().unwrap_or(data_dir.clone())) {
+        let canon_data = data_dir
+            .canonicalize()
+            .map_err(|_| error_response(ErrorCode::Io, "Cannot resolve data dir"))?;
+        if !canon_parent.starts_with(&canon_data) {
             return Err(error_response(ErrorCode::Io, "Path escapes data directory"));
         }
     }
-    Ok(resolved)
+    if p.exists() {
+        let canonical = p
+            .canonicalize()
+            .map_err(|_| error_response(ErrorCode::Io, "Cannot resolve path"))?;
+        if !canonical.starts_with(data_dir.canonicalize().unwrap_or_else(|_| data_dir.to_path_buf())) {
+            return Err(error_response(ErrorCode::Io, "Path escapes data directory"));
+        }
+    }
+    Ok(())
 }
 
 // ── Import/Export handlers ──────────────────────────────────────────────
@@ -154,6 +178,12 @@ pub(crate) fn handle_save(db: &engine::Database, args: &[&str]) -> String {
     // the target (rename is atomic on the same filesystem). A crash mid-write
     // leaves only the temp file — the last good save survives untouched.
     let tmp_path = with_ext_suffix(&path, "tmp");
+    // A pre-placed symlink at the tmp path would be followed by the write,
+    // overwriting whatever it points to (a local attacker on a shared host
+    // could plant `a3sql.bin.tmp -> /home/user/.ssh/authorized_keys`).
+    if let Err(e) = ensure_within_data_dir(&tmp_path, CONFIG.data_dir()) {
+        return e;
+    }
     if let Err(e) = std::fs::write(&tmp_path, &bytes) {
         return error_response(ErrorCode::Io, &format!("Save failed: {}", e));
     }
@@ -268,9 +298,6 @@ pub(crate) fn handle_export_to_file(db: &engine::Database, trimmed: &str, args: 
     };
 
     let path_display = path.to_string_lossy().to_string();
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
     match std::fs::write(&path, &data) {
         Ok(()) => ok_response(&format!("\"Exported to '{}'\"", path_display)),
         Err(e) => error_response(ErrorCode::Io, &format!("Write failed: {}", e)),
@@ -288,6 +315,30 @@ mod tests {
             Ok(_) => "OK".to_string(),
             Err(e) => e,
         }
+    }
+
+    fn err2(r: Result<(), String>) -> String {
+        match r {
+            Ok(()) => "OK".to_string(),
+            Err(e) => e,
+        }
+    }
+
+    /// Fresh, uniquely-named temp dir per test (isolated across runs and
+    /// parallel tests; no dependence on the process-global CONFIG.data_dir).
+    fn temp_data_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("a3sql_io_{}_{}", std::process::id(), tag));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// A sibling of the test data dir — escaping here lands OUTSIDE it.
+    fn temp_outside_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("a3sql_outside_{}_{}", std::process::id(), tag));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
     }
 
     #[test]
@@ -323,5 +374,70 @@ mod tests {
         assert!(r.is_ok(), "expected OK, got {}", err_msg(r));
         // cleanup side effects from the accepted cases
         let _ = std::fs::remove_dir_all(CONFIG.data_dir());
+    }
+
+    #[test]
+    #[cfg(unix)] // symlink(2) semantics; Windows link creation needs privileges
+    #[cfg_attr(miri, ignore)] // fs blocked by miri isolation
+    fn rejects_final_symlink_escaping_data_dir() {
+        let dir = temp_data_dir("final_link");
+        let outside = temp_outside_dir("final_link");
+        let target = outside.join("secret.txt");
+        std::fs::write(&target, b"data").unwrap();
+        std::os::unix::fs::symlink(&target, dir.join("evil.bin")).unwrap();
+
+        let r = ensure_within_data_dir(&dir.join("evil.bin"), &dir);
+        let msg = err2(r);
+        assert!(
+            msg.contains("escapes"),
+            "pre-placed final symlink must be rejected, got: {}",
+            msg
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&outside);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    #[cfg_attr(miri, ignore)] // fs blocked by miri isolation
+    fn rejects_subdir_symlink_escaping_data_dir() {
+        let dir = temp_data_dir("sub_link");
+        let outside = temp_outside_dir("sub_link");
+        std::os::unix::fs::symlink(&outside, dir.join("sub")).unwrap();
+
+        // The final file does not exist yet — a write would follow the `sub`
+        // symlink out of the data dir. The parent check must catch it.
+        let r = ensure_within_data_dir(&dir.join("sub").join("new.bin"), &dir);
+        let msg = err2(r);
+        assert!(
+            msg.contains("escapes"),
+            "subdirectory symlink must be rejected, got: {}",
+            msg
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&outside);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    #[cfg_attr(miri, ignore)] // fs blocked by miri isolation
+    fn accepts_symlink_within_data_dir() {
+        let dir = temp_data_dir("inner_link");
+        let real = dir.join("real");
+        std::fs::create_dir_all(&real).unwrap();
+        std::os::unix::fs::symlink(&real, dir.join("alias")).unwrap();
+
+        let r = ensure_within_data_dir(&dir.join("alias").join("ok.bin"), &dir);
+        assert!(r.is_ok(), "symlink inside data dir is fine: {}", err2(r));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)] // fs blocked by miri isolation
+    fn accepts_regular_new_file() {
+        let dir = temp_data_dir("regular");
+        let r = ensure_within_data_dir(&dir.join("fresh.bin"), &dir);
+        assert!(r.is_ok(), "regular new file must be accepted: {}", err2(r));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
