@@ -1,0 +1,73 @@
+# a3sql fuzz seed corpus — one SQL statement per line.
+# Extracted from the deep mod-pattern harnesses (/tmp/opencode/deep_*.py) and
+# tools/sql_smoke_test.py. Used to seed the proptest fuzz harness in
+# extension/src/fuzz.rs (and any future cargo-fuzz corpus).
+CREATE TABLE users (uid INT PRIMARY KEY, name STRING, role STRING, home STRING)
+CREATE TABLE files (path STRING PRIMARY KEY, owner INT, size INT, mtime INT)
+CREATE TABLE calendar (date STRING, event STRING, PRIMARY KEY (date, event))
+CREATE TABLE processes (pid INT PRIMARY KEY, name STRING, user INT, cpu REAL, mem INT)
+CREATE TABLE journal (id INT PRIMARY KEY, ts INT, action STRING, detail STRING)
+CREATE TABLE loadouts (id STRING PRIMARY KEY, class_name STRING, display_name STRING, items STRING, weight REAL, updated INT)
+CREATE TABLE settings (ns TEXT, setting_key TEXT, value TEXT, priority INT, PRIMARY KEY (ns, setting_key))
+CREATE TABLE lambs_settings (module TEXT, setting TEXT, value REAL, PRIMARY KEY (module, setting))
+CREATE TABLE chvd (k STRING PRIMARY KEY, v TEXT)
+CREATE TABLE legacy_store (k STRING PRIMARY KEY, v STRING)
+CREATE TABLE IF NOT EXISTS session_stats (uid INTEGER PRIMARY KEY, player_name TEXT NOT NULL, kills INTEGER DEFAULT 0, deaths INTEGER DEFAULT 0, assists INTEGER DEFAULT 0, score INTEGER DEFAULT 0, team TEXT DEFAULT 'OPFOR', last_seen TEXT DEFAULT '')
+INSERT INTO users VALUES (0,'root','admin','/root'),(1,'matt','user','/home/matt'),(2,'sgt','operator','/home/sgt'),(3,'smith','user','/home/smith')
+INSERT INTO journal VALUES (200, 20000, 'op_0', 'x'), (201, 20060, 'op_1', 'y')
+INSERT INTO killhouse_scores VALUES ('smith', 'mout', 60.1, 33, 24)
+INSERT OR REPLACE INTO settings VALUES ('client', 'cba_setting_5', '5', 99)
+INSERT OR REPLACE INTO lambs_settings VALUES ('danger', 'param_5', 1.5)
+INSERT INTO loadouts VALUES ('L6', 'B_Recon_F', 'Recon', '["arifle_MX_F"]', 41.0, 600)
+INSERT INTO session_stats (player_name, kills, deaths, assists, score) VALUES ('PlayerOne', 0, 0, 0, 0)
+INSERT INTO patch_rules (name, active, priority, match_type, match_value, target_type, property, operator, value) VALUES ('fixAmmo', 1, 10, 'unit', 'this', 'weapon', 'ammo', 'set', '10')
+INSERT INTO patch_presets (name, data) VALUES ('preset1', '[["fixAmmo",10,1]]')
+INSERT OR REPLACE INTO players (uid, name, last_join) VALUES ('76561198000000001', 'PlayerOne', datetime('now'))
+UPDATE loadouts SET display_name='Renamed', weight=40.0 WHERE id='L3'
+UPDATE settings SET value='NEW', priority=9 WHERE ns='' AND setting_key='cba_setting_7'
+UPDATE patch_presets SET data = '[["fixAmmo",20,0]]' WHERE name = 'preset1'
+UPDATE players SET bans = bans + 1, whitelisted = 0 WHERE uid = '76561198000000001'
+DELETE FROM loadouts WHERE id='L5'
+DELETE FROM settings WHERE ns='server'
+DELETE FROM patch_rules WHERE name = 'fixAmmo'
+SELECT name, role FROM users WHERE uid=2
+SELECT home FROM users WHERE name='matt'
+SELECT COUNT(*) FROM files WHERE owner=1
+SELECT COUNT(*) FROM files WHERE size > 1049
+SELECT size FROM files WHERE path='/usr/share/app42.bin'
+SELECT COUNT(*) FROM files WHERE path LIKE '/usr/share/%'
+SELECT event FROM calendar WHERE date='2026-06-01'
+SELECT COUNT(*) FROM calendar WHERE event LIKE '%x%'
+SELECT pid FROM processes WHERE name='proc_7'
+SELECT COUNT(*) FROM processes WHERE cpu > 30.0
+SELECT SUM(mem) FROM processes
+SELECT COUNT(*) FROM journal WHERE ts > 10000
+SELECT COUNT(*) FROM journal WHERE action='op_2'
+SELECT u.name, COUNT(f.path) FROM users u LEFT JOIN files f ON f.owner=u.uid GROUP BY u.name ORDER BY u.name
+SELECT u.role, COUNT(*) FROM processes p JOIN users u ON u.uid=p.user GROUP BY u.role ORDER BY u.role
+SELECT path FROM files WHERE owner = (SELECT uid FROM users WHERE name='sgt') LIMIT 1
+SELECT COUNT(*) FROM files WHERE owner IN (SELECT uid FROM users WHERE role='user')
+SELECT event FROM calendar WHERE date='2026-01-01' AND event='new_year'
+SELECT display_name FROM loadouts ORDER BY updated
+SELECT items FROM loadouts WHERE id='L4'
+SELECT id FROM loadouts WHERE weight < 45.0 ORDER BY id
+SELECT v FROM chvd WHERE k='CHVD_maxView'
+SELECT v FROM legacy_store WHERE k = 'saved_loadouts'
+SELECT COUNT(*) FROM settings WHERE ns='' AND setting_key LIKE 'cba_setting_4%'
+SELECT COUNT(*) FROM settings WHERE priority > 40 AND ns=''
+SELECT MAX(value) FROM lambs_settings WHERE module='wp'
+SELECT MIN(time_s) FROM killhouse_scores WHERE player='matt'
+SELECT course, MIN(time_s) FROM killhouse_scores GROUP BY course ORDER BY course
+SELECT setting FROM tsp_settings WHERE kind='CHECKBOX'
+SELECT setting, value FROM tsp_settings WHERE kind='SLIDER' AND module='tsp_cba_core_chvd'
+SELECT u.name, SUM(f.size) FROM users u JOIN files f ON f.owner=u.uid GROUP BY u.name ORDER BY u.name
+SELECT * FROM patch_rules WHERE active = 1 ORDER BY priority DESC, id ASC LIMIT 50 OFFSET 0
+SELECT command, params FROM server_commands WHERE status = 'pending'
+SELECT count(*) as c FROM server_commands WHERE status = 'pending'
+SELECT 1
+SELECT 1 FROM server_commands LIMIT 1
+SELECT rank, COUNT(*) AS count FROM players GROUP BY rank ORDER BY count DESC
+SELECT * FROM t WHERE a = 1 AND b = 2
+SELECT a, b FROM t WHERE (a = 1 OR b = 2) AND NOT c
+SELECT * FROM t1 JOIN t2 ON t1.id = t2.id LEFT JOIN t3 ON t2.id = t3.id
+SELECT DISTINCT x FROM t ORDER BY x DESC LIMIT 10 OFFSET 5

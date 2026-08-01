@@ -22,6 +22,11 @@ pub mod ffi;
 pub mod parser;
 pub(crate) mod server;
 
+// Proptest-based fuzz harness — test-only, skipped under miri (proptest's RNG
+// state leaks under miri's getcwd isolation, same reason as engine/index.rs).
+#[cfg(all(test, not(miri)))]
+mod fuzz;
+
 // Re-exports for standalone binary
 pub use dispatch::dispatch;
 pub use server::start_server;

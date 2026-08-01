@@ -264,32 +264,36 @@ fn find_unescaped_pct(s: &str, start: usize) -> Option<usize> {
 /// Scan backward from `end` to find the start of the left operand of `%%`.
 /// Handles identifiers, dotted paths, and parenthesized expressions (function calls).
 fn find_left_operand_start(text: &str) -> usize {
-    let bytes = text.as_bytes();
-    let mut pos = text.len();
     let mut paren_depth = 0u32;
+    let mut pos = text.len();
 
     while pos > 0 {
-        let c = bytes[pos - 1] as char;
+        // Walk backward over whole chars, not bytes: multi-byte UTF-8 (e.g.
+        // U+FFFD replacement chars, 4-byte code points) would otherwise let
+        // the scan stop mid-char and produce a non-char-boundary offset.
+        let (start, c) = text[..pos]
+            .char_indices()
+            .next_back()
+            .expect("pos > 0 implies at least one char");
+        pos = start;
 
         if c == ')' {
             paren_depth += 1;
-            pos -= 1;
         } else if c == '(' {
             if paren_depth > 0 {
                 paren_depth -= 1;
-                pos -= 1;
             } else {
                 // Unmatched '(' shouldn't normally happen, but stop here if it does
-                break;
+                return pos + c.len_utf8();
             }
         } else if paren_depth > 0 {
             // Inside parentheses — consume any char
-            pos -= 1;
         } else if c.is_alphanumeric() || c == '_' || c == '.' {
-            pos -= 1;
+            // Continue scanning left
         } else {
-            // Hit a boundary (whitespace, operator, comma, etc.) at depth 0
-            break;
+            // Hit a boundary (whitespace, operator, comma, etc.) at depth 0:
+            // the left operand starts right AFTER this boundary char.
+            return pos + c.len_utf8();
         }
     }
 
@@ -303,6 +307,24 @@ mod tests {
     #[test]
     fn normal_sql_unchanged() {
         assert_eq!(preprocess("SELECT * FROM t WHERE x = 1"), "SELECT * FROM t WHERE x = 1");
+    }
+
+    #[test]
+    fn multibyte_left_operand_no_panic() {
+        // Fuzz regression: a multi-byte UTF-8 char immediately left of `%%`
+        // used to panic in find_left_operand_start. U+FFFD = bytes EF BF BD;
+        // its last byte 0xBD casts to '½' (numeric, so alphanumeric) and the
+        // old byte-wise backward scan stepped one byte further, past 0xBF,
+        // and sliced at a non-char-boundary offset. The regression is "must
+        // not panic" — with an empty (non-alphanumeric) operand no rewrite
+        // occurs, which is the correct behaviour.
+        let _ = preprocess("\u{fffd}%%'p'"); // panicked on HEAD; must not now
+        // Replacement char mid-identifier:
+        let out2 = preprocess("SELECT a\u{fffd}b %% 'p'");
+        assert!(out2.contains("fuzzy_match"), "rewrite applied: {}", out2);
+        // Valid multi-byte alphanumeric identifier (CJK):
+        let out3 = preprocess("SELECT 名 %% 'p'");
+        assert!(out3.contains("fuzzy_match"), "rewrite applied: {}", out3);
     }
 
     #[test]

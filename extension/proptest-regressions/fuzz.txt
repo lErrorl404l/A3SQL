@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 5b133336ed247b5357263db37f60637e1a4fe69f0857d38515853ba4f7c5c368 # shrinks to (create, insert, count, expected) = ("CREATE TABLE fz_a (id INT PRIMARY KEY, a STRING, b REAL)", "INSERT INTO fz_a VALUES (0, '', 0)", "SELECT COUNT(*) FROM fz_a", 1)
+cc fe91f29ea0aa1a9171ee482119581b056d46a7459a45f7b041072261531fd3af # shrinks to input = "CREATE TABLE users (uid INT PRIMARY KEY, name STRING, role STRING, home STRING)"
