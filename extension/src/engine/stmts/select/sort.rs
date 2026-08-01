@@ -6,10 +6,9 @@ use std::collections::HashMap;
 
 use sqlparser::ast::{Expr, LimitClause};
 
-use super::super::super::functions::builtin::value_to_string;
 use super::super::super::functions::eval::eval_expr;
 use crate::engine::error::EngineError;
-use crate::engine::prelude::DbValue;
+use crate::engine::prelude::{DbValue, db_value_cmp};
 
 /// ORDER BY sorting
 pub(crate) fn sort_rows<'a>(
@@ -25,7 +24,7 @@ pub(crate) fn sort_rows<'a>(
         for order in order_by {
             let a_val = eval_expr(&order.expr, a, col_map).unwrap_or(DbValue::Null);
             let b_val = eval_expr(&order.expr, b, col_map).unwrap_or(DbValue::Null);
-            let ordering = value_to_string(&a_val).cmp(&value_to_string(&b_val));
+            let ordering = db_value_cmp(&a_val, &b_val);
             let is_asc = order.options.asc.unwrap_or(true);
             let ordering = if is_asc { ordering } else { ordering.reverse() };
             if ordering != std::cmp::Ordering::Equal {
@@ -74,4 +73,83 @@ pub(crate) fn parse_expr_as_usize(expr: Option<&Expr>) -> Option<usize> {
         return s.parse::<usize>().ok();
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlparser::ast::{Ident, OrderByExpr, OrderByOptions};
+
+    fn order_on_v(asc: Option<bool>) -> OrderByExpr {
+        OrderByExpr {
+            expr: Expr::Identifier(Ident::new("v")),
+            options: OrderByOptions { asc, nulls_first: None },
+            with_fill: None,
+        }
+    }
+
+    fn v_rows(vals: &[DbValue]) -> (Vec<&[DbValue]>, HashMap<String, usize>) {
+        let rows: Vec<&[DbValue]> = vals.iter().map(std::slice::from_ref).collect();
+        let col_map = HashMap::from([("v".to_string(), 0usize)]);
+        (rows, col_map)
+    }
+
+    #[test]
+    fn order_by_int_asc_is_numeric_not_lexicographic() {
+        // Bug T5 regression: {2,10,100} must sort numerically, not "10"<"100"<"2".
+        let (rows, col_map) = v_rows(&[DbValue::Int(100), DbValue::Int(2), DbValue::Int(10)]);
+        let sorted = sort_rows(rows, &[order_on_v(Some(true))], &col_map).unwrap();
+        assert_eq!(
+            sorted,
+            vec![&[DbValue::Int(2)], &[DbValue::Int(10)], &[DbValue::Int(100)]]
+        );
+    }
+
+    #[test]
+    fn order_by_int_desc_reverses_numeric() {
+        let (rows, col_map) = v_rows(&[DbValue::Int(2), DbValue::Int(100), DbValue::Int(10)]);
+        let sorted = sort_rows(rows, &[order_on_v(Some(false))], &col_map).unwrap();
+        assert_eq!(
+            sorted,
+            vec![&[DbValue::Int(100)], &[DbValue::Int(10)], &[DbValue::Int(2)]]
+        );
+    }
+
+    #[test]
+    fn order_by_mixed_int_float_is_numeric() {
+        // db_value_cmp compares ints and floats on the same numeric axis.
+        let (rows, col_map) = v_rows(&[
+            DbValue::Float(2.5),
+            DbValue::Int(10),
+            DbValue::Int(2),
+            DbValue::Float(100.0),
+        ]);
+        let sorted = sort_rows(rows, &[order_on_v(Some(true))], &col_map).unwrap();
+        assert_eq!(
+            sorted,
+            vec![
+                &[DbValue::Int(2)],
+                &[DbValue::Float(2.5)],
+                &[DbValue::Int(10)],
+                &[DbValue::Float(100.0)]
+            ]
+        );
+    }
+
+    #[test]
+    fn order_by_null_after_numbers_asc() {
+        // db_value_cmp falls back to string compare for NULL → "NULL" > any
+        // number string, so NULLs sort after numerics ascending.
+        let (rows, col_map) = v_rows(&[DbValue::Null, DbValue::Int(10), DbValue::Int(2)]);
+        let sorted = sort_rows(rows, &[order_on_v(Some(true))], &col_map).unwrap();
+        assert_eq!(sorted, vec![&[DbValue::Int(2)], &[DbValue::Int(10)], &[DbValue::Null],]);
+    }
+
+    #[test]
+    fn order_by_defaults_to_asc() {
+        // OrderByExpr::from(Ident) leaves asc None → default ASC (numeric).
+        let (rows, col_map) = v_rows(&[DbValue::Int(100), DbValue::Int(2)]);
+        let sorted = sort_rows(rows, &[OrderByExpr::from(Ident::new("v"))], &col_map).unwrap();
+        assert_eq!(sorted, vec![&[DbValue::Int(2)], &[DbValue::Int(100)]]);
+    }
 }

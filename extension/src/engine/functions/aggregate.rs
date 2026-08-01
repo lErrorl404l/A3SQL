@@ -137,7 +137,7 @@ pub(crate) fn sort_partitions<'a>(
             let b_val = eval_projection_expr(&order.expr, b, col_map)
                 .map(|(_, v)| v)
                 .unwrap_or(DbValue::Null);
-            let ord = value_to_string(&a_val).cmp(&value_to_string(&b_val));
+            let ord = db_value_cmp(&a_val, &b_val);
             let ord = if order.options.asc.unwrap_or(true) {
                 ord
             } else {
@@ -442,4 +442,67 @@ fn aggregate_max(
         .filter_map(|r| eval_expr(arg, r, col_map).ok())
         .max_by(db_value_cmp)
         .ok_or_else(|| EngineError::Exec("MAX on empty set".into()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlparser::ast::{Ident, OrderByOptions};
+
+    fn order_on_v(asc: Option<bool>) -> sqlparser::ast::OrderByExpr {
+        sqlparser::ast::OrderByExpr {
+            expr: Expr::Identifier(Ident::new("v")),
+            options: OrderByOptions { asc, nulls_first: None },
+            with_fill: None,
+        }
+    }
+
+    /// One partition per group value, like partition_by_group output for
+    /// distinct v values — a group's representative row is rows[0].
+    fn partitions_of(owned: &[Vec<DbValue>]) -> Vec<Vec<&[DbValue]>> {
+        owned.iter().map(|row| vec![row.as_slice()]).collect()
+    }
+
+    #[test]
+    fn sort_partitions_order_by_int_asc_is_numeric() {
+        // Bug T5 regression on the GROUP BY path: {2,10,100} must sort
+        // numerically, not "10"<"100"<"2".
+        let owned = vec![vec![DbValue::Int(100)], vec![DbValue::Int(2)], vec![DbValue::Int(10)]];
+        let parts = partitions_of(&owned);
+        let col_map = HashMap::from([("v".to_string(), 0usize)]);
+        let sorted = sort_partitions(parts, &[order_on_v(Some(true))], &col_map);
+        let vals: Vec<i64> = sorted
+            .iter()
+            .map(|g| match g[0][0] {
+                DbValue::Int(n) => n,
+                _ => panic!("int partition"),
+            })
+            .collect();
+        assert_eq!(vals, vec![2, 10, 100]);
+    }
+
+    #[test]
+    fn sort_partitions_order_by_int_desc_is_numeric() {
+        let owned = vec![vec![DbValue::Int(2)], vec![DbValue::Int(100)], vec![DbValue::Int(10)]];
+        let parts = partitions_of(&owned);
+        let col_map = HashMap::from([("v".to_string(), 0usize)]);
+        let sorted = sort_partitions(parts, &[order_on_v(Some(false))], &col_map);
+        let vals: Vec<i64> = sorted
+            .iter()
+            .map(|g| match g[0][0] {
+                DbValue::Int(n) => n,
+                _ => panic!("int partition"),
+            })
+            .collect();
+        assert_eq!(vals, vec![100, 10, 2]);
+    }
+
+    #[test]
+    fn sort_partitions_empty_order_by_keeps_order() {
+        let owned = vec![vec![DbValue::Int(3)], vec![DbValue::Int(1)], vec![DbValue::Int(2)]];
+        let parts = partitions_of(&owned);
+        let col_map = HashMap::from([("v".to_string(), 0usize)]);
+        let sorted = sort_partitions(parts.clone(), &[], &col_map);
+        assert_eq!(sorted, parts, "no ORDER BY → insertion order");
+    }
 }
