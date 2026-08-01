@@ -5,7 +5,7 @@
 //! date functions (NOW, CURDATE, DATE_FORMAT, DATEDIFF, UNIX_TIMESTAMP),
 //! and utility functions (LAST_INSERT_ROWID, CHANGES, TYPEOF).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use sqlparser::ast::{
     BinaryOperator, Expr, Function, FunctionArg, FunctionArgExpr, FunctionArguments, TableFactor, TableWithJoins, Value,
@@ -890,37 +890,116 @@ pub(crate) fn resolve_single_table<'a>(from: &[TableWithJoins], db: &'a Database
 
 // ── Index-assisted lookup ─────────────────────────────────────────────
 
-/// Try to use a BTreeIndex for a simple `col = literal` WHERE clause.
-/// Returns `Some(rows)` if an index was used, `None` to fall back to full scan.
-/// O(1) PK lookup: `WHERE pk_col = literal` via pk_row_index.
-/// Returns Some(row) for exactly the matching row, Some(empty) when the key
-/// is absent, None to fall back to scan-based resolution.
+/// Decompose a WHERE expression into `col = literal` equality conjuncts.
+///
+/// Rules:
+/// - Flattens top-level `AND` chains (both sides recurse) and unwraps
+///   `Expr::Nested`.
+/// - Accepts either operand order (`a = x` or `x = a`).
+/// - Keeps only conjuncts whose value side is a literal (`Expr::Value`, or a
+///   typed string like `'5'::int`); non-Eq ops, column RHS, and anything else
+///   are skipped.
+/// - Column names are lowercased (mirrors `try_pk_index` identifier handling).
+pub(crate) fn extract_equality_conjuncts(where_expr: &Expr) -> Vec<(String, DbValue)> {
+    fn literal(expr: &Expr) -> Option<DbValue> {
+        match expr {
+            Expr::Nested(inner) => literal(inner),
+            Expr::Value(v) => Some(sql_val_to_db(&v.value)),
+            // Typed string literals (`'5'::int`) carry a string value; the
+            // column-type coercion below still applies to the raw string.
+            Expr::TypedString(ts) => Some(sql_val_to_db(&ts.value.value)),
+            _ => None,
+        }
+    }
+    fn flatten(expr: &Expr, out: &mut Vec<(String, DbValue)>) {
+        match expr {
+            Expr::Nested(inner) => flatten(inner, out),
+            Expr::BinaryOp {
+                left,
+                op: BinaryOperator::And,
+                right,
+            } => {
+                flatten(left, out);
+                flatten(right, out);
+            }
+            Expr::BinaryOp {
+                left,
+                op: BinaryOperator::Eq,
+                right,
+            } => {
+                let (ident, other) = match (left.as_ref(), right.as_ref()) {
+                    (Expr::Identifier(ident), other) | (other, Expr::Identifier(ident)) => (ident, other),
+                    _ => return,
+                };
+                if let Some(v) = literal(other) {
+                    out.push((ident.value.to_lowercase(), v));
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    flatten(where_expr, &mut out);
+    out
+}
+
+/// Try the O(1) PK fast path for a `WHERE` clause that pins EVERY primary-key
+/// column with an equality literal — single-column (`WHERE id = 5`) or
+/// composite (`WHERE ns = '' AND setting_key = 'x'`).
+/// Returns `Some(row)` for exactly the matching row, `Some(empty)` when the key
+/// is absent, `None` to fall back to scan-based resolution.
+///
+/// Partial conjuncts fall back to scan: a composite PK matched on fewer than
+/// all its columns produces a partial key (other cols NULL) that never hits —
+/// returning `Some(empty)` would wrongly hide real rows. The same guard covers
+/// conjuncts on non-PK columns and duplicate column conjuncts.
+///
+/// Literals are coerced to the column's declared type (mirroring insert-time
+/// coercion in `row_ops`) so the built pk_key matches the stored row's key:
+/// `'5'` on an INT column becomes `Int(5)`, `5` on a TEXT column becomes
+/// `String("5")`.
 pub(crate) fn try_pk_index<'a>(where_expr: Option<&Expr>, table: &'a Table) -> Option<Vec<&'a [DbValue]>> {
     let expr = where_expr?;
-    let (col_name, value) = match expr {
-        Expr::BinaryOp {
-            left,
-            op: BinaryOperator::Eq,
-            right,
-        } => match (left.as_ref(), right.as_ref()) {
-            (Expr::Identifier(ident), Expr::Value(v)) | (Expr::Value(v), Expr::Identifier(ident)) => {
-                (ident.value.to_lowercase(), sql_val_to_db(&v.value))
-            }
-            _ => return None,
-        },
-        _ => return None,
-    };
-    let ci = table.col_index.get(&col_name)?;
-    // Only single-column PKs can use the O(1) path. A composite PK matched on
-    // one column produces a partial key (other cols NULL) that never hits —
-    // returning Some(empty) would wrongly hide real rows, so fall back to scan.
-    let pk_count = table.columns.iter().filter(|c| c.primary_key).count();
-    if pk_count != 1 || !table.columns[*ci].primary_key {
+    let conjuncts = extract_equality_conjuncts(expr);
+    let pk_indices: Vec<usize> = table
+        .columns
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| c.primary_key)
+        .map(|(i, _)| i)
+        .collect();
+    if pk_indices.is_empty() || conjuncts.len() != pk_indices.len() {
         return None;
     }
-    // Build the pk_key for this value (mirrors pk_key() formatting)
+    // Build the pk_key for the conjunct values (mirrors pk_key() formatting).
     let mut key_row: Vec<DbValue> = (0..table.columns.len()).map(|_| DbValue::Null).collect();
-    key_row[*ci] = value;
+    let mut seen: HashSet<usize> = HashSet::with_capacity(pk_indices.len());
+    for (col_name, mut value) in conjuncts {
+        let ci = *table.col_index.get(&col_name)?;
+        let col = &table.columns[ci];
+        // Every conjunct must land on a distinct PK column.
+        if !col.primary_key || !seen.insert(ci) {
+            return None;
+        }
+        // Coerce the literal to the column's declared type so the encoded key
+        // matches the stored row (insert applies the same coercion). A value
+        // that already matches the stored representation (post-insert
+        // invariant: INT columns hold Int, TEXT columns hold String, ...) is
+        // kept as-is; anything coerce_value cannot convert falls back to scan.
+        let already = matches!(
+            (&col.dtype, &value),
+            (ColumnType::Int, DbValue::Int(_) | DbValue::Null)
+                | (ColumnType::Float, DbValue::Float(_) | DbValue::Null)
+                | (ColumnType::String, DbValue::String(_) | DbValue::Null)
+                | (ColumnType::Bool, DbValue::Bool(_) | DbValue::Null)
+                | (ColumnType::Strings, DbValue::Strings(_) | DbValue::Null)
+                | (ColumnType::Floats, DbValue::Floats(_) | DbValue::Null)
+        );
+        if !already && !Table::coerce_value(&mut value, &col.dtype) {
+            return None;
+        }
+        key_row[ci] = value;
+    }
     let key = table.pk_key(&key_row)?;
     match table.pk_row_index.get(&key) {
         Some(&idx) => Some(vec![table.rows[idx].as_slice()]),

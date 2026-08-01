@@ -677,6 +677,131 @@ fn composite_pk_partial_conjunct_falls_back_to_scan() {
     );
 }
 
+// ── M5 composite-PK O(1) full-match fast path ─────────────────────────
+// A WHERE clause matching ALL columns of a composite PK resolves via
+// pk_row_index in O(1) instead of a full scan. Literals are coerced to the
+// column's declared type (mirroring insert-time coercion) so the built key
+// matches the stored row's key. Partial conjuncts and non-PK conjuncts must
+// still fall back to scan.
+
+#[test]
+fn m5_composite_pk_full_conjunct_hit() {
+    let mut db = Database::new();
+    parse_and_exec(
+        "CREATE TABLE t (ns TEXT, setting_key TEXT, v INT, PRIMARY KEY (ns, setting_key))",
+        &mut db,
+    )
+    .unwrap();
+    parse_and_exec("INSERT INTO t VALUES ('', 'x', 42)", &mut db).unwrap();
+    parse_and_exec("INSERT INTO t VALUES ('', 'y', 43)", &mut db).unwrap();
+    let r = parse_and_exec("SELECT v FROM t WHERE ns = '' AND setting_key = 'x'", &mut db).unwrap();
+    assert!(
+        r.contains("[42]") && !r.contains("[43]"),
+        "full composite-PK conjunct must hit the exact row via pk_row_index: {}",
+        r
+    );
+}
+
+#[test]
+fn m5_composite_pk_reversed_conjunct_order_same_row() {
+    // Reversed conjunct order plus Nested unwrap plus literal-on-the-left
+    // (`'' = ns`) must all resolve to the same row.
+    let mut db = Database::new();
+    parse_and_exec(
+        "CREATE TABLE t (ns TEXT, setting_key TEXT, v INT, PRIMARY KEY (ns, setting_key))",
+        &mut db,
+    )
+    .unwrap();
+    parse_and_exec("INSERT INTO t VALUES ('', 'x', 42)", &mut db).unwrap();
+    parse_and_exec("INSERT INTO t VALUES ('', 'y', 43)", &mut db).unwrap();
+    let r = parse_and_exec("SELECT v FROM t WHERE (setting_key = 'x') AND ('' = ns)", &mut db).unwrap();
+    assert!(
+        r.contains("[42]") && !r.contains("[43]"),
+        "reversed/nested composite-PK conjunct must return the same row: {}",
+        r
+    );
+}
+
+#[test]
+fn m5_composite_pk_int_col_string_literal_coerces() {
+    // '5' on an INT pk column must coerce to Int(5) so the pk_key matches the
+    // stored row (insert stores Int(5), key 'i1:5').
+    let mut db = Database::new();
+    parse_and_exec(
+        "CREATE TABLE t (pk_int INT, pk_str TEXT, v INT, PRIMARY KEY (pk_int, pk_str))",
+        &mut db,
+    )
+    .unwrap();
+    parse_and_exec("INSERT INTO t VALUES (5, 'a', 1)", &mut db).unwrap();
+    let r = parse_and_exec("SELECT v FROM t WHERE pk_int = '5' AND pk_str = 'a'", &mut db).unwrap();
+    assert!(
+        r.contains("[1]"),
+        "'5' on an INT pk column must coerce to Int(5) and hit the row: {}",
+        r
+    );
+}
+
+#[test]
+fn m5_composite_pk_text_col_int_literal_coerces() {
+    // Insert coerces Int 42 into the TEXT pk column, storing String("42")
+    // (key 's2:42'). An int literal 42 in the WHERE must coerce the same way
+    // and hit the row.
+    let mut db = Database::new();
+    parse_and_exec(
+        "CREATE TABLE t (pk_int INT, pk_str TEXT, v INT, PRIMARY KEY (pk_int, pk_str))",
+        &mut db,
+    )
+    .unwrap();
+    parse_and_exec("INSERT INTO t VALUES (5, 42, 2)", &mut db).unwrap();
+    let r = parse_and_exec("SELECT v FROM t WHERE pk_int = 5 AND pk_str = 42", &mut db).unwrap();
+    assert!(
+        r.contains("[2]"),
+        "int literal on a TEXT pk column must coerce to String and hit the row: {}",
+        r
+    );
+}
+
+#[test]
+fn m5_composite_pk_partial_conjunct_still_scans() {
+    // Complement of the lock test: a conjunct on the OTHER column of a
+    // composite PK is still a partial key and must fall back to scan.
+    let mut db = Database::new();
+    parse_and_exec(
+        "CREATE TABLE t (ns TEXT, setting_key TEXT, v INT, PRIMARY KEY (ns, setting_key))",
+        &mut db,
+    )
+    .unwrap();
+    parse_and_exec("INSERT INTO t VALUES ('', 'x', 42)", &mut db).unwrap();
+    let r = parse_and_exec("SELECT v FROM t WHERE setting_key = 'x'", &mut db).unwrap();
+    assert!(
+        r.contains("[42]"),
+        "partial conjunct on composite PK (second col) must fall back to scan: {}",
+        r
+    );
+}
+
+#[test]
+fn m5_composite_pk_non_pk_conjunct_falls_back() {
+    // A conjunct on a non-PK column — or an extra conjunct beyond the PK
+    // columns — cannot be answered by the pk key alone; must fall back to
+    // scan and still find the row.
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE t (a TEXT, b TEXT, v INT, PRIMARY KEY (a, b))", &mut db).unwrap();
+    parse_and_exec("INSERT INTO t VALUES ('x', 'y', 7)", &mut db).unwrap();
+    let r1 = parse_and_exec("SELECT v FROM t WHERE a = 'x' AND v = 7", &mut db).unwrap();
+    assert!(
+        r1.contains("[7]"),
+        "non-PK conjunct must fall back to scan and find the row: {}",
+        r1
+    );
+    let r2 = parse_and_exec("SELECT v FROM t WHERE a = 'x' AND b = 'y' AND v = 7", &mut db).unwrap();
+    assert!(
+        r2.contains("[7]"),
+        "extra conjunct beyond the PK columns must fall back to scan: {}",
+        r2
+    );
+}
+
 // ── M6 subquery per-row overhead + cache soundness regressions ──────────
 // These lock the M6 fixes: the correlation-rewrite Cow refactor (no per-row
 // AST clone for uncorrelated subqueries), the correlated/nondeterministic

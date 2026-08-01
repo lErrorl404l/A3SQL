@@ -420,6 +420,33 @@ fn bench_frame_mix(c: &mut Criterion) {
     a3sql::dispatch("DROP TABLE bench_fm", &[]);
 }
 
+fn bench_composite_pk(c: &mut Criterion) {
+    // M5 headline: a WHERE matching ALL columns of a composite PK must resolve
+    // via pk_row_index in O(1) instead of scanning. Larger volume so the
+    // scan-vs-lookup gap is visible.
+    const CPK_ROWS: i64 = 20_000;
+    a3sql::dispatch("DROP TABLE IF EXISTS bench_cpk", &[]);
+    a3sql::dispatch(
+        "CREATE TABLE bench_cpk (ns STRING, setting_key STRING, v INT, PRIMARY KEY (ns, setting_key))",
+        &[],
+    );
+    for i in 0..CPK_ROWS {
+        let sql = format!("INSERT INTO bench_cpk VALUES ('', 'k{}', {})", i, i);
+        a3sql::dispatch(&sql, &[]);
+    }
+
+    let mut group = c.benchmark_group("composite_pk");
+    group.sample_size(50);
+    group.bench_function("full_conjunct_hit", |b| {
+        b.iter(|| a3sql::dispatch("SELECT * FROM bench_cpk WHERE ns = '' AND setting_key = 'k15000'", &[]))
+    });
+    group.bench_function("reversed_conjunct_order", |b| {
+        b.iter(|| a3sql::dispatch("SELECT * FROM bench_cpk WHERE setting_key = 'k15000' AND ns = ''", &[]))
+    });
+    group.finish();
+    a3sql::dispatch("DROP TABLE bench_cpk", &[]);
+}
+
 criterion_group!(
     benches,
     bench_full_scan,
@@ -431,6 +458,7 @@ criterion_group!(
     bench_cte,
     bench_window,
     bench_patch_rules,
+    bench_composite_pk,
     bench_frame_mix,
 );
 criterion_main!(benches);
