@@ -6,6 +6,7 @@
 //! and utility functions (LAST_INSERT_ROWID, CHANGES, TYPEOF).
 
 use std::collections::{HashMap, HashSet};
+use std::ops::Bound;
 
 use sqlparser::ast::{
     BinaryOperator, Expr, Function, FunctionArg, FunctionArgExpr, FunctionArguments, TableFactor, TableWithJoins, Value,
@@ -13,7 +14,7 @@ use sqlparser::ast::{
 
 use super::super::database::Database;
 use super::super::execute::{LAST_CHANGES, LAST_INSERT_ROWID, execute};
-use super::super::index::IndexType as A3IndexType;
+use super::super::index::{IndexType as A3IndexType, encode_key};
 use super::super::stmts::ddl::object_name_str;
 use super::super::table::{IndexImpl, Table};
 use super::super::value::json_val_to_dbvalue;
@@ -1008,22 +1009,213 @@ pub(crate) fn try_pk_index<'a>(where_expr: Option<&Expr>, table: &'a Table) -> O
 }
 
 pub(crate) fn try_btree_index<'a>(where_expr: Option<&Expr>, table: &'a Table) -> Option<Vec<&'a [DbValue]>> {
-    let expr = where_expr?;
-    let (col_name, value) = match expr {
+    let mut expr = where_expr?;
+    while let Expr::Nested(inner) = expr {
+        expr = inner;
+    }
+    match expr {
         Expr::BinaryOp {
             left,
             op: BinaryOperator::Eq,
             right,
-        } => match (left.as_ref(), right.as_ref()) {
-            (Expr::Identifier(ident), Expr::Value(v)) | (Expr::Value(v), Expr::Identifier(ident)) => {
-                (ident.value.to_lowercase(), sql_val_to_db(&v.value))
+        } => {
+            let (col_name, value) = match (left.as_ref(), right.as_ref()) {
+                (Expr::Identifier(ident), Expr::Value(v)) | (Expr::Value(v), Expr::Identifier(ident)) => {
+                    (ident.value.to_lowercase(), sql_val_to_db(&v.value))
+                }
+                _ => return None,
+            };
+            let indices = table.btree_lookup(&col_name, &value)?;
+            Some(indices.into_iter().map(|i| table.rows[i].as_slice()).collect())
+        }
+        // M7: range predicates — `>`, `<`, `>=`, `<=`, BETWEEN, LIKE 'prefix%'.
+        _ => {
+            let (col_name, lower, upper) = range_bounds(expr, table)?;
+            let IndexImpl::BTree(idx) = table.find_index(&col_name, A3IndexType::BTree)? else {
+                return None;
+            };
+            let candidates = idx.range(bound_as_str(&lower), bound_as_str(&upper));
+            if candidates.len() >= table.rows.len() {
+                return None; // not selective — a full scan costs the same
             }
-            _ => return None,
-        },
-        _ => return None,
-    };
-    let indices = table.btree_lookup(&col_name, &value)?;
-    Some(indices.into_iter().map(|i| table.rows[i].as_slice()).collect())
+            Some(candidates.into_iter().map(|i| table.rows[i].as_slice()).collect())
+        }
+    }
+}
+
+fn bound_as_str(b: &Bound<String>) -> Bound<&str> {
+    match b {
+        Bound::Included(k) => Bound::Included(k),
+        Bound::Excluded(k) => Bound::Excluded(k),
+        Bound::Unbounded => Bound::Unbounded,
+    }
+}
+
+/// Flip a comparison operator for `value <op> col` (column on the right).
+fn flip_cmp(op: BinaryOperator) -> Option<BinaryOperator> {
+    match op {
+        BinaryOperator::Gt => Some(BinaryOperator::Lt),
+        BinaryOperator::GtEq => Some(BinaryOperator::LtEq),
+        BinaryOperator::Lt => Some(BinaryOperator::Gt),
+        BinaryOperator::LtEq => Some(BinaryOperator::GtEq),
+        _ => None,
+    }
+}
+
+/// Literal expression → DbValue (unwrapping Nested). NULL and non-literals → None.
+fn bound_literal(expr: &Expr) -> Option<DbValue> {
+    match expr {
+        Expr::Nested(inner) => bound_literal(inner),
+        Expr::Value(v) => Some(sql_val_to_db(&v.value)),
+        _ => None,
+    }
+}
+
+/// Identifier expression → lowercased column name (unwrapping Nested).
+fn column_ident(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::Identifier(ident) => Some(ident.value.to_lowercase()),
+        Expr::Nested(inner) => column_ident(inner),
+        _ => None,
+    }
+}
+
+/// Coerce a bound literal to the column's declared type so its encoded key
+/// matches the stored keys (insert applies the same coercion). A Float bound
+/// on an INT column is floored (toward -inf), not truncated: the bound must
+/// sit on the correct side of the comparison boundary for negatives, while
+/// stored values keep insert's truncation. Returns None → fall back to scan.
+fn coerce_bound(value: &mut DbValue, table: &Table, col_name: &str) -> Option<()> {
+    let ci = *table.col_index.get(col_name)?;
+    let col = &table.columns[ci];
+    let already = matches!(
+        (&col.dtype, &*value),
+        (ColumnType::Int, DbValue::Int(_))
+            | (ColumnType::Float, DbValue::Float(_))
+            | (ColumnType::String, DbValue::String(_))
+            | (ColumnType::Bool, DbValue::Bool(_))
+            | (ColumnType::Strings, DbValue::Strings(_))
+            | (ColumnType::Floats, DbValue::Floats(_))
+    );
+    if already {
+        return Some(());
+    }
+    if matches!((&col.dtype, &*value), (ColumnType::Int, DbValue::Float(f)) if f.is_finite()) {
+        let DbValue::Float(f) = value else { unreachable!() };
+        *value = DbValue::Int(f.floor() as i64);
+        return Some(());
+    }
+    if Table::coerce_value(value, &col.dtype) {
+        Some(())
+    } else {
+        None
+    }
+}
+
+/// Byte-successor of a string: increment the last byte. Any key with the
+/// original string as a byte-prefix sorts strictly below the result, any key
+/// without it strictly above — so `[s, successor(s))` is exactly the byte-
+/// prefix set of `s`. None when the increment would produce invalid UTF-8
+/// (prefix ending in a 0x7F/0xBF byte) — the caller then falls back to scan.
+fn increment_last_byte(s: &str) -> Option<String> {
+    let mut bytes = s.as_bytes().to_vec();
+    *bytes.last_mut()? += 1;
+    String::from_utf8(bytes).ok()
+}
+
+/// Build BTree range bounds for a range-shaped WHERE predicate. Returns the
+/// target column plus the encoded lower/upper keys, or None to fall back to a
+/// full scan. Handles:
+///   - `col >|<|>=|<= literal` (either side; `5 < col` flips to `col > 5`)
+///   - `col BETWEEN low AND high` (inclusive both ends)
+///   - `col LIKE 'prefix%'` (leading wildcard only, case-sensitive)
+///
+/// NULL bounds never take the fast path (a NULL comparison is never true;
+/// the scan's NULL semantics are the authority). Candidates are re-filtered
+/// against the real predicate by the caller, so an upper-bound overshoot from
+/// the floor/inclusive widening can never return a row the scan would reject.
+fn range_bounds(expr: &Expr, table: &Table) -> Option<(String, Bound<String>, Bound<String>)> {
+    match expr {
+        Expr::BinaryOp { left, op, right } => {
+            let (col_name, value, flipped) = match (left.as_ref(), right.as_ref()) {
+                (Expr::Identifier(ident), Expr::Value(v)) => (ident.value.to_lowercase(), v, false),
+                (Expr::Value(v), Expr::Identifier(ident)) => (ident.value.to_lowercase(), v, true),
+                _ => return None,
+            };
+            let op = if flipped { flip_cmp(op.clone())? } else { op.clone() };
+            let mut bound = sql_val_to_db(&value.value);
+            if matches!(bound, DbValue::Null) {
+                return None;
+            }
+            coerce_bound(&mut bound, table, &col_name)?;
+            let key = encode_key(&bound);
+            let (lower, upper) = match op {
+                // Upper bounds are INCLUDED (not excluded): a Float bound on an
+                // INT column is floored, so `v < 5.5` must include the stored
+                // Int(5); the boundary row is removed by the verify-rescan.
+                BinaryOperator::Gt => (Bound::Excluded(key), Bound::Unbounded),
+                BinaryOperator::GtEq => (Bound::Included(key), Bound::Unbounded),
+                BinaryOperator::Lt => (Bound::Unbounded, Bound::Included(key)),
+                BinaryOperator::LtEq => (Bound::Unbounded, Bound::Included(key)),
+                _ => return None,
+            };
+            Some((col_name, lower, upper))
+        }
+        Expr::Between {
+            expr: col_expr,
+            low,
+            high,
+            negated: false,
+        } => {
+            let col_name = column_ident(col_expr)?;
+            let mut lo = bound_literal(low)?;
+            let mut hi = bound_literal(high)?;
+            if matches!(lo, DbValue::Null) || matches!(hi, DbValue::Null) {
+                return None;
+            }
+            coerce_bound(&mut lo, table, &col_name)?;
+            coerce_bound(&mut hi, table, &col_name)?;
+            Some((
+                col_name,
+                Bound::Included(encode_key(&lo)),
+                Bound::Included(encode_key(&hi)),
+            ))
+        }
+        Expr::Like {
+            expr: col_expr,
+            pattern,
+            negated: false,
+            escape_char: None,
+            ..
+        } => {
+            let col_name = column_ident(col_expr)?;
+            let pat = match pattern.as_ref() {
+                Expr::Value(v) => match sql_val_to_db(&v.value) {
+                    DbValue::String(s) => s,
+                    _ => return None,
+                },
+                _ => return None,
+            };
+            // Leading-wildcard-only: literal chars then a single trailing '%'.
+            if !pat.ends_with('%') {
+                return None;
+            }
+            let prefix = &pat[..pat.len() - 1];
+            if prefix.is_empty() || prefix.contains('%') || prefix.contains('_') {
+                return None;
+            }
+            // Byte-prefix of the encoded key == char-prefix of the value only
+            // for string-typed columns (numeric keys are fixed-width encodings).
+            let ci = *table.col_index.get(&col_name)?;
+            if table.columns[ci].dtype != ColumnType::String {
+                return None;
+            }
+            let lower = encode_key(&DbValue::String(prefix.to_string()));
+            let upper = increment_last_byte(&lower)?;
+            Some((col_name, Bound::Included(lower), Bound::Excluded(upper)))
+        }
+        _ => None,
+    }
 }
 
 /// Try to use a TrigramIndex for a `fuzzy_match(col, pattern)` WHERE clause.

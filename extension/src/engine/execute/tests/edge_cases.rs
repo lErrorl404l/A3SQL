@@ -1155,3 +1155,197 @@ fn m6_dml_subqueries_reflect_fresh_data() {
         r5
     );
 }
+
+// ── M7: range predicates via BTreeMap::range ─────────────────────────────
+// `>`, `<`, `>=`, `<=`, BETWEEN and LIKE 'prefix%' must route through the
+// BTree index when the column is indexed, and the candidate set must be
+// re-verified against the real predicate (so NULLs and coercion residuals
+// can never leak through).
+#[test]
+fn m7_btree_range_int_comparisons() {
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE t (id INT PRIMARY KEY, v INT)", &mut db).unwrap();
+    parse_and_exec("CREATE INDEX idx_v ON t(v)", &mut db).unwrap();
+    parse_and_exec("INSERT INTO t VALUES (1, 10), (2, 20), (3, 30)", &mut db).unwrap();
+
+    let r = parse_and_exec("SELECT id FROM t WHERE v > 20", &mut db).unwrap();
+    assert!(
+        r.contains("[3]") && !r.contains("[1]") && !r.contains("[2]"),
+        "v > 20: {}",
+        r
+    );
+    let r = parse_and_exec("SELECT id FROM t WHERE v >= 20", &mut db).unwrap();
+    assert!(
+        r.contains("[2]") && r.contains("[3]") && !r.contains("[1]"),
+        "v >= 20: {}",
+        r
+    );
+    let r = parse_and_exec("SELECT id FROM t WHERE v < 20", &mut db).unwrap();
+    assert!(
+        r.contains("[1]") && !r.contains("[2]") && !r.contains("[3]"),
+        "v < 20: {}",
+        r
+    );
+    let r = parse_and_exec("SELECT id FROM t WHERE v <= 20", &mut db).unwrap();
+    assert!(
+        r.contains("[1]") && r.contains("[2]") && !r.contains("[3]"),
+        "v <= 20: {}",
+        r
+    );
+}
+
+#[test]
+fn m7_btree_range_flipped_operand() {
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE t (id INT PRIMARY KEY, v INT)", &mut db).unwrap();
+    parse_and_exec("CREATE INDEX idx_v ON t(v)", &mut db).unwrap();
+    parse_and_exec("INSERT INTO t VALUES (1, 10), (2, 20), (3, 30)", &mut db).unwrap();
+
+    // Literal on the left: `20 < v` ≡ `v > 20`.
+    let r = parse_and_exec("SELECT id FROM t WHERE 20 < v", &mut db).unwrap();
+    assert!(r.contains("[3]") && !r.contains("[2]"), "20 < v: {}", r);
+    let r = parse_and_exec("SELECT id FROM t WHERE 25 >= v", &mut db).unwrap();
+    assert!(
+        r.contains("[1]") && r.contains("[2]") && !r.contains("[3]"),
+        "25 >= v: {}",
+        r
+    );
+}
+
+#[test]
+fn m7_btree_between_inclusive() {
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE t (id INT PRIMARY KEY, v INT)", &mut db).unwrap();
+    parse_and_exec("CREATE INDEX idx_v ON t(v)", &mut db).unwrap();
+    parse_and_exec("INSERT INTO t VALUES (1, 10), (2, 20), (3, 30)", &mut db).unwrap();
+
+    let r = parse_and_exec("SELECT id FROM t WHERE v BETWEEN 15 AND 25", &mut db).unwrap();
+    assert!(
+        r.contains("[2]") && !r.contains("[1]") && !r.contains("[3]"),
+        "BETWEEN 15 AND 25: {}",
+        r
+    );
+    // Inclusive on both ends.
+    let r = parse_and_exec("SELECT id FROM t WHERE v BETWEEN 10 AND 20", &mut db).unwrap();
+    assert!(
+        r.contains("[1]") && r.contains("[2]") && !r.contains("[3]"),
+        "BETWEEN 10 AND 20: {}",
+        r
+    );
+}
+
+#[test]
+fn m7_btree_like_prefix_case_sensitive() {
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE t (id INT PRIMARY KEY, name TEXT)", &mut db).unwrap();
+    parse_and_exec("CREATE INDEX idx_name ON t(name)", &mut db).unwrap();
+    parse_and_exec(
+        "INSERT INTO t VALUES (1, 'alpha'), (2, 'alpine'), (3, 'beta'), (4, 'Alpine')",
+        &mut db,
+    )
+    .unwrap();
+
+    let r = parse_and_exec("SELECT id FROM t WHERE name LIKE 'alp%'", &mut db).unwrap();
+    assert!(
+        r.contains("[1]") && r.contains("[2]") && !r.contains("[3]") && !r.contains("[4]"),
+        "LIKE 'alp%' must be case-sensitive: {}",
+        r
+    );
+    // Mid-pattern wildcard must NOT use the prefix fast path (still correct).
+    let r = parse_and_exec("SELECT id FROM t WHERE name LIKE '%lpine'", &mut db).unwrap();
+    assert!(r.contains("[2]") && !r.contains("[1]"), "LIKE '%lpine': {}", r);
+}
+
+#[test]
+fn m7_btree_like_unicode_prefix() {
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE t (id INT PRIMARY KEY, name TEXT)", &mut db).unwrap();
+    parse_and_exec("CREATE INDEX idx_name ON t(name)", &mut db).unwrap();
+    parse_and_exec(
+        "INSERT INTO t VALUES (1, 'hél'), (2, 'héllo'), (3, 'help'), (4, 'hélène')",
+        &mut db,
+    )
+    .unwrap();
+
+    let r = parse_and_exec("SELECT id FROM t WHERE name LIKE 'hél%'", &mut db).unwrap();
+    assert!(
+        r.contains("[1]") && r.contains("[2]") && r.contains("[4]") && !r.contains("[3]"),
+        "LIKE 'hél%' — multi-byte prefix must stay exact: {}",
+        r
+    );
+}
+
+#[test]
+fn m7_btree_range_null_boundary() {
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE t (id INT PRIMARY KEY, v INT)", &mut db).unwrap();
+    parse_and_exec("CREATE INDEX idx_v ON t(v)", &mut db).unwrap();
+    parse_and_exec("INSERT INTO t VALUES (1, NULL), (2, 5), (3, 10)", &mut db).unwrap();
+
+    // NULL encodes \x00 (sorts first) — a `>= 1` lower bound on the value
+    // prefix must exclude NULL rows naturally.
+    let r = parse_and_exec("SELECT id FROM t WHERE v >= 1", &mut db).unwrap();
+    assert!(
+        r.contains("[2]") && r.contains("[3]") && !r.contains("[1]"),
+        "v >= 1: {}",
+        r
+    );
+    // Upper-bound scan picks up the NULL key; the verify-rescan removes it.
+    let r = parse_and_exec("SELECT id FROM t WHERE v <= 5", &mut db).unwrap();
+    assert!(
+        r.contains("[2]") && !r.contains("[1]") && !r.contains("[3]"),
+        "v <= 5: {}",
+        r
+    );
+}
+
+#[test]
+fn m7_btree_range_null_bound_falls_back_to_scan() {
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE t (id INT PRIMARY KEY, v INT)", &mut db).unwrap();
+    parse_and_exec("CREATE INDEX idx_v ON t(v)", &mut db).unwrap();
+    parse_and_exec("INSERT INTO t VALUES (1, 10), (2, 20)", &mut db).unwrap();
+
+    // NULL bound → no fast path; scan semantics: every comparison is false.
+    let r = parse_and_exec("SELECT id FROM t WHERE v > NULL", &mut db).unwrap();
+    assert!(
+        !r.contains("[1]") && !r.contains("[2]"),
+        "v > NULL must match nothing: {}",
+        r
+    );
+}
+
+#[test]
+fn m7_btree_range_without_index_falls_back_to_scan() {
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE t (id INT PRIMARY KEY, v INT)", &mut db).unwrap();
+    parse_and_exec("INSERT INTO t VALUES (1, 10), (2, 20), (3, 30)", &mut db).unwrap();
+
+    let r = parse_and_exec("SELECT id FROM t WHERE v > 20", &mut db).unwrap();
+    assert!(
+        r.contains("[3]") && !r.contains("[1]"),
+        "no index → scan, still correct: {}",
+        r
+    );
+    let r = parse_and_exec("SELECT id FROM t WHERE v BETWEEN 10 AND 20", &mut db).unwrap();
+    assert!(
+        r.contains("[1]") && r.contains("[2]") && !r.contains("[3]"),
+        "no index BETWEEN: {}",
+        r
+    );
+}
+
+#[test]
+fn m7_btree_between_null_bound_falls_back_to_scan() {
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE t (id INT PRIMARY KEY, v INT)", &mut db).unwrap();
+    parse_and_exec("CREATE INDEX idx_v ON t(v)", &mut db).unwrap();
+    parse_and_exec("INSERT INTO t VALUES (1, 10), (2, 20)", &mut db).unwrap();
+
+    let r = parse_and_exec("SELECT id FROM t WHERE v BETWEEN NULL AND 15", &mut db).unwrap();
+    assert!(
+        !r.contains("[1]") && !r.contains("[2]"),
+        "BETWEEN NULL → matches nothing: {}",
+        r
+    );
+}

@@ -447,6 +447,33 @@ fn bench_composite_pk(c: &mut Criterion) {
     a3sql::dispatch("DROP TABLE bench_cpk", &[]);
 }
 
+fn bench_range(c: &mut Criterion) {
+    // M7: range predicates (`>`, BETWEEN, LIKE 'prefix%') on an indexed column
+    // resolve via BTreeMap::range instead of a full scan.
+    a3sql::dispatch("CREATE TABLE bench_rng (k STRING PRIMARY KEY, v INT, name STRING)", &[]);
+    a3sql::dispatch("CREATE INDEX bench_rng_v ON bench_rng (v)", &[]);
+    a3sql::dispatch("CREATE INDEX bench_rng_name ON bench_rng (name)", &[]);
+    for i in 0..ROW_COUNT {
+        let name = format!("val{}", i);
+        let sql = format!("INSERT INTO bench_rng VALUES ('k{}', {}, '{}')", i, i, name);
+        a3sql::dispatch(&sql, &[]);
+    }
+
+    let mut group = c.benchmark_group("range");
+    group.sample_size(50);
+    group.bench_function("gt_indexed", |b| {
+        b.iter(|| a3sql::dispatch("SELECT * FROM bench_rng WHERE v > 500", &[]))
+    });
+    group.bench_function("between_indexed", |b| {
+        b.iter(|| a3sql::dispatch("SELECT * FROM bench_rng WHERE v BETWEEN 400 AND 600", &[]))
+    });
+    group.bench_function("like_prefix_indexed", |b| {
+        b.iter(|| a3sql::dispatch("SELECT * FROM bench_rng WHERE name LIKE 'val5%'", &[]))
+    });
+    group.finish();
+    a3sql::dispatch("DROP TABLE bench_rng", &[]);
+}
+
 criterion_group!(
     benches,
     bench_full_scan,
@@ -459,6 +486,7 @@ criterion_group!(
     bench_window,
     bench_patch_rules,
     bench_composite_pk,
+    bench_range,
     bench_frame_mix,
 );
 criterion_main!(benches);

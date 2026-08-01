@@ -4,6 +4,7 @@
 //! Used by CREATE INDEX and automatically by WHERE clauses with equality or fuzzy matches.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::ops::Bound;
 
 use super::table::trigrams;
 use super::value::DbValue;
@@ -76,20 +77,16 @@ impl BTreeIndex {
         self.entries.get(&key).cloned().unwrap_or_default()
     }
 
-    /// Partial match (for `LIKE 'prefix%'` or `>`, `<` comparisons).
-    /// Returns all row indices where the key matches a predicate.
-    #[allow(dead_code, reason = "range queries not yet wired in executor")]
-    pub fn range_lookup<F>(&self, mut predicate: F) -> Vec<usize>
-    where
-        F: FnMut(&str) -> bool,
-    {
-        let mut results = Vec::new();
-        for (key, indices) in &self.entries {
-            if predicate(key) {
-                results.extend(indices);
-            }
-        }
-        results
+    /// Range scan over encoded keys, in ascending key order.
+    /// Bounds are produced by `encode_key` of the bound values (type-prefix
+    /// byte + value encoding), so the key order matches the value order. For
+    /// `LIKE 'prefix%'` the upper bound is the byte-successor of the prefixed
+    /// key — every key with the prefix sorts below it, everything else above.
+    pub fn range(&self, lower: Bound<&str>, upper: Bound<&str>) -> Vec<usize> {
+        self.entries
+            .range::<str, (Bound<&str>, Bound<&str>)>((lower, upper))
+            .flat_map(|(_, indices)| indices.iter().copied())
+            .collect()
     }
 
     /// Scan all entries.
@@ -188,7 +185,7 @@ impl TrigramIndex {
 // ── Encoding helpers ───────────────────────────────────────────────────
 
 /// Encode a DbValue as a sortable string key for BTreeMap ordering.
-fn encode_key(v: &DbValue) -> String {
+pub(crate) fn encode_key(v: &DbValue) -> String {
     match v {
         DbValue::Null => "\x00".to_string(),
         DbValue::Bool(true) => "\x01true".to_string(),
@@ -377,6 +374,70 @@ mod tests {
         idx.insert(1, &DbValue::String("AbC".into()));
         assert_eq!(idx.lookup(&DbValue::String("AbC".into())), vec![1]);
         assert_eq!(idx.lookup(&DbValue::String("abc".into())), vec![0]);
+    }
+
+    /// Build the byte-successor exclusive upper bound for a LIKE 'prefix%' scan.
+    fn like_upper(prefix: &str) -> Bound<&'static str> {
+        // encode_key(String(prefix)) = "\x04" + prefix; incrementing the last
+        // byte of the full key string gives the exclusive successor. (Prefix
+        // never ends in a 0xFF byte — invalid in UTF-8 — so no carry.)
+        let key = encode_key(&DbValue::String(prefix.to_string()));
+        let mut bytes = key.into_bytes();
+        *bytes.last_mut().unwrap() += 1;
+        let upper = String::from_utf8(bytes).unwrap();
+        // Leak for the 'static bound used in these tests only.
+        Bound::Excluded(Box::leak(upper.into_boxed_str()))
+    }
+
+    fn borrow_bound(b: &Bound<String>) -> Bound<&str> {
+        match b {
+            Bound::Included(s) => Bound::Included(s),
+            Bound::Excluded(s) => Bound::Excluded(s),
+            Bound::Unbounded => Bound::Unbounded,
+        }
+    }
+
+    #[test]
+    fn btree_range_int_bounds() {
+        use std::ops::Bound::{Excluded, Included, Unbounded};
+        let mut idx = BTreeIndex::new("v");
+        idx.insert(0, &DbValue::Int(10));
+        idx.insert(1, &DbValue::Int(20));
+        idx.insert(2, &DbValue::Int(30));
+        idx.insert(3, &DbValue::Null); // \x00 sorts first
+        let k = |n: i64| encode_key(&DbValue::Int(n));
+
+        assert_eq!(
+            idx.range(borrow_bound(&Included(k(20))), Unbounded),
+            vec![1, 2],
+            ">= 20"
+        );
+        assert_eq!(idx.range(borrow_bound(&Excluded(k(10))), Unbounded), vec![1, 2], "> 10");
+        assert_eq!(
+            idx.range(Unbounded, borrow_bound(&Included(k(20)))),
+            vec![3, 0, 1],
+            "<= 20 (NULL key sorts first)"
+        );
+        assert_eq!(idx.range(Unbounded, borrow_bound(&Excluded(k(20)))), vec![3, 0], "< 20");
+        assert_eq!(
+            idx.range(borrow_bound(&Included(k(10))), borrow_bound(&Included(k(20)))),
+            vec![0, 1],
+            "BETWEEN 10 AND 20"
+        );
+    }
+
+    #[test]
+    fn btree_range_string_prefix() {
+        use std::ops::Bound::Included;
+        let mut idx = BTreeIndex::new("name");
+        idx.insert(0, &DbValue::String("alpha".into()));
+        idx.insert(1, &DbValue::String("alpine".into()));
+        idx.insert(2, &DbValue::String("beta".into()));
+        idx.insert(3, &DbValue::String("Alpine".into())); // case-sensitive: not under "alp"
+
+        let lower = Included(encode_key(&DbValue::String("alp".to_string())));
+        let got = idx.range(borrow_bound(&lower), like_upper("alp"));
+        assert_eq!(got, vec![0, 1], "LIKE 'alp%' must be byte-exact and case-sensitive");
     }
 
     // ── Proptest: encode_key ordering must match db_value_cmp ordering ──
