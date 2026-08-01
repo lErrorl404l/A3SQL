@@ -23,6 +23,21 @@ thread_local! {
         const { std::cell::RefCell::new(None) };
 }
 
+// ponytail: per-statement subquery result cache. exec_subquery clones the
+// whole DB snapshot per call — without this, `WHERE n=(SELECT 1)` re-clones
+// O(rows) for EVERY row → O(n²). Keyed on the (correlation-rewritten) query
+// string: uncorrelated subqueries rewrite identically each row → 1 eval then
+// cache hits. Correlated subqueries inline distinct literals per row → distinct
+// keys, no stale hits. Cleared whenever the snapshot is (re)set.
+thread_local! {
+    pub(crate) static SUBQ_CACHE: std::cell::RefCell<std::collections::HashMap<String, Vec<DbValue>>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
+pub(crate) fn clear_subq_cache() {
+    SUBQ_CACHE.with(|c| c.borrow_mut().clear());
+}
+
 // ponytail: global tracking for last_insert_rowid / changes (no db ref in eval path)
 thread_local! {
     pub(crate) static LAST_INSERT_ROWID: std::cell::RefCell<Option<String>> =

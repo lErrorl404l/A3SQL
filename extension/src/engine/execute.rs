@@ -18,7 +18,10 @@ pub(crate) mod util;
 
 // Re-export shared utilities for backward compatibility with existing imports.
 use util::drop_index_by_name;
-pub(crate) use util::{format_projected_result, parse_and_exec, COPY_STDIN, LAST_CHANGES, LAST_INSERT_ROWID, SUBQ_DB};
+pub(crate) use util::{
+    clear_subq_cache, format_projected_result, parse_and_exec, COPY_STDIN, LAST_CHANGES, LAST_INSERT_ROWID, SUBQ_CACHE,
+    SUBQ_DB,
+};
 
 // ── Public entry point ──────────────────────────────────────────────────
 

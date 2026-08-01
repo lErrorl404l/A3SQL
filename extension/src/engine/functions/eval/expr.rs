@@ -421,6 +421,16 @@ pub(crate) fn exec_function(
                 }
                 return Err(EngineError::Exec(format!("Unknown plugin function '{}'", fn_name)));
             }
+            // sqlparser parses reserved keyword USER/CURRENT_USER as a zero-arg
+            // function (`user()`). Real mods store columns named `user`, so a
+            // bare `WHERE user = 1` must resolve to the column (SQLite allows
+            // unquoted `user`). Only when no argument list is present AND the
+            // name is a column in scope do we treat it as a column reference.
+            if matches!(func.args, FunctionArguments::None) {
+                if let Some(&pos) = col_map.get(&name) {
+                    return Ok(row[pos].clone());
+                }
+            }
             exec_std_function(func, name, row, col_map)
         }
     }

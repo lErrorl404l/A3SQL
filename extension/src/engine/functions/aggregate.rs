@@ -117,6 +117,41 @@ fn keys_equal(a: &[DbValue], b: &[DbValue]) -> bool {
     a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x == y)
 }
 
+/// Sort group partitions by ORDER BY expressions. Group columns evaluate
+/// against the group's representative row; aggregate functions (e.g.
+/// `ORDER BY COUNT(*)`) evaluate over the whole group.
+pub(crate) fn sort_partitions<'a>(
+    partitions: Vec<Vec<&'a [DbValue]>>,
+    order_by: &[sqlparser::ast::OrderByExpr],
+    col_map: &HashMap<String, usize>,
+) -> Vec<Vec<&'a [DbValue]>> {
+    if order_by.is_empty() {
+        return partitions;
+    }
+    let mut parts = partitions;
+    parts.sort_by(|a, b| {
+        for order in order_by {
+            let a_val = eval_projection_expr(&order.expr, a, col_map)
+                .map(|(_, v)| v)
+                .unwrap_or(DbValue::Null);
+            let b_val = eval_projection_expr(&order.expr, b, col_map)
+                .map(|(_, v)| v)
+                .unwrap_or(DbValue::Null);
+            let ord = value_to_string(&a_val).cmp(&value_to_string(&b_val));
+            let ord = if order.options.asc.unwrap_or(true) {
+                ord
+            } else {
+                ord.reverse()
+            };
+            if ord != std::cmp::Ordering::Equal {
+                return ord;
+            }
+        }
+        std::cmp::Ordering::Equal
+    });
+    parts
+}
+
 /// Compute aggregate functions over partitions (groups) of rows.
 pub(crate) fn compute_aggregates(
     partitions: &[Vec<&[DbValue]>],
@@ -170,6 +205,11 @@ pub(crate) fn projection_expr_name(expr: &Expr) -> String {
     match expr {
         Expr::Function(f) => f.name.to_string().to_uppercase(),
         Expr::Identifier(ident) => ident.value.to_lowercase(),
+        Expr::CompoundIdentifier(parts) => parts
+            .iter()
+            .map(|p| p.value.to_lowercase())
+            .collect::<Vec<_>>()
+            .join("."),
         _ => "EXPR".to_string(),
     }
 }

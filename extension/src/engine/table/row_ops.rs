@@ -148,13 +148,9 @@ impl Table {
     /// O(1) via pk_row_index — no Vec::remove shifting. Returns true if the
     /// row existed and was replaced, false if it did not exist.
     pub fn replace_by_pk(&mut self, full_row: Vec<DbValue>) -> Result<bool, EngineError> {
-        let Some(pk_col) = self.columns.iter().position(|c| c.primary_key) else {
-            return Err(EngineError::Exec("REPLACE requires a primary key column".into()));
-        };
-        let pk_val = &full_row[pk_col];
-        let mut key_row: Vec<DbValue> = (0..self.columns.len()).map(|_| DbValue::Null).collect();
-        key_row[pk_col] = pk_val.clone();
-        if let Some(key) = self.pk_key(&key_row) {
+        // Build the PK key from the FULL row — pk_key joins every PK column,
+        // so a partial (single-column) key never matches a composite PK.
+        if let Some(key) = self.pk_key(&full_row) {
             if let Some(&idx) = self.pk_row_index.get(&key) {
                 // Remove old UNIQUE keys for the replaced row, then re-add
                 // for the new values (PK is unchanged so pk maps stay valid)

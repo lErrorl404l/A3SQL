@@ -170,6 +170,17 @@ pub(crate) fn exec_select(query: &Query, db: &mut Database) -> Result<String, En
         } else {
             group_partitions
         };
+        // ORDER BY after GROUP BY — sort the groups (mod shape: ORDER BY <group-col>)
+        let group_partitions = if let Some(order_by) = &query.order_by {
+            match &order_by.kind {
+                sqlparser::ast::OrderByKind::Expressions(exprs) if !exprs.is_empty() => {
+                    super::super::functions::aggregate::sort_partitions(group_partitions, exprs, &table.col_index)
+                }
+                _ => group_partitions,
+            }
+        } else {
+            group_partitions
+        };
         let result = super::super::functions::aggregate::compute_aggregates(
             &group_partitions,
             &select.projection,
@@ -297,12 +308,23 @@ fn set_subq_snapshot_if_needed(select: &Select, db: &Database) {
         || select.having.as_ref().is_some_and(expr_has_subquery);
     if needs_snapshot {
         SUBQ_DB.with(|snap| *snap.borrow_mut() = Some(db.clone()));
+        super::clear_subq_cache();
     }
 }
 
 /// Execute a subquery (SELECT) and return the first column of each row.
 /// Uses the thread-local DB snapshot set by exec_select (avoids deadlock).
+///
+/// Results are memoized per statement: eval_expr re-evaluates the subquery
+/// for every outer row, and cloning the snapshot is O(total rows) — without
+/// the cache, `WHERE n=(SELECT 1)` over 100k rows is O(n²). The cache key is
+/// the (correlation-rewritten) query string, so correlated subqueries —
+/// which inline distinct literals per row — never hit a stale entry.
 pub(crate) fn exec_subquery(query: &Query) -> Result<Vec<DbValue>, EngineError> {
+    let key = format!("{:?}", query);
+    if let Some(hit) = super::SUBQ_CACHE.with(|c| c.borrow().get(&key).cloned()) {
+        return Ok(hit);
+    }
     let db_snapshot = super::SUBQ_DB.with(|snap| {
         snap.borrow()
             .as_ref()
@@ -350,6 +372,15 @@ pub(crate) fn exec_subquery(query: &Query) -> Result<Vec<DbValue>, EngineError> 
             }
         }
     }
+    // Store in per-statement cache (key = rewritten query string). Cap growth:
+    // a pathological number of DISTINCT correlated rewrites per statement is
+    // bounded, and the cache is cleared on every statement anyway.
+    super::SUBQ_CACHE.with(|c| {
+        let mut cache = c.borrow_mut();
+        if cache.len() < 10_000 {
+            cache.insert(key, values.clone());
+        }
+    });
     Ok(values)
 }
 

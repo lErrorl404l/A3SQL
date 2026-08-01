@@ -382,3 +382,138 @@ fn composite_pk_partial_match_falls_back_to_scan() {
     .unwrap();
     assert!(r2.contains("2"), "full composite match: {}", r2);
 }
+
+#[test]
+fn insert_or_replace_composite_pk_replaces_in_place() {
+    // Bug regression: INSERT OR REPLACE on a composite-PK table built the PK
+    // key from a PARTIAL row (first pk col + NULLs), never matched the real
+    // composite key in pk_row_index, and fell through to insert() →
+    // DuplicateKey. Must build the key from the full row.
+    let mut db = Database::new();
+    parse_and_exec(
+        "CREATE TABLE settings (ns TEXT, set_key TEXT, val TEXT, PRIMARY KEY (ns, set_key))",
+        &mut db,
+    )
+    .unwrap();
+    parse_and_exec(
+        "INSERT INTO settings VALUES ('', 's1', 'old'), ('', 's2', 'v2')",
+        &mut db,
+    )
+    .unwrap();
+    parse_and_exec("INSERT OR REPLACE INTO settings VALUES ('', 's1', 'new')", &mut db).unwrap();
+    let r = parse_and_exec("SELECT COUNT(*) FROM settings", &mut db).unwrap();
+    assert!(r.contains("2"), "replace must not grow the table: {}", r);
+    let r2 = parse_and_exec("SELECT val FROM settings WHERE ns='' AND set_key='s1'", &mut db).unwrap();
+    assert!(r2.contains("new"), "replaced value: {}", r2);
+}
+
+#[test]
+fn join_empty_result_is_valid_json_and_projection_respected() {
+    // Bug regression: JOIN with zero matching rows returned a trailing comma
+    // (`[["h1",...],]` — invalid JSON), and JOIN ignored the SELECT list
+    // (returned ALL columns regardless of projection).
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE users (uid INT PRIMARY KEY, name STRING)", &mut db).unwrap();
+    parse_and_exec("CREATE TABLE files (path STRING PRIMARY KEY, owner INT)", &mut db).unwrap();
+    parse_and_exec("INSERT INTO users VALUES (1, 'matt'), (2, 'sgt')", &mut db).unwrap();
+    parse_and_exec("INSERT INTO files VALUES ('/a', 2)", &mut db).unwrap();
+    // Zero matching rows — must be `[["u.name"]]`, valid JSON
+    let r = parse_and_exec(
+        "SELECT u.name FROM files f JOIN users u ON u.uid = f.owner WHERE f.path = '/zzz'",
+        &mut db,
+    )
+    .unwrap();
+    assert_eq!(r, "[\"u.name\"]", "empty JOIN result: {}", r);
+    // Projection respected — only u.name, not all columns
+    let r2 = parse_and_exec("SELECT u.name FROM files f JOIN users u ON u.uid = f.owner", &mut db).unwrap();
+    assert!(!r2.contains("path"), "projection must drop f.path: {}", r2);
+    assert!(r2.contains("sgt"), "joined row: {}", r2);
+}
+
+#[test]
+fn reserved_keyword_user_as_column_name() {
+    // Bug regression: sqlparser maps USER/CURRENT_USER to a zero-arg function
+    // call; `WHERE user=1` evaluated user() → NULL → 0 rows. Must resolve the
+    // zero-arg "function" as a column when it exists in the table.
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE procs (pid INT PRIMARY KEY, user INT, cpu REAL)", &mut db).unwrap();
+    parse_and_exec(
+        "INSERT INTO procs VALUES (1, 1, 0.5), (2, 0, 0.9), (3, 1, 0.2)",
+        &mut db,
+    )
+    .unwrap();
+    let r = parse_and_exec("SELECT COUNT(*) FROM procs WHERE user = 1", &mut db).unwrap();
+    assert!(r.contains("2"), "user col WHERE: {}", r);
+}
+
+#[test]
+fn order_by_after_group_by_sorts_groups() {
+    // Bug regression: aggregate path returned early, ORDER BY after GROUP BY
+    // was ignored (groups came back in insertion order).
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE t (m TEXT, v REAL)", &mut db).unwrap();
+    parse_and_exec("INSERT INTO t VALUES ('b', 1), ('a', 2), ('c', 3), ('a', 4)", &mut db).unwrap();
+    let r = parse_and_exec("SELECT m FROM t GROUP BY m ORDER BY m", &mut db).unwrap();
+    let a_pos = r.find("a").unwrap();
+    let b_pos = r.find("b").unwrap();
+    let c_pos = r.find("c").unwrap();
+    assert!(a_pos < b_pos && b_pos < c_pos, "sorted groups: {}", r);
+    // ORDER BY aggregate function (COUNT) — evaluated over the whole group
+    let r2 = parse_and_exec(
+        "SELECT m, COUNT(*) FROM t GROUP BY m ORDER BY COUNT(*) DESC, m ASC",
+        &mut db,
+    )
+    .unwrap();
+    let a_idx = r2.find("\"a\"").unwrap();
+    let b_idx = r2.find("\"b\"").unwrap();
+    assert!(a_idx < b_idx, "COUNT DESC puts a(2) first: {}", r2);
+}
+
+#[test]
+fn join_group_by_aggregates_work() {
+    // Bug regression: JOIN path had no grouping — SELECT ... JOIN ... GROUP BY
+    // returned raw rows instead of grouped aggregates.
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE users (uid INT PRIMARY KEY, name STRING)", &mut db).unwrap();
+    parse_and_exec("CREATE TABLE files (path STRING PRIMARY KEY, owner INT)", &mut db).unwrap();
+    parse_and_exec("INSERT INTO users VALUES (1, 'matt'), (2, 'sgt')", &mut db).unwrap();
+    parse_and_exec("INSERT INTO files VALUES ('/a', 1), ('/b', 1), ('/c', 2)", &mut db).unwrap();
+    let r = parse_and_exec(
+        "SELECT u.name, COUNT(f.path) FROM users u LEFT JOIN files f ON f.owner = u.uid \
+         GROUP BY u.name ORDER BY u.name",
+        &mut db,
+    )
+    .unwrap();
+    assert!(r.contains("\"matt\",2"), "matt count: {}", r);
+    assert!(r.contains("\"sgt\",1"), "sgt count: {}", r);
+    // reserved keyword in JOIN ON clause
+    let r2 = parse_and_exec("CREATE TABLE procs (pid INT PRIMARY KEY, user INT)", &mut db)
+        .and_then(|_| parse_and_exec("INSERT INTO procs VALUES (1, 1), (2, 2)", &mut db))
+        .and_then(|_| {
+            parse_and_exec(
+                "SELECT u.name FROM procs p JOIN users u ON u.uid = p.user ORDER BY u.name",
+                &mut db,
+            )
+        })
+        .unwrap();
+    assert!(r2.contains("matt") && r2.contains("sgt"), "JOIN ON user col: {}", r2);
+}
+
+#[test]
+fn subquery_result_is_cached_and_invalidated_per_statement() {
+    // Bug regression: subquery in WHERE re-cloned the whole DB snapshot per
+    // outer row → O(n²). Results are now memoized per statement; the cache
+    // must not leak stale values across statements (UPDATE then re-query).
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE kv (k STRING PRIMARY KEY, v STRING, n INT)", &mut db).unwrap();
+    let mut vals: Vec<String> = Vec::new();
+    for i in 0..100 {
+        vals.push(format!("('k{:05}', 'v{}', {})", i, i, i));
+    }
+    parse_and_exec(&format!("INSERT INTO kv VALUES {}", vals.join(",")), &mut db).unwrap();
+    let r = parse_and_exec("SELECT COUNT(*) FROM kv WHERE n = (SELECT 42)", &mut db).unwrap();
+    assert!(r.contains("1"), "initial: {}", r);
+    parse_and_exec("UPDATE kv SET n = 42 WHERE k = 'k00000'", &mut db).unwrap();
+    let r2 = parse_and_exec("SELECT COUNT(*) FROM kv WHERE n = (SELECT 42)", &mut db).unwrap();
+    assert!(r2.contains("2"), "stale cache would give 1: {}", r2);
+}

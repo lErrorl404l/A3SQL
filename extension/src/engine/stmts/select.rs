@@ -7,7 +7,9 @@ use std::collections::HashMap;
 
 use sqlparser::ast::{Distinct, Expr, OrderByKind, Query, Select, SelectItem, SetExpr, TableFactor};
 
-use super::super::functions::aggregate::{compute_aggregates, has_aggregate, has_group_by, partition_by_group};
+use super::super::functions::aggregate::{
+    compute_aggregates, has_aggregate, has_group_by, partition_by_group, sort_partitions,
+};
 use super::ddl::object_name_str;
 use crate::engine::error::EngineError;
 use crate::engine::prelude::*;
@@ -44,6 +46,7 @@ fn set_subq_snapshot_if_needed(select: &Select, db: &Database) {
         || select.having.as_ref().is_some_and(expr_has_subquery);
     if needs_snapshot {
         SUBQ_DB.with(|snap| *snap.borrow_mut() = Some(db.clone()));
+        super::super::execute::clear_subq_cache();
     }
 }
 
@@ -175,13 +178,23 @@ pub(crate) fn exec_select(query: &Query, db: &mut Database) -> Result<String, En
         } else {
             group_partitions
         };
+        // ORDER BY after GROUP BY — sort the groups (mod shape: ORDER BY <group-col>)
+        let group_partitions = if let Some(order_by) = &query.order_by {
+            match &order_by.kind {
+                OrderByKind::Expressions(exprs) if !exprs.is_empty() => {
+                    sort_partitions(group_partitions, exprs, &table.col_index)
+                }
+                _ => group_partitions,
+            }
+        } else {
+            group_partitions
+        };
         let result = compute_aggregates(&group_partitions, &select.projection, &table.col_index);
         for name in &view_tables {
             let _ = db.drop_table(name);
         }
         return result;
     }
-
     // 3. GROUP BY without aggregates — simple dedup
     let grouped_rows = if has_group_by(select) {
         let partitions = partition_by_group(&filtered_rows, select, &table.col_index)?;

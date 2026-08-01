@@ -5,7 +5,9 @@
 
 use std::collections::HashMap;
 
-use sqlparser::ast::{Expr, FunctionArguments, LimitClause, OrderByKind, Query, Select, TableFactor, TableWithJoins};
+use sqlparser::ast::{
+    Expr, FunctionArguments, LimitClause, OrderByKind, Query, Select, SelectItem, TableFactor, TableWithJoins,
+};
 
 use super::super::super::functions::builtin::{curdate_value, exec_std_function, now_value, simple_like, values_equal};
 use super::sort::parse_expr_as_usize;
@@ -295,6 +297,51 @@ pub(crate) fn exec_select_joins(query: &Query, select: &Select, db: &mut Databas
         rows.retain(|r| ef(ex, r).map(|v| is_truthy(&v)).unwrap_or(false));
     }
 
+    // GROUP BY / aggregates over the joined rows. The aggregate machinery
+    // (partition_by_group / compute_aggregates) works on `&[DbValue]` slices
+    // + a positional col_map, which is exactly the join's flat-row shape.
+    if super::super::super::functions::aggregate::has_aggregate(&select.projection) {
+        let flat: Vec<&[DbValue]> = rows.iter().map(|r| r.as_slice()).collect();
+        let group_partitions = if super::super::super::functions::aggregate::has_group_by(select) {
+            super::super::super::functions::aggregate::partition_by_group(&flat, select, &col_map)?
+        } else {
+            vec![flat] // single group: all rows
+        };
+        // HAVING — filter partitions after grouping
+        let group_partitions: Vec<Vec<&[DbValue]>> = if let Some(having) = &select.having {
+            group_partitions
+                .into_iter()
+                .filter(|group| {
+                    if group.is_empty() {
+                        return false;
+                    }
+                    ef(having, group[0]).map(|v| is_truthy(&v)).unwrap_or(false)
+                })
+                .collect()
+        } else {
+            group_partitions
+        };
+        // ORDER BY after GROUP BY — sort the groups
+        let group_partitions = if let Some(ob) = &query.order_by {
+            match &ob.kind {
+                OrderByKind::Expressions(exprs) if !exprs.is_empty() => {
+                    super::super::super::functions::aggregate::sort_partitions(group_partitions, exprs, &col_map)
+                }
+                _ => group_partitions,
+            }
+        } else {
+            group_partitions
+        };
+        for name in &view_tables {
+            let _ = db.drop_table(name);
+        }
+        return super::super::super::functions::aggregate::compute_aggregates(
+            &group_partitions,
+            &select.projection,
+            &col_map,
+        );
+    }
+
     // ORDER BY
     if let Some(ob) = &query.order_by {
         let exs = match &ob.kind {
@@ -336,23 +383,61 @@ pub(crate) fn exec_select_joins(query: &Query, select: &Select, db: &mut Databas
     };
     rows = rows[s..e].to_vec();
 
-    // Format
-    let h = header
+    // Format — respect the SELECT projection (only show chosen columns),
+    // and emit valid JSON even for an empty result set.
+    let is_wildcard = select
+        .projection
         .iter()
-        .map(|h| format!("\"{}\"", h))
-        .collect::<Vec<_>>()
-        .join(",");
+        .any(|item| matches!(item, SelectItem::Wildcard { .. }));
+    let h: Vec<String> = if is_wildcard {
+        header.iter().map(|h| format!("\"{}\"", h)).collect()
+    } else {
+        select
+            .projection
+            .iter()
+            .map(|item| match item {
+                SelectItem::UnnamedExpr(expr) => format!("\"{}\"", projection_expr_name(expr)),
+                SelectItem::ExprWithAlias { alias, .. } => {
+                    format!("\"{}\"", alias.value.to_lowercase())
+                }
+                SelectItem::Wildcard { .. } => unreachable!(),
+                _ => format!("\"{:?}\"", item),
+            })
+            .collect()
+    };
     let rj: Vec<String> = rows
         .iter()
         .map(|r| {
-            let c: Vec<String> = r.iter().map(|v| v.to_json_string()).collect();
+            let c: Vec<String> = if is_wildcard {
+                r.iter().map(|v| v.to_json_string()).collect()
+            } else {
+                select
+                    .projection
+                    .iter()
+                    .filter_map(|item| {
+                        let expr = match item {
+                            SelectItem::UnnamedExpr(e) => e,
+                            SelectItem::ExprWithAlias { expr: e, .. } => e,
+                            SelectItem::Wildcard { .. } => return None,
+                            _ => return None,
+                        };
+                        eval_expr_on_flat_row(expr, r, &col_map)
+                            .ok()
+                            .map(|v| v.to_json_string())
+                    })
+                    .collect()
+            };
             format!("[{}]", c.join(","))
         })
         .collect();
     for name in &view_tables {
         let _ = db.drop_table(name);
     }
-    Ok(format!("[[{}],{}]", h, rj.join(",")))
+    if rj.is_empty() {
+        Ok(format!("[{}]", h.join(",")))
+    } else {
+        Ok(format!("[[{}],{}]", h.join(","), rj.join(",")))
+    }
 }
 
 fn eval_expr_on_flat_row(
@@ -406,6 +491,14 @@ fn eval_expr_on_flat_row(
         Expr::Nested(inner) => eval_expr_on_flat_row(inner, row, col_map),
         Expr::Function(func) => {
             let name = func.name.to_string().to_lowercase();
+            // Zero-arg "functions" like USER/CURRENT_USER (sqlparser maps the
+            // reserved keywords to a bare function call) may actually be a
+            // column reference — check col_map before treating as a function.
+            if matches!(func.args, FunctionArguments::None) {
+                if let Some(&pos) = col_map.get(&name) {
+                    return Ok(row[pos].clone());
+                }
+            }
             if name == "fuzzy_match" {
                 let args = match &func.args {
                     FunctionArguments::List(list) => &list.args,
