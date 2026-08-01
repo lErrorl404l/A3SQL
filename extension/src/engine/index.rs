@@ -377,16 +377,14 @@ mod tests {
     }
 
     /// Build the byte-successor exclusive upper bound for a LIKE 'prefix%' scan.
-    fn like_upper(prefix: &str) -> Bound<&'static str> {
+    fn like_upper(prefix: &str) -> Bound<String> {
         // encode_key(String(prefix)) = "\x04" + prefix; incrementing the last
         // byte of the full key string gives the exclusive successor. (Prefix
         // never ends in a 0xFF byte — invalid in UTF-8 — so no carry.)
         let key = encode_key(&DbValue::String(prefix.to_string()));
         let mut bytes = key.into_bytes();
         *bytes.last_mut().unwrap() += 1;
-        let upper = String::from_utf8(bytes).unwrap();
-        // Leak for the 'static bound used in these tests only.
-        Bound::Excluded(Box::leak(upper.into_boxed_str()))
+        Bound::Excluded(String::from_utf8(bytes).unwrap())
     }
 
     fn borrow_bound(b: &Bound<String>) -> Bound<&str> {
@@ -436,7 +434,7 @@ mod tests {
         idx.insert(3, &DbValue::String("Alpine".into())); // case-sensitive: not under "alp"
 
         let lower = Included(encode_key(&DbValue::String("alp".to_string())));
-        let got = idx.range(borrow_bound(&lower), like_upper("alp"));
+        let got = idx.range(borrow_bound(&lower), borrow_bound(&like_upper("alp")));
         assert_eq!(got, vec![0, 1], "LIKE 'alp%' must be byte-exact and case-sensitive");
     }
 
@@ -460,6 +458,7 @@ mod tests {
             .prop_filter("must not parse as f64", |s: &String| s.parse::<f64>().is_err())
     }
 
+    #[cfg(not(miri))] // proptest's RNG state leaks under miri's getcwd isolation
     proptest! {
         #[test]
         fn encode_key_matches_db_value_cmp_ints(a in bounded_int(), b in bounded_int()) {
