@@ -52,13 +52,16 @@ fn bulk_insert_500() {
     ];
     let t = Table::new("bulk".into(), cols).unwrap();
     db.create_table("bulk", t).unwrap();
-    for i in 0..500 {
+    // ponytail: miri interprets every instruction; a small batch exercises the
+    // same code path while keeping the miri CI job fast. Native runs full size.
+    let n = if cfg!(miri) { 50 } else { 500 };
+    for i in 0..n {
         parse_and_exec(&format!("INSERT INTO bulk VALUES ({},{})", i, i * 2), &mut db).unwrap();
     }
     let r = parse_and_exec("SELECT COUNT(*) FROM bulk", &mut db).unwrap();
-    assert!(r.contains("500"), "count: {}", r);
+    assert!(r.contains(&n.to_string()), "count: {}", r);
     let s = parse_and_exec("SELECT SUM(v) FROM bulk", &mut db).unwrap();
-    assert!(s.contains("249500"), "sum: {}", s);
+    assert!(s.contains(&(n * (n - 1)).to_string()), "sum: {}", s);
 }
 
 #[test]
@@ -328,12 +331,16 @@ fn select_by_pk_uses_fast_path_and_subqueries_still_work() {
     // contains a subquery — verify both paths work.
     let mut db = Database::new();
     parse_and_exec("CREATE TABLE b (id TEXT PRIMARY KEY, val INT)", &mut db).unwrap();
-    for i in 0..5000 {
+    // ponytail: miri interprets every instruction; a small batch exercises the
+    // same code path while keeping the miri CI job fast. Native runs full size.
+    let n = if cfg!(miri) { 100 } else { 5000 };
+    for i in 0..n {
         parse_and_exec(&format!("INSERT INTO b VALUES ('k_{}', {})", i, i * 10), &mut db).unwrap();
     }
     // PK point lookup (fast path)
-    let r = parse_and_exec("SELECT val FROM b WHERE id = 'k_2500'", &mut db).unwrap();
-    assert!(r.contains("25000"), "pk lookup: {}", r);
+    let half = n / 2;
+    let r = parse_and_exec(&format!("SELECT val FROM b WHERE id = 'k_{}'", half), &mut db).unwrap();
+    assert!(r.contains(&(half * 10).to_string()), "pk lookup: {}", r);
     // Missing PK returns empty
     let r = parse_and_exec("SELECT val FROM b WHERE id = 'missing'", &mut db).unwrap();
     assert!(!r.contains("25000"), "missing pk: {}", r);
@@ -346,7 +353,7 @@ fn select_by_pk_uses_fast_path_and_subqueries_still_work() {
     assert!(r.contains("30"), "in-subquery: {}", r);
     // Scalar subquery in projection
     let r = parse_and_exec("SELECT (SELECT max(val) FROM b) AS m FROM b WHERE id = 'k_1'", &mut db).unwrap();
-    assert!(r.contains("49990"), "scalar subquery: {}", r);
+    assert!(r.contains(&((n - 1) * 10).to_string()), "scalar subquery: {}", r);
 }
 
 #[test]

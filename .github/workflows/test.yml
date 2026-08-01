@@ -30,6 +30,12 @@ jobs:
           components: miri
           toolchain: nightly
           cache-shared-key: a3sql-miri-${{ hashFiles('extension/Cargo.lock') }}
-      - run: cargo miri test --manifest-path extension/Cargo.toml --lib
+      # Miri is a single-interpreter UB detector — it cannot be parallelised,
+      # so the FULL lib suite (349 tests) takes ~9 min locally / ~34 min on CI.
+      # It only adds value where UB can actually exist: the unsafe/FFI surface,
+      # crypto (auth), rkyv serialization, ABI callbacks, envelope parsing and
+      # stack-depth recursion. The remaining ~300 tests are pure safe-Rust logic
+      # already covered by the native `test` job — miri adds nothing there.
+      - run: cargo miri test --manifest-path extension/Cargo.toml --lib -- auth engine::serialize engine::index engine::functions::eval::test dispatch server engine::trigger
         env:
           MIRIFLAGS: -Zmiri-isolation-error=warn
