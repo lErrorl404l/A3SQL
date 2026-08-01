@@ -31,6 +31,9 @@ pub(crate) enum EngineError {
     #[error("Column '{0}' already exists")]
     ColumnAlreadyExists(String),
 
+    #[error("NULL value in primary key column '{0}'")]
+    NullPrimaryKey(String),
+
     #[error("Duplicate key '{0}'")]
     DuplicateKey(String),
 
@@ -82,6 +85,7 @@ impl EngineError {
             | EngineError::ColumnNotFoundInTable { .. }
             | EngineError::ColumnAlreadyExists(_) => ErrorCode::Table,
             EngineError::DuplicateKey(_) => ErrorCode::Pk,
+            EngineError::NullPrimaryKey(_) => ErrorCode::Pk,
             EngineError::IndexNotFound(_) | EngineError::IndexAlreadyExists(_) => ErrorCode::Table,
             EngineError::ViewNotFound(_) => ErrorCode::Table,
             EngineError::TriggerAlreadyExists(_) => ErrorCode::Exec,

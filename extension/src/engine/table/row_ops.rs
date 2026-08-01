@@ -56,6 +56,17 @@ impl Table {
             }
         }
 
+        // PK implies NOT NULL — reject NULL in any PK column. Checked here
+        // (after defaults) so a PK column with a DEFAULT that fills NULL is
+        // still accepted; a genuinely NULL PK value is rejected with a clear
+        // error instead of colliding with other NULL-PK rows via the key
+        // encoding (encode_part(Null) = "n0:").
+        for (i, col) in self.columns.iter().enumerate() {
+            if col.primary_key && matches!(row[i], DbValue::Null) {
+                return Err(EngineError::NullPrimaryKey(col.name.clone()));
+            }
+        }
+
         // Check PK uniqueness
         let pk = self.pk_key(&row);
         if let Some(ref key) = pk
@@ -166,18 +177,6 @@ impl Table {
         // Row didn't exist — normal insert (validates + maintains indexes)
         self.insert(full_row)?;
         Ok(false)
-    }
-
-    /// Find the row index for a primary key value (O(1) via pk_row_index).
-    pub fn find_by_pk(&self, pk_val: &DbValue) -> Option<usize> {
-        if let Some(pk_col) = self.columns.iter().position(|c| c.primary_key) {
-            let mut key_row: Vec<DbValue> = (0..self.columns.len()).map(|_| DbValue::Null).collect();
-            key_row[pk_col] = pk_val.clone();
-            if let Some(key) = self.pk_key(&key_row) {
-                return self.pk_row_index.get(&key).copied();
-            }
-        }
-        None
     }
 
     /// Delete rows matching a predicate. Returns count of deleted rows.

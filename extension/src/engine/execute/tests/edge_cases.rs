@@ -887,6 +887,191 @@ fn m6_insert_values_scalar_subquery_correct_count() {
 }
 
 #[test]
+fn m9_composite_pk_duplicate_plain_insert_rejected() {
+    // Bug M9-B regression: composite-PK duplicates must be rejected on plain
+    // INSERT (mirrors the single-col PK path via pk_set) — the pk_row_index
+    // rebuild loop (table.rs) must never see a duplicate to last-wins over.
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE t (a TEXT, b TEXT, v TEXT, PRIMARY KEY (a, b))", &mut db).unwrap();
+    parse_and_exec("INSERT INTO t VALUES ('x', '1', 'first')", &mut db).unwrap();
+    let dup = parse_and_exec("INSERT INTO t VALUES ('x', '1', 'second')", &mut db);
+    assert!(
+        dup.is_err() && dup.clone().unwrap_err().contains("Duplicate key"),
+        "composite dup must be rejected with Duplicate key: {:?}",
+        dup
+    );
+    // Distinct composite keys still insert.
+    parse_and_exec("INSERT INTO t VALUES ('x', '2', 'v2'), ('y', '1', 'v3')", &mut db).unwrap();
+    let cnt = parse_and_exec("SELECT COUNT(*) FROM t", &mut db).unwrap();
+    assert!(cnt.contains("3"), "exactly 3 rows: {}", cnt);
+}
+
+#[test]
+fn m9_insert_or_replace_composite_keeps_upsert_semantics() {
+    // Bug M9-B regression: INSERT OR REPLACE on a composite PK must replace
+    // in place (count unchanged, values updated) — enforcement of the plain
+    // INSERT duplicate check must not leak into the upsert path.
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE t (a TEXT, b TEXT, v TEXT, PRIMARY KEY (a, b))", &mut db).unwrap();
+    parse_and_exec("INSERT INTO t VALUES ('x', '1', 'old'), ('x', '2', 'v2')", &mut db).unwrap();
+    parse_and_exec("INSERT OR REPLACE INTO t VALUES ('x', '1', 'new')", &mut db).unwrap();
+    let cnt = parse_and_exec("SELECT COUNT(*) FROM t", &mut db).unwrap();
+    assert!(cnt.contains("2"), "replace must not grow the table: {}", cnt);
+    let r = parse_and_exec("SELECT v FROM t WHERE a = 'x' AND b = '1'", &mut db).unwrap();
+    assert!(r.contains("new"), "replaced value: {}", r);
+}
+
+#[test]
+fn m9_upsert_composite_do_update_works() {
+    // Bug M9-B regression: ON CONFLICT DO UPDATE (UPSERT) on a composite PK
+    // must keep upsert semantics after the duplicate-check hardening.
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE t (a TEXT, b TEXT, v INT, PRIMARY KEY (a, b))", &mut db).unwrap();
+    parse_and_exec("INSERT INTO t VALUES ('x', '1', 10)", &mut db).unwrap();
+    parse_and_exec(
+        "INSERT INTO t VALUES ('x', '1', 99) ON CONFLICT (a, b) DO UPDATE SET v = EXCLUDED.v",
+        &mut db,
+    )
+    .unwrap();
+    let r = parse_and_exec("SELECT v FROM t WHERE a = 'x' AND b = '1'", &mut db).unwrap();
+    assert!(r.contains("99"), "upsert updated v: {}", r);
+    let cnt = parse_and_exec("SELECT COUNT(*) FROM t", &mut db).unwrap();
+    assert!(cnt.contains("1"), "upsert must not add a row: {}", cnt);
+}
+
+#[test]
+fn m9_null_in_pk_column_rejected_on_insert() {
+    // Bug M9-A regression: PK implies NOT NULL. A NULL in any PK column must
+    // be rejected with a clear error, NOT collide with other NULL-PK rows via
+    // the encode_part(Null) = "n0:" key.
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE t (a TEXT, b TEXT, v TEXT, PRIMARY KEY (a, b))", &mut db).unwrap();
+    let r1 = parse_and_exec("INSERT INTO t VALUES (NULL, 'x', '1')", &mut db);
+    assert!(
+        r1.is_err()
+            && r1
+                .as_ref()
+                .unwrap_err()
+                .contains("NULL value in primary key column 'a'"),
+        "NULL in PK part must be rejected: {:?}",
+        r1
+    );
+    // A second NULL-PK row with a different partner must ALSO be rejected —
+    // not accepted and colliding with the first.
+    let r2 = parse_and_exec("INSERT INTO t VALUES (NULL, 'y', '2')", &mut db);
+    assert!(
+        r2.is_err()
+            && r2
+                .as_ref()
+                .unwrap_err()
+                .contains("NULL value in primary key column 'a'"),
+        "second NULL-PK row must also be rejected: {:?}",
+        r2
+    );
+    // The other PK column's NULL is rejected too.
+    let r3 = parse_and_exec("INSERT INTO t VALUES ('z', NULL, '3')", &mut db);
+    assert!(
+        r3.is_err()
+            && r3
+                .as_ref()
+                .unwrap_err()
+                .contains("NULL value in primary key column 'b'"),
+        "NULL in second PK part must be rejected: {:?}",
+        r3
+    );
+    // Table stays empty — no NULL-PK rows were admitted.
+    let cnt = parse_and_exec("SELECT COUNT(*) FROM t", &mut db).unwrap();
+    assert!(cnt.contains("0"), "no rows admitted: {}", cnt);
+}
+
+#[test]
+fn m9_null_in_single_col_pk_rejected_on_insert() {
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE t (id TEXT PRIMARY KEY, v TEXT)", &mut db).unwrap();
+    let r = parse_and_exec("INSERT INTO t VALUES (NULL, 'x')", &mut db);
+    assert!(
+        r.is_err()
+            && r.as_ref()
+                .unwrap_err()
+                .contains("NULL value in primary key column 'id'"),
+        "NULL single-col PK must be rejected: {:?}",
+        r
+    );
+}
+
+#[test]
+fn m9_update_setting_pk_to_null_rejected() {
+    // Bug M9-A regression: UPDATE must not be able to null out a PK column.
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE t (a TEXT, b TEXT, v TEXT, PRIMARY KEY (a, b))", &mut db).unwrap();
+    parse_and_exec("INSERT INTO t VALUES ('x', '1', 'v1')", &mut db).unwrap();
+    let r = parse_and_exec("UPDATE t SET a = NULL WHERE a = 'x' AND b = '1'", &mut db);
+    assert!(
+        r.is_err() && r.as_ref().unwrap_err().contains("NULL value in primary key column 'a'"),
+        "UPDATE to NULL PK must be rejected: {:?}",
+        r
+    );
+    // Row is untouched after the rejected update.
+    let sel = parse_and_exec("SELECT v FROM t WHERE a = 'x' AND b = '1'", &mut db).unwrap();
+    assert!(sel.contains("v1"), "row intact: {}", sel);
+}
+
+#[test]
+fn m9_update_non_pk_column_to_null_still_allowed() {
+    // Bug M9-A scope guard: only PK columns are protected; a non-PK column
+    // may still be set to NULL.
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE t (a TEXT, b TEXT, v TEXT, PRIMARY KEY (a, b))", &mut db).unwrap();
+    parse_and_exec("INSERT INTO t VALUES ('x', '1', 'v1')", &mut db).unwrap();
+    let r = parse_and_exec("UPDATE t SET v = NULL WHERE a = 'x' AND b = '1'", &mut db);
+    assert!(r.is_ok(), "non-PK to NULL must be allowed: {:?}", r);
+    let sel = parse_and_exec("SELECT v FROM t WHERE a = 'x' AND b = '1'", &mut db).unwrap();
+    assert!(sel.contains("null"), "v is NULL: {}", sel);
+}
+
+#[test]
+fn m9_empty_string_and_utf8_composite_pk_roundtrip() {
+    // Bug M9-D regression: the injective pk_key encoding must round-trip
+    // composite PKs whose parts are the empty string and multi-byte UTF-8 —
+    // insert and point lookup must both work (exercises encode_part length
+    // prefixing on byte lengths).
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE t (a TEXT, b TEXT, v TEXT, PRIMARY KEY (a, b))", &mut db).unwrap();
+    parse_and_exec("INSERT INTO t VALUES ('', 'key1', 'empty-part')", &mut db).unwrap();
+    parse_and_exec("INSERT INTO t VALUES ('日本語', 'n3', 'utf8')", &mut db).unwrap();
+    parse_and_exec("INSERT INTO t VALUES ('', '日本語', 'both')", &mut db).unwrap();
+    let cnt = parse_and_exec("SELECT COUNT(*) FROM t", &mut db).unwrap();
+    assert!(cnt.contains("3"), "all three rows: {}", cnt);
+    // Point lookups round-trip through the encoded composite key.
+    let r1 = parse_and_exec("SELECT v FROM t WHERE a = '' AND b = 'key1'", &mut db).unwrap();
+    assert!(r1.contains("empty-part"), "empty-part lookup: {}", r1);
+    let r2 = parse_and_exec("SELECT v FROM t WHERE a = '日本語' AND b = 'n3'", &mut db).unwrap();
+    assert!(r2.contains("utf8"), "utf8 lookup: {}", r2);
+    let r3 = parse_and_exec("SELECT v FROM t WHERE a = '' AND b = '日本語'", &mut db).unwrap();
+    assert!(r3.contains("both"), "utf8-in-second-part lookup: {}", r3);
+}
+
+#[test]
+fn m9_reserved_keywords_date_time_current_timestamp_as_columns() {
+    // Bug M9-C regression: `date`, `time`, `current_timestamp` must work as
+    // column names in CREATE/INSERT/SELECT (the dialect sweep exercises them
+    // as functions; edge_cases only covered `user`).
+    let mut db = Database::new();
+    parse_and_exec(
+        "CREATE TABLE t (id TEXT PRIMARY KEY, date INT, time INT, current_timestamp INT)",
+        &mut db,
+    )
+    .unwrap();
+    parse_and_exec("INSERT INTO t VALUES ('a', 1, 2, 3)", &mut db).unwrap();
+    let rd = parse_and_exec("SELECT date FROM t WHERE id = 'a'", &mut db).unwrap();
+    assert!(rd.contains("[1]"), "date col: {}", rd);
+    let rt = parse_and_exec("SELECT time FROM t WHERE id = 'a'", &mut db).unwrap();
+    assert!(rt.contains("[2]"), "time col: {}", rt);
+    let rc = parse_and_exec("SELECT current_timestamp FROM t WHERE id = 'a'", &mut db).unwrap();
+    assert!(rc.contains("[3]"), "current_timestamp col: {}", rc);
+}
+
+#[test]
 fn m6_correlated_subquery_random_not_frozen() {
     // Bug: a correlated subquery whose outer values are constant rewrites to
     // the SAME query on every row — identical cache key — so a cached

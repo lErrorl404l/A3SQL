@@ -60,6 +60,15 @@ pub(crate) static REMOTE: LazyLock<Mutex<Option<std::net::TcpStream>>> = LazyLoc
 
 /// Output buffer size from Arma engine. 30 KB matches Arma 3 v2.20's
 /// `callExtension` ceiling — bigger result sets fit without round-trips.
+///
+/// # FFI output-buffer cap (documented, not enforced here)
+/// `OUTPUT_BUF_SIZE` is the *caller-supplied* buffer ceiling, not a server
+/// limit: the REPL server is unbounded and returns full result sets. A host
+/// that passes a smaller `output_size` to [`write_output`](fn.write_output)
+/// truncates the response at `output_size - 1` bytes, which can cut a
+/// multi-byte UTF-8 sequence mid-character (the buffer is a byte copy, not
+/// char-aware). Arma always passes the full 30 KB, so this is latent, not
+/// live. Hosts that shrink the buffer must expect truncated JSON.
 #[allow(
     dead_code,
     reason = "OUTPUT_BUF_SIZE is a public constant checked in dispatch.rs and passed to Arma via RVExtensionArgs"

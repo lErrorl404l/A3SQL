@@ -222,37 +222,40 @@ pub(crate) fn exec_insert(ins: &Insert, db: &mut Database) -> Result<String, Eng
                                 // Skip conflicting row silently
                             }
                             sqlparser::ast::OnConflictAction::DoUpdate(du) => {
-                                // Apply SET assignments to the existing row
-                                if let Some(pk_col) = table.columns.iter().position(|c| c.primary_key) {
-                                    let pk_val = &full_row[pk_col];
-                                    if let Some(row_idx) = table.find_by_pk(pk_val) {
-                                        for assign in &du.assignments {
-                                            if let sqlparser::ast::AssignmentTarget::ColumnName(name) = &assign.target {
-                                                let col_name = name.to_string().to_lowercase();
-                                                if let Some(&ci) = table.col_index.get(&col_name) {
-                                                    // Build col_map with EXCLUDED pseudo-columns
-                                                    let mut upsert_map = table.col_index.clone();
-                                                    for (col, &idx) in &table.col_index {
-                                                        upsert_map.insert(format!("excluded.{}", col), idx);
-                                                    }
-                                                    // Use full_row (the proposed new values) for EXCLUDED references
-                                                    let upsert_row = &full_row;
-                                                    let new_val = eval_expr(&assign.value, upsert_row, &upsert_map)
-                                                        .map_err(|_| {
-                                                            EngineError::Exec(format!(
-                                                                "UPSERT: invalid expr for '{}'",
-                                                                col_name
-                                                            ))
-                                                        })?;
-                                                    // update_cell maintains pk_set,
-                                                    // pk_row_index, unique_set, and
-                                                    // secondary indices for this column
-                                                    table.update_cell(row_idx, ci, new_val);
+                                // Apply SET assignments to the existing row.
+                                // Resolve the row via the FULL proposed row's
+                                // composite PK key — a partial single-column
+                                // key (find_by_pk) never matches a composite
+                                // PK and the UPSERT silently no-ops.
+                                if let Some(key) = table.pk_key(&full_row)
+                                    && let Some(&row_idx) = table.pk_row_index.get(&key)
+                                {
+                                    for assign in &du.assignments {
+                                        if let sqlparser::ast::AssignmentTarget::ColumnName(name) = &assign.target {
+                                            let col_name = name.to_string().to_lowercase();
+                                            if let Some(&ci) = table.col_index.get(&col_name) {
+                                                // Build col_map with EXCLUDED pseudo-columns
+                                                let mut upsert_map = table.col_index.clone();
+                                                for (col, &idx) in &table.col_index {
+                                                    upsert_map.insert(format!("excluded.{}", col), idx);
                                                 }
+                                                // Use full_row (the proposed new values) for EXCLUDED references
+                                                let upsert_row = &full_row;
+                                                let new_val = eval_expr(&assign.value, upsert_row, &upsert_map)
+                                                    .map_err(|_| {
+                                                        EngineError::Exec(format!(
+                                                            "UPSERT: invalid expr for '{}'",
+                                                            col_name
+                                                        ))
+                                                    })?;
+                                                // update_cell maintains pk_set,
+                                                // pk_row_index, unique_set, and
+                                                // secondary indices for this column
+                                                table.update_cell(row_idx, ci, new_val);
                                             }
                                         }
-                                        inserted += 1;
                                     }
+                                    inserted += 1;
                                 }
                             }
                         }

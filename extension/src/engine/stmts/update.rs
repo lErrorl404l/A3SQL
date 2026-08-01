@@ -107,6 +107,11 @@ pub(crate) fn exec_update(upd: &Update, db: &mut Database) -> Result<String, Eng
         updates
             .iter()
             .filter_map(|(row_i, col_ci, val)| {
+                // PK implies NOT NULL — setting a PK column to NULL is
+                // rejected (SQL-correct, mirrors the INSERT path check).
+                if t.columns[*col_ci].primary_key && matches!(val, DbValue::Null) {
+                    return Some(Err(EngineError::NullPrimaryKey(t.columns[*col_ci].name.clone())));
+                }
                 let mut row = t.rows[*row_i].clone();
                 row[*col_ci] = val.clone();
                 for expr in &t.check_constraints {
