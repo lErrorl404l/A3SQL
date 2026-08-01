@@ -6,6 +6,7 @@
 //! every row is a `DbValue`.
 
 use std::fmt;
+use std::hash::{Hash, Hasher};
 
 use super::functions::builtin::value_to_string;
 use super::functions::eval::to_float;
@@ -144,6 +145,97 @@ pub(crate) fn db_value_cmp(a: &DbValue, b: &DbValue) -> std::cmp::Ordering {
     match (to_float(a), to_float(b)) {
         (Some(x), Some(y)) => x.partial_cmp(&y).unwrap_or(std::cmp::Ordering::Equal),
         _ => value_to_string(a).cmp(&value_to_string(b)),
+    }
+}
+
+/// Grouping key for GROUP BY / DISTINCT — wraps the evaluated key values.
+///
+/// `Eq`/`Hash` match `DbValue`'s derived `PartialEq` (so `Int(5)` and
+/// `String("5")` are distinct — the derived equality never compares them
+/// equal), with one deliberate divergence: **all NaNs are equal** (derived
+/// `PartialEq` says `NaN != NaN`, so every NaN row previously formed its own
+/// group — undefined-feeling but deterministic per-row; now all NaN rows land
+/// in one group). `-0.0` and `0.0` stay equal (derived `PartialEq` already
+/// says so), and the hash canonicalizes `-0.0 → +0.0` bits to match.
+/// Variant tags keep unequal variants (`Int(5)` vs `String("5")`, `String`
+/// vs `Strings`) from ever sharing a bucket.
+#[derive(Clone, Debug)]
+pub(crate) struct GroupKey(pub(crate) Vec<DbValue>);
+
+impl PartialEq for GroupKey {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.len() == other.0.len() && self.0.iter().zip(&other.0).all(|(a, b)| group_values_equal(a, b))
+    }
+}
+
+impl Eq for GroupKey {}
+
+impl Hash for GroupKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.0.len().hash(state);
+        for v in &self.0 {
+            hash_group_value(v, state);
+        }
+    }
+}
+
+/// Equality used for grouping: derived `PartialEq` except all NaNs compare
+/// equal (floats and FLOATS[] elements).
+fn group_values_equal(a: &DbValue, b: &DbValue) -> bool {
+    match (a, b) {
+        (DbValue::Float(x), DbValue::Float(y)) => x == y || (x.is_nan() && y.is_nan()),
+        (DbValue::Floats(x), DbValue::Floats(y)) => {
+            x.len() == y.len() && x.iter().zip(y).all(|(x, y)| x == y || (x.is_nan() && y.is_nan()))
+        }
+        _ => a == b,
+    }
+}
+
+fn hash_group_value<H: Hasher>(v: &DbValue, state: &mut H) {
+    match v {
+        DbValue::Null => 0u8.hash(state),
+        DbValue::Bool(b) => {
+            1u8.hash(state);
+            b.hash(state);
+        }
+        DbValue::Int(n) => {
+            2u8.hash(state);
+            n.hash(state);
+        }
+        DbValue::Float(f) => {
+            3u8.hash(state);
+            canonical_float_bits(*f).hash(state);
+        }
+        DbValue::String(s) => {
+            4u8.hash(state);
+            s.hash(state);
+        }
+        DbValue::Strings(arr) => {
+            5u8.hash(state);
+            arr.len().hash(state);
+            for s in arr {
+                s.hash(state);
+            }
+        }
+        DbValue::Floats(arr) => {
+            6u8.hash(state);
+            arr.len().hash(state);
+            for f in arr {
+                canonical_float_bits(*f).hash(state);
+            }
+        }
+    }
+}
+
+/// NaN → one sentinel bit pattern; `-0.0` → `+0.0` bits; else raw bits.
+/// Injective on the equivalence classes `group_values_equal` defines.
+fn canonical_float_bits(f: f64) -> u64 {
+    if f.is_nan() {
+        f64::NAN.to_bits()
+    } else if f == 0.0 {
+        0.0f64.to_bits() // collapse -0.0 onto +0.0
+    } else {
+        f.to_bits()
     }
 }
 

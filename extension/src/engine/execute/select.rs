@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 
+use indexmap::IndexSet;
 use sqlparser::ast::{Distinct, Expr, OrderByKind, Query, Select, SelectItem, SetExpr, TableFactor};
 
 use super::super::database::Database;
@@ -13,7 +14,7 @@ use super::super::functions::aggregate::projection_expr_name;
 use super::super::functions::eval::{eval_expr, is_truthy, query_has_nondeterministic};
 use super::super::stmts::ddl::object_name_str;
 use super::super::stmts::select::sort::sort_rows;
-use super::super::value::{DbValue, json_val_to_dbvalue};
+use super::super::value::{DbValue, GroupKey, json_val_to_dbvalue};
 use super::SUBQ_DB;
 use super::format_projected_result;
 
@@ -233,7 +234,7 @@ pub(crate) fn exec_select(query: &Query, db: &mut Database) -> Result<String, En
 
     // 3.5 DISTINCT — dedup by comparing projected values (or DISTINCT ON expressions)
     let deduped_rows: Vec<&[DbValue]> = if select.distinct.is_some() {
-        let mut seen: Vec<Vec<DbValue>> = Vec::new();
+        let mut seen: IndexSet<GroupKey> = IndexSet::new();
         let distinct_on_exprs: Option<Vec<Expr>> = match &select.distinct {
             Some(Distinct::On(exprs)) => Some(exprs.clone()),
             _ => None,
@@ -260,12 +261,7 @@ pub(crate) fn exec_select(query: &Query, db: &mut Database) -> Result<String, En
                         })
                         .collect()
                 };
-                if seen.contains(&proj) {
-                    false
-                } else {
-                    seen.push(proj);
-                    true
-                }
+                seen.insert(GroupKey(proj))
             })
             .collect()
     } else {

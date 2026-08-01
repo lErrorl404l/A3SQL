@@ -6,12 +6,13 @@
 
 use std::collections::HashMap;
 
+use indexmap::IndexMap;
 use sqlparser::ast::{Expr, Function, Select, SelectItem};
 
 use super::super::functions::builtin::{extract_func_arg, get_func_arg_unnamed, value_to_string};
 use super::super::functions::eval::{eval_expr, eval_literal_expr, is_truthy};
-use super::super::value::DbValue;
 use super::super::value::db_value_cmp;
+use super::super::value::{DbValue, GroupKey};
 use crate::engine::error::EngineError;
 
 pub(crate) fn has_group_by(select: &Select) -> bool {
@@ -79,30 +80,25 @@ fn resolve_group_by_aliases(select: &Select) -> Vec<Expr> {
 
 /// Partition filtered rows into groups by GROUP BY columns.
 /// Returns a Vec of groups, where each group is a Vec of row references.
+/// Groups are emitted in first-occurrence order (the order each distinct key
+/// first appears), matching the old linear-scan behavior. Bucketing is
+/// hash-based (IndexMap keyed by GroupKey) instead of an O(rows × groups)
+/// linear search per row.
 pub(crate) fn partition_by_group<'a>(
     rows: &[&'a [DbValue]],
     select: &Select,
     col_map: &HashMap<String, usize>,
 ) -> Result<Vec<Vec<&'a [DbValue]>>, EngineError> {
     let exprs = resolve_group_by_aliases(select);
-    let mut groups: Vec<Vec<&[DbValue]>> = Vec::new();
-    let mut keys: Vec<Vec<DbValue>> = Vec::new();
+    // IndexMap: insertion order = first-occurrence order of the keys.
+    let mut groups: IndexMap<GroupKey, Vec<&[DbValue]>> = IndexMap::new();
 
-    'rows: for row in rows {
+    for row in rows {
         let key: Result<Vec<DbValue>, EngineError> = exprs.iter().map(|e| eval_expr(e, row, col_map)).collect();
-        let key = key?;
-
-        for (i, existing_key) in keys.iter().enumerate() {
-            if keys_equal(&key, existing_key) {
-                groups[i].push(row);
-                continue 'rows;
-            }
-        }
-        keys.push(key);
-        groups.push(vec![row]);
+        groups.entry(GroupKey(key?)).or_default().push(row);
     }
 
-    Ok(groups)
+    Ok(groups.into_values().collect())
 }
 
 fn group_by_exprs(select: &Select) -> Result<&[Expr], EngineError> {
@@ -111,10 +107,6 @@ fn group_by_exprs(select: &Select) -> Result<&[Expr], EngineError> {
         GroupByExpr::Expressions(exprs, _) => Ok(exprs.as_slice()),
         GroupByExpr::All(_) => Err(EngineError::Exec("GROUP BY ALL not supported".into())),
     }
-}
-
-fn keys_equal(a: &[DbValue], b: &[DbValue]) -> bool {
-    a.len() == b.len() && a.iter().zip(b.iter()).all(|(x, y)| x == y)
 }
 
 /// Sort group partitions by ORDER BY expressions. Group columns evaluate

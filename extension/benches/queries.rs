@@ -357,6 +357,29 @@ fn bench_patch_rules(c: &mut Criterion) {
     a3sql::dispatch("DROP TABLE bench_patch", &[]);
 }
 
+fn bench_groupby_wide(c: &mut Criterion) {
+    // M8: the group search was O(rows × groups) (linear scan per row over the
+    // distinct keys seen so far); now it is hash-bucketed. The existing
+    // group_by benches use 1000 rows / 3 groups — the quadratic is invisible
+    // there (3 comparisons per row). This bench uses ~50k distinct keys so
+    // the data-structure choice dominates and the regression can be seen.
+    const WIDE_ROWS: i64 = 50_000;
+    a3sql::dispatch("DROP TABLE IF EXISTS bench_gw", &[]);
+    a3sql::dispatch("CREATE TABLE bench_gw (k STRING PRIMARY KEY, grp STRING, v INT)", &[]);
+    for i in 0..WIDE_ROWS {
+        let sql = format!("INSERT INTO bench_gw VALUES ('k{}', 'g{:05}', {})", i, i % WIDE_ROWS, i);
+        a3sql::dispatch(&sql, &[]);
+    }
+
+    let mut group = c.benchmark_group("group_by");
+    group.sample_size(50);
+    group.bench_function("wide_distinct_50k", |b| {
+        b.iter(|| a3sql::dispatch("SELECT grp, COUNT(*) FROM bench_gw GROUP BY grp", &[]))
+    });
+    group.finish();
+    a3sql::dispatch("DROP TABLE bench_gw", &[]);
+}
+
 fn bench_frame_mix(c: &mut Criterion) {
     // Per-op + full-frame benchmarks for the 60fps game-loop shape:
     // per frame the mod does ~200 PK gets, a couple of row updates, one
@@ -488,5 +511,6 @@ criterion_group!(
     bench_composite_pk,
     bench_range,
     bench_frame_mix,
+    bench_groupby_wide,
 );
 criterion_main!(benches);

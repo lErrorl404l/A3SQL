@@ -1349,3 +1349,119 @@ fn m7_btree_between_null_bound_falls_back_to_scan() {
         r
     );
 }
+
+// ── M8: hash-based GROUP BY / DISTINCT ───────────────────────────────────
+// Group keys are bucketed by hash (IndexMap/IndexSet of GroupKey) instead of
+// an O(rows × groups) linear search per row. Grouping semantics are unchanged
+// EXCEPT one deliberate, documented improvement: all NaN group keys now land
+// in ONE group (derived PartialEq says NaN != NaN, so the old scan gave every
+// NaN-key row its own group). -0.0 and 0.0 still share a group (derived
+// equality already says they are equal) and Int 5 / String "5" stay separate.
+#[test]
+fn m8_group_by_large_set_correct_groups() {
+    // 2000 rows, 5 groups — every group's count and sum must match a
+    // hand-computed oracle, and groups must come back in first-occurrence
+    // order (row i's group is i % 5, so the order is 0,1,2,3,4).
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE t (id INT PRIMARY KEY, grp INT, v INT)", &mut db).unwrap();
+    // ponytail: miri interprets every instruction; a small batch exercises the
+    // same code path while keeping the miri CI job fast. Native runs full size.
+    let n = if cfg!(miri) { 200 } else { 2000 };
+    for i in 0..n {
+        parse_and_exec(&format!("INSERT INTO t VALUES ({}, {}, {})", i, i % 5, i), &mut db).unwrap();
+    }
+    let r = parse_and_exec("SELECT grp, COUNT(*), SUM(v) FROM t GROUP BY grp", &mut db).unwrap();
+    let rows: Vec<Vec<serde_json::Value>> = serde_json::from_str(&r).unwrap();
+    let data = &rows[1..];
+    assert_eq!(data.len(), 5, "exactly 5 groups: {}", r);
+    let per_group = n / 5;
+    for g in 0..5 {
+        let row = &data[g as usize];
+        let expect_sum: i64 = (0..n).filter(|i| i % 5 == g).sum();
+        assert_eq!(row[0].as_i64(), Some(g), "group key in first-occurrence order: {}", r);
+        assert_eq!(row[1].as_i64(), Some(per_group), "count of group {}: {}", g, r);
+        assert_eq!(row[2].as_i64(), Some(expect_sum), "sum of group {}: {}", g, r);
+    }
+}
+
+#[test]
+fn m8_nan_groups_deterministically() {
+    // Deliberate improvement: derived PartialEq says NaN != NaN, so the OLD
+    // linear scan gave every NaN-key row its own group (3 groups of COUNT 1).
+    // GroupKey canonicalizes all NaNs to one sentinel → one group of 3.
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE t (id INT PRIMARY KEY, f REAL)", &mut db).unwrap();
+    parse_and_exec("INSERT INTO t VALUES (1, 1.0), (2, 2.0), (3, 3.0)", &mut db).unwrap();
+    let r = parse_and_exec("SELECT COUNT(*) FROM t GROUP BY CAST('NaN' AS FLOAT)", &mut db).unwrap();
+    assert!(
+        r.contains("[3]") && !r.contains("[1]"),
+        "all NaN group keys must collapse into one group of 3: {}",
+        r
+    );
+}
+
+#[test]
+fn m8_neg_zero_and_zero_same_group() {
+    // -0.0 == 0.0 under derived equality (and under db_value_cmp) — one group.
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE t (id INT PRIMARY KEY, f REAL)", &mut db).unwrap();
+    parse_and_exec("INSERT INTO t VALUES (1, -0.0), (2, 0.0), (3, 0.0)", &mut db).unwrap();
+    let r = parse_and_exec("SELECT f, COUNT(*) FROM t GROUP BY f", &mut db).unwrap();
+    assert!(
+        r.contains("-0.0,3"),
+        "-0.0 and 0.0 must share one group with COUNT 3: {}",
+        r
+    );
+    // Exactly one data row (one group).
+    let rows: Vec<Vec<serde_json::Value>> = serde_json::from_str(&r).unwrap();
+    assert_eq!(rows.len(), 2, "one group total: {}", r);
+}
+
+#[test]
+fn m8_distinct_dedup_large_set() {
+    // 2000 rows, 7 distinct values — dedup must be complete and correct.
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE t (id INT PRIMARY KEY, v INT)", &mut db).unwrap();
+    // ponytail: miri runs small, native runs full size.
+    let n = if cfg!(miri) { 100 } else { 2000 };
+    for i in 0..n {
+        parse_and_exec(&format!("INSERT INTO t VALUES ({}, {})", i, i % 7), &mut db).unwrap();
+    }
+    let r = parse_and_exec("SELECT DISTINCT v FROM t", &mut db).unwrap();
+    let rows: Vec<Vec<serde_json::Value>> = serde_json::from_str(&r).unwrap();
+    assert_eq!(rows.len(), 8, "header + 7 distinct values: {}", r);
+    let mut values: Vec<i64> = rows[1..].iter().map(|row| row[0].as_i64().unwrap()).collect();
+    values.sort_unstable();
+    assert_eq!(values, vec![0, 1, 2, 3, 4, 5, 6], "distinct values: {}", r);
+}
+
+#[test]
+fn m8_group_by_wide_perf_smoke() {
+    // Correctness-only smoke for the hash path at ~10k rows with ~5000
+    // distinct keys — the old linear search was O(rows × groups) here. No
+    // timing assert (flaky); the bench exposes the speedup.
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE t (id INT PRIMARY KEY, grp INT, v INT)", &mut db).unwrap();
+    // ponytail: miri runs a small batch; native runs full size.
+    let n = if cfg!(miri) { 300 } else { 10_000 };
+    for i in 0..n {
+        parse_and_exec(&format!("INSERT INTO t VALUES ({}, {}, {})", i, i % 5000, i), &mut db).unwrap();
+    }
+    // Distinct group count = min(n, 5000) — count the data rows of the
+    // GROUP BY result (FROM-subqueries are not supported). With n == 10_000
+    // every group has exactly 2 rows; also verify one group's row count.
+    let expect_groups = n.min(5000);
+    let r = parse_and_exec("SELECT grp, COUNT(*) FROM t GROUP BY grp", &mut db).unwrap();
+    let rows: Vec<Vec<serde_json::Value>> = serde_json::from_str(&r).unwrap();
+    assert_eq!(
+        rows.len(),
+        expect_groups as usize + 1,
+        "distinct groups must be {}: {}",
+        expect_groups,
+        r
+    );
+    if n >= 5000 {
+        let r2 = parse_and_exec("SELECT COUNT(*) FROM t WHERE grp = 1234", &mut db).unwrap();
+        assert!(r2.contains("[2]"), "group 1234 has 2 rows: {}", r2);
+    }
+}

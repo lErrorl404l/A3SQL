@@ -5,6 +5,7 @@
 
 use std::collections::HashMap;
 
+use indexmap::IndexSet;
 use sqlparser::ast::{Distinct, Expr, OrderByKind, Query, Select, SelectItem, SetExpr, TableFactor};
 
 use super::super::functions::aggregate::{
@@ -13,6 +14,7 @@ use super::super::functions::aggregate::{
 use super::ddl::object_name_str;
 use crate::engine::error::EngineError;
 use crate::engine::prelude::*;
+use crate::engine::value::GroupKey;
 
 pub(crate) mod cte;
 pub(crate) mod joins;
@@ -229,7 +231,7 @@ pub(crate) fn exec_select(query: &Query, db: &mut Database) -> Result<String, En
 
     // 3.5 DISTINCT — dedup by comparing projected values (or DISTINCT ON expressions)
     let deduped_rows: Vec<&[DbValue]> = if select.distinct.is_some() {
-        let mut seen: Vec<Vec<DbValue>> = Vec::new();
+        let mut seen: IndexSet<GroupKey> = IndexSet::new();
         let distinct_on_exprs: Option<Vec<Expr>> = match &select.distinct {
             Some(Distinct::On(exprs)) => Some(exprs.clone()),
             _ => None,
@@ -256,12 +258,7 @@ pub(crate) fn exec_select(query: &Query, db: &mut Database) -> Result<String, En
                         })
                         .collect()
                 };
-                if seen.contains(&proj) {
-                    false
-                } else {
-                    seen.push(proj);
-                    true
-                }
+                seen.insert(GroupKey(proj))
             })
             .collect()
     } else {
