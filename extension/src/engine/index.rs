@@ -440,6 +440,7 @@ mod tests {
 
     // ── Proptest: encode_key ordering must match db_value_cmp ordering ──
 
+    #[cfg(not(miri))] // helpers are only used by the proptests below (cfg'd out under miri)
     /// Ints within ±2^53 are exactly representable as f64, so db_value_cmp's
     /// f64 coercion preserves strict order there. (Outside that range two
     /// distinct ints can round to the same f64: db_value_cmp reports Equal
@@ -448,6 +449,7 @@ mod tests {
     fn bounded_int() -> impl Strategy<Value = i64> {
         (-(1i64 << 53) + 1)..(1i64 << 53)
     }
+    #[cfg(not(miri))]
     fn alpha_str() -> impl Strategy<Value = String> {
         // Lowercase ASCII: db_value_cmp falls back to byte-wise string
         // comparison for non-numeric strings, which is exactly what the raw
