@@ -120,10 +120,19 @@ pub(crate) fn exec_select(query: &Query, db: &mut Database) -> Result<String, En
     set_subq_snapshot_if_needed(select, db);
 
     // PK fast path first (O(1) via pk_row_index) — point lookups by primary
-    // key are the most common SELECT shape in mod workloads.
+    // key are the most common SELECT shape in mod workloads. Index candidates
+    // are re-checked against the real predicate (verify-rescan) so coercion
+    // residuals (float-vs-int, -0.0 vs +0.0, NaN) can never return a row the
+    // scan would reject.
     let filtered_rows: Vec<&[DbValue]> =
         if let Some(row) = super::super::functions::builtin::try_pk_index(where_expr, table) {
-            row
+            row.into_iter()
+                .filter(|row| {
+                    where_expr
+                        .map(|expr| is_truthy(&eval_expr(expr, row, &table.col_index).unwrap_or(DbValue::Bool(false))))
+                        .unwrap_or(true)
+                })
+                .collect()
         } else if let Some(candidates) = super::super::functions::builtin::try_trigram_index(where_expr, table) {
             candidates
                 .into_iter()
@@ -134,7 +143,13 @@ pub(crate) fn exec_select(query: &Query, db: &mut Database) -> Result<String, En
                 })
                 .collect()
         } else if let Some(rows) = super::super::functions::builtin::try_btree_index(where_expr, table) {
-            rows
+            rows.into_iter()
+                .filter(|row| {
+                    where_expr
+                        .map(|expr| is_truthy(&eval_expr(expr, row, &table.col_index).unwrap_or(DbValue::Bool(false))))
+                        .unwrap_or(true)
+                })
+                .collect()
         } else {
             table
                 .rows

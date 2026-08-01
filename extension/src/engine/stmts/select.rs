@@ -129,9 +129,18 @@ pub(crate) fn exec_select(query: &Query, db: &mut Database) -> Result<String, En
 
     // PK fast path first (O(1) via pk_row_index) — point lookups by primary
     // key are the most common SELECT shape in mod workloads (armaos file
-    // reads, LAMBS unit lookups, ACRE2 preset fetches).
+    // reads, LAMBS unit lookups, ACRE2 preset fetches). Index candidates are
+    // re-checked against the real predicate (verify-rescan) so coercion
+    // residuals (float-vs-int, -0.0 vs +0.0, NaN) can never return a row the
+    // scan would reject.
     let filtered_rows: Vec<&[DbValue]> = if let Some(row) = try_pk_index(where_expr, table) {
-        row
+        row.into_iter()
+            .filter(|row| {
+                where_expr
+                    .map(|expr| is_truthy(&eval_expr(expr, row, &table.col_index).unwrap_or(DbValue::Bool(false))))
+                    .unwrap_or(true)
+            })
+            .collect()
     } else if let Some(candidates) = try_trigram_index(where_expr, table) {
         candidates
             .into_iter()
@@ -142,7 +151,13 @@ pub(crate) fn exec_select(query: &Query, db: &mut Database) -> Result<String, En
             })
             .collect()
     } else if let Some(rows) = try_btree_index(where_expr, table) {
-        rows
+        rows.into_iter()
+            .filter(|row| {
+                where_expr
+                    .map(|expr| is_truthy(&eval_expr(expr, row, &table.col_index).unwrap_or(DbValue::Bool(false))))
+                    .unwrap_or(true)
+            })
+            .collect()
     } else {
         table
             .rows

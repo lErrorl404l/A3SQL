@@ -194,21 +194,35 @@ fn encode_key(v: &DbValue) -> String {
         DbValue::Bool(true) => "\x01true".to_string(),
         DbValue::Bool(false) => "\x01false".to_string(),
         DbValue::Int(n) => {
-            // Pad i64 to fixed width for lexicographic ordering
-            let shifted = n.wrapping_add(i64::MAX);
-            format!("\x02{:020}", shifted)
+            // Offset-encode the two's-complement bits: XORing the sign bit maps
+            // i64::MIN → 0x0, 0 → 0x8000..0, i64::MAX → 0xFFFF..F, so the
+            // fixed-width decimal is monotonic with the numeric order. (The old
+            // n.wrapping_add(i64::MAX) wrapped negatives to huge values and
+            // mis-ordered them in the BTreeMap.)
+            let bits = (*n as u64) ^ (1u64 << 63);
+            format!("\x02{:020}", bits)
         }
         DbValue::Float(f) => {
-            // Encode f64 as sortable bytes
-            let bits = f.to_bits();
-            let sortable = if f.is_sign_negative() {
-                !bits
+            // Canonicalize NaN to one bit pattern (payload/sign bits vary →
+            // unstable ordering, index misses) and -0.0 → +0.0 (-0.0 == 0.0
+            // numerically but encodes differently), then sign-flip into
+            // sortable order: negative values invert their bits (more negative
+            // = smaller key), positive values flip the sign bit.
+            let canonical = if f.is_nan() {
+                f64::NAN.to_bits()
+            } else if *f == 0.0 {
+                0.0f64.to_bits() // collapse -0.0 onto +0.0
             } else {
-                bits ^ (1u64 << 63)
+                f.to_bits()
+            };
+            let sortable = if (canonical >> 63) != 0 {
+                !canonical
+            } else {
+                canonical ^ (1u64 << 63)
             };
             format!("\x03{:020}", sortable)
         }
-        DbValue::String(s) => format!("\x04{}", s.to_lowercase()),
+        DbValue::String(s) => format!("\x04{}", s), // case-sensitive, matches scan/`=`
         DbValue::Strings(arr) => format!("\x05{}", arr.join(",")),
         DbValue::Floats(arr) => {
             let joined: Vec<String> = arr.iter().map(|f| f.to_string()).collect();
@@ -236,6 +250,7 @@ fn value_to_plain(v: &DbValue) -> String {
 mod tests {
     use super::*;
     use crate::engine::value::*;
+    use proptest::prelude::*;
 
     #[test]
     fn btree_insert_and_lookup() {
@@ -319,5 +334,94 @@ mod tests {
         assert_eq!(idx.lookup(&DbValue::Int(1)), vec![2]);
         assert_eq!(idx.lookup(&DbValue::Int(5)), vec![0]);
         assert_eq!(idx.lookup(&DbValue::Int(100)), vec![1]);
+    }
+
+    #[test]
+    fn btree_int_extremes_round_trip() {
+        // i64::MIN landmine: the old wrapping_add wrapped it to a huge value.
+        // It must encode as the smallest key and round-trip through the index.
+        let mut idx = BTreeIndex::new("v");
+        idx.insert(0, &DbValue::Int(i64::MIN));
+        idx.insert(1, &DbValue::Int(0));
+        idx.insert(2, &DbValue::Int(i64::MAX));
+        idx.insert(3, &DbValue::Int(-1));
+        assert_eq!(idx.all_entries(), vec![0, 3, 1, 2]);
+        assert_eq!(idx.lookup(&DbValue::Int(i64::MIN)), vec![0]);
+        assert_eq!(idx.lookup(&DbValue::Int(i64::MAX)), vec![2]);
+        assert!(idx.lookup(&DbValue::Int(i64::MIN + 1)).is_empty());
+    }
+
+    #[test]
+    fn btree_float_canonicalization() {
+        // -0.0 and +0.0 must share one key (they compare equal); every NaN bit
+        // pattern must share one key (else ordering is unstable and lookups miss).
+        assert_eq!(encode_key(&DbValue::Float(0.0)), encode_key(&DbValue::Float(-0.0)));
+        let nan_keys: std::collections::HashSet<String> = [
+            f64::from_bits(f64::NAN.to_bits()),
+            f64::from_bits(f64::NAN.to_bits() | (1u64 << 63)), // negative NaN
+            f64::from_bits(f64::NAN.to_bits() | 0x0004_0000_0000_0000), // different payload
+        ]
+        .into_iter()
+        .map(|f| encode_key(&DbValue::Float(f)))
+        .collect();
+        assert_eq!(nan_keys.len(), 1, "all NaN bit patterns must canonicalize to one key");
+        // Ordering sanity for finite values: -5.0 < 0.0 < 5.0
+        assert!(encode_key(&DbValue::Float(-5.0)) < encode_key(&DbValue::Float(0.0)));
+        assert!(encode_key(&DbValue::Float(0.0)) < encode_key(&DbValue::Float(5.0)));
+    }
+
+    #[test]
+    fn btree_string_is_case_sensitive() {
+        let mut idx = BTreeIndex::new("name");
+        idx.insert(0, &DbValue::String("abc".into()));
+        idx.insert(1, &DbValue::String("AbC".into()));
+        assert_eq!(idx.lookup(&DbValue::String("AbC".into())), vec![1]);
+        assert_eq!(idx.lookup(&DbValue::String("abc".into())), vec![0]);
+    }
+
+    // ── Proptest: encode_key ordering must match db_value_cmp ordering ──
+
+    /// Ints within ±2^53 are exactly representable as f64, so db_value_cmp's
+    /// f64 coercion preserves strict order there. (Outside that range two
+    /// distinct ints can round to the same f64: db_value_cmp reports Equal
+    /// while the keys still differ — the encoding is still correct.) The
+    /// i64::MIN/MAX landmine is covered separately by btree_int_extremes_round_trip.
+    fn bounded_int() -> impl Strategy<Value = i64> {
+        (-(1i64 << 53) + 1)..(1i64 << 53)
+    }
+    fn alpha_str() -> impl Strategy<Value = String> {
+        // Lowercase ASCII: db_value_cmp falls back to byte-wise string
+        // comparison for non-numeric strings, which is exactly what the raw
+        // key comparison does. The filter guarantees the f64-parsing fallback
+        // never kicks in (e.g. "nan", "inf", "infinity" all parse as f64).
+        prop::collection::vec(prop::char::range('a', 'z'), 0..8)
+            .prop_map(|v| v.into_iter().collect())
+            .prop_filter("must not parse as f64", |s: &String| s.parse::<f64>().is_err())
+    }
+
+    proptest! {
+        #[test]
+        fn encode_key_matches_db_value_cmp_ints(a in bounded_int(), b in bounded_int()) {
+            let ka = encode_key(&DbValue::Int(a));
+            let kb = encode_key(&DbValue::Int(b));
+            prop_assert_eq!(ka.cmp(&kb), db_value_cmp(&DbValue::Int(a), &DbValue::Int(b)));
+        }
+
+        #[test]
+        fn encode_key_matches_db_value_cmp_floats(a: f64, b: f64) {
+            // NaN is unordered in db_value_cmp (partial_cmp → Equal); its
+            // canonicalization is asserted separately in btree_float_canonicalization.
+            prop_assume!(!a.is_nan() && !b.is_nan());
+            let ka = encode_key(&DbValue::Float(a));
+            let kb = encode_key(&DbValue::Float(b));
+            prop_assert_eq!(ka.cmp(&kb), db_value_cmp(&DbValue::Float(a), &DbValue::Float(b)));
+        }
+
+        #[test]
+        fn encode_key_matches_db_value_cmp_strings(a in alpha_str(), b in alpha_str()) {
+            let ka = encode_key(&DbValue::String(a.clone()));
+            let kb = encode_key(&DbValue::String(b.clone()));
+            prop_assert_eq!(ka.cmp(&kb), db_value_cmp(&DbValue::String(a), &DbValue::String(b)));
+        }
     }
 }
