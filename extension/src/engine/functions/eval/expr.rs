@@ -6,8 +6,8 @@ use sqlparser::ast::{Expr, Function, FunctionArguments, TrimWhereField};
 
 use super::super::super::execute::select::exec_subquery;
 use super::super::super::table::Table;
-use super::super::super::value::db_value_cmp;
 use super::super::super::value::DbValue;
+use super::super::super::value::db_value_cmp;
 use super::super::builtin::{
     curdate_value, exec_std_function, extract_func_args, get_func_arg_unnamed, now_value, simple_like, sql_val_to_db,
     value_to_string,
@@ -183,7 +183,7 @@ pub(crate) fn eval_expr(
             let operand_val = operand.as_ref().map(|o| eval_expr(o, row, col_map)).transpose()?;
             for cw in conditions.iter() {
                 let matched = match &operand_val {
-                    Some(ref op_val) => *op_val == eval_expr(&cw.condition, row, col_map)?,
+                    Some(op_val) => *op_val == eval_expr(&cw.condition, row, col_map)?,
                     None => is_truthy(&eval_expr(&cw.condition, row, col_map)?),
                 };
                 if matched {
@@ -264,7 +264,7 @@ pub(crate) fn eval_expr(
                             return Err(EngineError::TypeError {
                                 expected: "integer start".into(),
                                 actual: format!("{:?}", from_val),
-                            })
+                            });
                         }
                     }
                 }
@@ -279,7 +279,7 @@ pub(crate) fn eval_expr(
                             return Err(EngineError::TypeError {
                                 expected: "integer length".into(),
                                 actual: format!("{:?}", len_val),
-                            })
+                            });
                         }
                     }
                 }
@@ -326,7 +326,7 @@ pub(crate) fn eval_literal_expr(expr: &Expr) -> Result<DbValue, EngineError> {
                         return Err(EngineError::Exec(format!(
                             "Array elements must be strings or numbers, got {:?}",
                             other
-                        )))
+                        )));
                     }
                 }
             }
@@ -405,16 +405,16 @@ pub(crate) fn exec_function(
                         cb_args.truncate(end);
                     }
                     let cb_ctx = String::new();
-                    if let Some(cb) = crate::ffi::CALLBACK.lock().unwrap().as_ref() {
-                        if let (Ok(name_c), Ok(args_c), Ok(ctx_c)) = (
+                    if let Some(cb) = crate::ffi::CALLBACK.lock().unwrap().as_ref()
+                        && let (Ok(name_c), Ok(args_c), Ok(ctx_c)) = (
                             std::ffi::CString::new(cb_name),
                             std::ffi::CString::new(cb_args),
                             std::ffi::CString::new(cb_ctx),
-                        ) {
-                            // The CString buffers stay alive until the call returns,
-                            // matching arma_rs's Extension::run_callbacks contract.
-                            cb(name_c.as_ptr(), args_c.as_ptr(), ctx_c.as_ptr());
-                        }
+                        )
+                    {
+                        // The CString buffers stay alive until the call returns,
+                        // matching arma_rs's Extension::run_callbacks contract.
+                        cb(name_c.as_ptr(), args_c.as_ptr(), ctx_c.as_ptr());
                     }
                     // ponytail: SQF handles the actual result; return placeholder
                     return Ok(DbValue::String(format!("<SQF: {}>", fn_name)));
@@ -426,10 +426,10 @@ pub(crate) fn exec_function(
             // bare `WHERE user = 1` must resolve to the column (SQLite allows
             // unquoted `user`). Only when no argument list is present AND the
             // name is a column in scope do we treat it as a column reference.
-            if matches!(func.args, FunctionArguments::None) {
-                if let Some(&pos) = col_map.get(&name) {
-                    return Ok(row[pos].clone());
-                }
+            if matches!(func.args, FunctionArguments::None)
+                && let Some(&pos) = col_map.get(&name)
+            {
+                return Ok(row[pos].clone());
             }
             exec_std_function(func, name, row, col_map)
         }

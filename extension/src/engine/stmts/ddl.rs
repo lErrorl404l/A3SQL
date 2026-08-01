@@ -20,7 +20,7 @@ pub(crate) use misc::{
 };
 
 use crate::engine::error::EngineError;
-use crate::engine::value::{json_val_to_dbvalue, ColumnType, DbValue};
+use crate::engine::value::{ColumnType, DbValue, json_val_to_dbvalue};
 use sqlparser::ast::{DataType, ObjectName, ObjectNamePart};
 
 /// Convert an `ObjectName` (qualified or simple) to a dot-separated lowercase string.

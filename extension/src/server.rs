@@ -10,7 +10,7 @@
 //! threat model: SQF already owns the process and its memory.
 
 use crate::dispatch;
-use crate::engine::error::{error_response, ErrorCode};
+use crate::engine::error::{ErrorCode, error_response};
 use crate::ffi::{CREDENTIALS, LISTENER};
 
 /// Serve a single TCP client connection.
@@ -111,12 +111,14 @@ pub fn start_server(bind: &str, port: u16, db_path: Option<&str>) -> Result<Stri
     // Register auto-save on SIGTERM for persistence
     if let Some(path) = db_path {
         let path = path.to_string();
-        std::thread::spawn(move || loop {
-            std::thread::sleep(std::time::Duration::from_secs(30));
-            let mut db = crate::ffi::DB.lock().unwrap_or_else(|e| e.into_inner());
-            let r = dispatch::dispatch_inner(&mut db, &format!("save {}", path), &[]);
-            if r.contains("ERR") {
-                eprintln!("[a3sql-server] auto-save: {}", r);
+        std::thread::spawn(move || {
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(30));
+                let mut db = crate::ffi::DB.lock().unwrap_or_else(|e| e.into_inner());
+                let r = dispatch::dispatch_inner(&mut db, &format!("save {}", path), &[]);
+                if r.contains("ERR") {
+                    eprintln!("[a3sql-server] auto-save: {}", r);
+                }
             }
         });
     }

@@ -15,6 +15,7 @@
 use serde_json::Value;
 
 use nom::{
+    IResult, Parser,
     branch::alt,
     bytes::complete::tag,
     character::complete::{char, multispace0, one_of},
@@ -22,7 +23,6 @@ use nom::{
     error::Error,
     multi::separated_list0,
     sequence::{delimited, pair, preceded},
-    IResult, Parser,
 };
 
 // ── nil ─────────────────────────────────────────────────────────────────

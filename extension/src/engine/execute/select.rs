@@ -13,9 +13,9 @@ use super::super::functions::aggregate::projection_expr_name;
 use super::super::functions::eval::{eval_expr, is_truthy};
 use super::super::stmts::ddl::object_name_str;
 use super::super::stmts::select::sort::sort_rows;
-use super::super::value::{json_val_to_dbvalue, DbValue};
-use super::format_projected_result;
+use super::super::value::{DbValue, json_val_to_dbvalue};
 use super::SUBQ_DB;
+use super::format_projected_result;
 
 use crate::engine::error::EngineError;
 use crate::engine::prelude::expr_has_subquery;
@@ -340,34 +340,34 @@ pub(crate) fn exec_subquery(query: &Query) -> Result<Vec<DbValue>, EngineError> 
     match serde_json::from_str::<Vec<serde_json::Value>>(&result_str) {
         Ok(rows) => {
             for row in rows.iter().skip(1) {
-                if let Some(arr) = row.as_array() {
-                    if let Some(first) = arr.first() {
-                        values.push(json_val_to_dbvalue(first));
-                    }
+                if let Some(arr) = row.as_array()
+                    && let Some(first) = arr.first()
+                {
+                    values.push(json_val_to_dbvalue(first));
                 }
             }
         }
         Err(_) => {
             // Fallback: parse raw string
-            if let Some(start) = result_str.find("[[") {
-                if let Some(end) = result_str.rfind("]]") {
-                    let inner = &result_str[start + 1..end];
-                    for row_str in inner.split("],[") {
-                        let cleaned = row_str.trim_matches('[').trim_matches(']').trim();
-                        if !cleaned.is_empty() {
-                            let val = cleaned.trim_matches('"');
-                            if let Ok(n) = val.parse::<i64>() {
-                                values.push(DbValue::Int(n));
-                            } else if let Ok(f) = val.parse::<f64>() {
-                                values.push(DbValue::Float(f));
-                            } else {
-                                values.push(DbValue::String(val.to_string()));
-                            }
+            if let Some(start) = result_str.find("[[")
+                && let Some(end) = result_str.rfind("]]")
+            {
+                let inner = &result_str[start + 1..end];
+                for row_str in inner.split("],[") {
+                    let cleaned = row_str.trim_matches('[').trim_matches(']').trim();
+                    if !cleaned.is_empty() {
+                        let val = cleaned.trim_matches('"');
+                        if let Ok(n) = val.parse::<i64>() {
+                            values.push(DbValue::Int(n));
+                        } else if let Ok(f) = val.parse::<f64>() {
+                            values.push(DbValue::Float(f));
+                        } else {
+                            values.push(DbValue::String(val.to_string()));
                         }
                     }
-                    if values.len() > 1 {
-                        values.remove(0);
-                    }
+                }
+                if values.len() > 1 {
+                    values.remove(0);
                 }
             }
         }

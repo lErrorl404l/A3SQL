@@ -6,7 +6,7 @@
 
 use super::super::database::Database;
 use super::super::error::EngineError;
-use super::super::execute::{format_projected_result, LAST_CHANGES, LAST_INSERT_ROWID};
+use super::super::execute::{LAST_CHANGES, LAST_INSERT_ROWID, format_projected_result};
 use super::super::functions::eval::{eval_expr, eval_literal_expr, is_truthy};
 use super::super::stmts::select::exec_select;
 use super::super::value::DbValue;

@@ -150,7 +150,7 @@ pub(crate) fn exec_create_table(def: &sqlparser::ast::CreateTable, db: &mut Data
                         _ => {
                             return Err(EngineError::Parse(
                                 "PRIMARY KEY columns must be plain column names".into(),
-                            ))
+                            ));
                         }
                     };
                     let col = columns

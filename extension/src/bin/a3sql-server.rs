@@ -11,8 +11,8 @@
 //   a3sql-server --interactive    # interactive REPL mode
 //   a3sql-server --help           # options
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 fn main() {
     // Replace the default panic hook: panics recovered by the catch_unwind
@@ -168,7 +168,7 @@ fn graceful_shutdown(db_path: &Option<String>) {
     a3sql::dispatch("stop", &[]);
 
     // Final save if persistence is enabled
-    if let Some(ref path) = db_path {
+    if let Some(path) = db_path {
         eprintln!("Saving database to {}...", path);
         let r = a3sql::dispatch(&format!("save {}", path), &[]);
         if r.contains("ERR") {

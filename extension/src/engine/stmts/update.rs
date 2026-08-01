@@ -5,7 +5,7 @@ use std::collections::HashSet;
 
 use super::super::database::Database;
 use super::super::error::EngineError;
-use super::super::execute::{format_projected_result, LAST_CHANGES};
+use super::super::execute::{LAST_CHANGES, format_projected_result};
 use super::super::functions::eval::{eval_expr, is_truthy};
 use super::super::stmts::select::joins::resolve_table_from_joins;
 use super::super::value::DbValue;
@@ -26,32 +26,31 @@ pub(crate) fn exec_update(upd: &Update, db: &mut Database) -> Result<String, Eng
     let mut indices: Vec<usize> = Vec::new();
     if let Some(expr) = where_expr {
         let mut fast_path = false;
-        if let Expr::BinaryOp { left, right, op } = expr {
-            if matches!(op, BinaryOperator::Eq) {
-                // One side must be a column identifier, the other a literal
-                let (ident_opt, lit_opt): (Option<&Ident>, Option<&Expr>) = match (left.as_ref(), right.as_ref()) {
-                    (Expr::Identifier(i), v @ Expr::Value(_)) => (Some(i), Some(v)),
-                    (v @ Expr::Value(_), Expr::Identifier(i)) => (Some(i), Some(v)),
-                    _ => (None, None),
-                };
-                if let (Some(ident), Some(v)) = (ident_opt, lit_opt) {
-                    if let Ok(lit) = crate::engine::functions::eval::eval_literal_expr(v) {
-                        let col_name = ident.value.to_lowercase();
-                        if let Some(&ci) = table.col_index.get(&col_name) {
-                            if table.columns[ci].primary_key {
-                                // Build a full row of Nulls with the literal at
-                                // the PK column so pk_key formats correctly
-                                // (handles PK columns at any position).
-                                let mut key_row: Vec<DbValue> =
-                                    (0..table.columns.len()).map(|_| DbValue::Null).collect();
-                                key_row[ci] = lit;
-                                if let Some(key) = table.pk_key(&key_row) {
-                                    fast_path = true;
-                                    if let Some(idx) = table.pk_row_index.get(&key).copied() {
-                                        indices.push(idx);
-                                    }
-                                }
-                            }
+        if let Expr::BinaryOp { left, right, op } = expr
+            && matches!(op, BinaryOperator::Eq)
+        {
+            // One side must be a column identifier, the other a literal
+            let (ident_opt, lit_opt): (Option<&Ident>, Option<&Expr>) = match (left.as_ref(), right.as_ref()) {
+                (Expr::Identifier(i), v @ Expr::Value(_)) => (Some(i), Some(v)),
+                (v @ Expr::Value(_), Expr::Identifier(i)) => (Some(i), Some(v)),
+                _ => (None, None),
+            };
+            if let (Some(ident), Some(v)) = (ident_opt, lit_opt)
+                && let Ok(lit) = crate::engine::functions::eval::eval_literal_expr(v)
+            {
+                let col_name = ident.value.to_lowercase();
+                if let Some(&ci) = table.col_index.get(&col_name)
+                    && table.columns[ci].primary_key
+                {
+                    // Build a full row of Nulls with the literal at
+                    // the PK column so pk_key formats correctly
+                    // (handles PK columns at any position).
+                    let mut key_row: Vec<DbValue> = (0..table.columns.len()).map(|_| DbValue::Null).collect();
+                    key_row[ci] = lit;
+                    if let Some(key) = table.pk_key(&key_row) {
+                        fast_path = true;
+                        if let Some(idx) = table.pk_row_index.get(&key).copied() {
+                            indices.push(idx);
                         }
                     }
                 }
@@ -149,10 +148,10 @@ pub(crate) fn exec_update(upd: &Update, db: &mut Database) -> Result<String, Eng
                 }
                 if let Ok(child) = db.get_table(tn) {
                     for fk in &child.foreign_keys {
-                        if fk.foreign_table == table_name {
-                            if let Some(&ci) = child.col_index.get(&fk.local_column) {
-                                refs.push((tn.to_string(), ci));
-                            }
+                        if fk.foreign_table == table_name
+                            && let Some(&ci) = child.col_index.get(&fk.local_column)
+                        {
+                            refs.push((tn.to_string(), ci));
                         }
                     }
                 }
@@ -165,61 +164,61 @@ pub(crate) fn exec_update(upd: &Update, db: &mut Database) -> Result<String, Eng
         for (row_i, col_ci, val) in &validated_updates {
             // (a) FK local column update: new value must exist in referenced table
             for (local_col, ref_pks) in &fk_lookups {
-                if let Some(&local_ci) = t.col_index.get(local_col) {
-                    if *col_ci == local_ci && !matches!(val, DbValue::Null) {
-                        let val_str = val.to_string().to_lowercase();
-                        if !ref_pks.contains(&val_str) {
-                            return Err(EngineError::Exec(format!(
-                                "FOREIGN KEY constraint: '{}' value '{}' not found in referenced table",
-                                local_col, val_str
-                            )));
-                        }
+                if let Some(&local_ci) = t.col_index.get(local_col)
+                    && *col_ci == local_ci
+                    && !matches!(val, DbValue::Null)
+                {
+                    let val_str = val.to_string().to_lowercase();
+                    if !ref_pks.contains(&val_str) {
+                        return Err(EngineError::Exec(format!(
+                            "FOREIGN KEY constraint: '{}' value '{}' not found in referenced table",
+                            local_col, val_str
+                        )));
                     }
                 }
             }
             // (b) PK column update: collect CASCADE info during immutable phase
-            if let Some(pk_ci) = pk_col_idx {
-                if *col_ci == pk_ci {
-                    let old_val = t.rows[*row_i][pk_ci].to_string().to_lowercase();
-                    let new_val_cascade = val.clone();
-                    // (use outer pk_cascade_queue)
-                    for (ref_table, ref_col_idx) in &fk_refs {
-                        let child = db
-                            .get_table(ref_table)
-                            .map_err(|_| EngineError::TableNotFound(ref_table.clone()))?;
-                        let on_update = child
-                            .foreign_keys
-                            .iter()
-                            .find(|fk| {
-                                fk.foreign_table == table_name
-                                    && child.col_index.get(&fk.local_column) == Some(ref_col_idx)
-                            })
-                            .and_then(|fk| fk.on_update);
-                        let has_ref = child
-                            .rows
-                            .iter()
-                            .any(|r| r[*ref_col_idx].to_string().to_lowercase() == old_val);
-                        if has_ref {
-                            match on_update {
-                                Some(ReferentialAction::Cascade) => {
-                                    pk_cascade_queue.push((
-                                        ref_table.clone(),
-                                        *ref_col_idx,
-                                        old_val.clone(),
-                                        new_val_cascade.clone(),
-                                    ));
-                                }
-                                _ => {
-                                    return Err(EngineError::Exec(format!(
-                                        "FOREIGN KEY constraint violation: '{}' has reference to '{}' in '{}'",
-                                        ref_table, old_val, table_name
-                                    )));
-                                }
+            if let Some(pk_ci) = pk_col_idx
+                && *col_ci == pk_ci
+            {
+                let old_val = t.rows[*row_i][pk_ci].to_string().to_lowercase();
+                let new_val_cascade = val.clone();
+                // (use outer pk_cascade_queue)
+                for (ref_table, ref_col_idx) in &fk_refs {
+                    let child = db
+                        .get_table(ref_table)
+                        .map_err(|_| EngineError::TableNotFound(ref_table.clone()))?;
+                    let on_update = child
+                        .foreign_keys
+                        .iter()
+                        .find(|fk| {
+                            fk.foreign_table == table_name && child.col_index.get(&fk.local_column) == Some(ref_col_idx)
+                        })
+                        .and_then(|fk| fk.on_update);
+                    let has_ref = child
+                        .rows
+                        .iter()
+                        .any(|r| r[*ref_col_idx].to_string().to_lowercase() == old_val);
+                    if has_ref {
+                        match on_update {
+                            Some(ReferentialAction::Cascade) => {
+                                pk_cascade_queue.push((
+                                    ref_table.clone(),
+                                    *ref_col_idx,
+                                    old_val.clone(),
+                                    new_val_cascade.clone(),
+                                ));
+                            }
+                            _ => {
+                                return Err(EngineError::Exec(format!(
+                                    "FOREIGN KEY constraint violation: '{}' has reference to '{}' in '{}'",
+                                    ref_table, old_val, table_name
+                                )));
                             }
                         }
                     }
-                    // Apply CASCADE after immutable block (see note after block close)
                 }
+                // Apply CASCADE after immutable block (see note after block close)
             }
         }
     }

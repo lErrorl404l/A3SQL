@@ -93,11 +93,7 @@ impl Config {
             .or_else(|| {
                 let cwd = std::env::current_dir().ok()?;
                 let p = cwd.join("a3sql.toml");
-                if p.exists() {
-                    Some(p)
-                } else {
-                    None
-                }
+                if p.exists() { Some(p) } else { None }
             });
 
         match path {

@@ -19,8 +19,8 @@ pub(crate) mod util;
 // Re-export shared utilities for backward compatibility with existing imports.
 use util::drop_index_by_name;
 pub(crate) use util::{
-    clear_subq_cache, format_projected_result, parse_and_exec, COPY_STDIN, LAST_CHANGES, LAST_INSERT_ROWID, SUBQ_CACHE,
-    SUBQ_DB,
+    COPY_STDIN, LAST_CHANGES, LAST_INSERT_ROWID, SUBQ_CACHE, SUBQ_DB, clear_subq_cache, format_projected_result,
+    parse_and_exec,
 };
 
 // ── Public entry point ──────────────────────────────────────────────────
@@ -202,7 +202,7 @@ pub(crate) fn execute(stmt: &Statement, db: &mut Database) -> Result<String, Eng
                         return Err(EngineError::Exec(format!(
                             "ALTER TABLE operation not supported: {:?}",
                             operation
-                        )))
+                        )));
                     }
                 };
                 results.push(result);

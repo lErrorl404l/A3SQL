@@ -70,11 +70,11 @@ pub(crate) fn exec_drop_trigger(
         names
     };
     for tn2 in &target_names {
-        if let Ok(t) = db.get_table_mut(tn2) {
-            if t.triggers.iter().any(|tr| tr.name == name) {
-                t.triggers.retain(|tr| tr.name != name);
-                return Ok(format!("\"Trigger '{}' dropped\"", name));
-            }
+        if let Ok(t) = db.get_table_mut(tn2)
+            && t.triggers.iter().any(|tr| tr.name == name)
+        {
+            t.triggers.retain(|tr| tr.name != name);
+            return Ok(format!("\"Trigger '{}' dropped\"", name));
         }
     }
     Err(EngineError::Exec(format!("Trigger '{}' not found", name)))

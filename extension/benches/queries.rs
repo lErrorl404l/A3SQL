@@ -1,4 +1,4 @@
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 
 // a3sql benchmark — query throughput by operation type
 // Run with: cargo bench
@@ -294,7 +294,13 @@ fn bench_patch_rules(c: &mut Criterion) {
     a3sql::dispatch("DROP TABLE IF EXISTS bench_patch", &[]);
     a3sql::dispatch(create, &[]);
     for i in 0..1000i64 {
-        let sql = format!("INSERT INTO bench_patch VALUES ({}, 'rule_{}', 1, {}, 'exact', 'M4A1', 'weapon', 'reloadTime', 'set', '{}')", i, i, i % 10, i);
+        let sql = format!(
+            "INSERT INTO bench_patch VALUES ({}, 'rule_{}', 1, {}, 'exact', 'M4A1', 'weapon', 'reloadTime', 'set', '{}')",
+            i,
+            i,
+            i % 10,
+            i
+        );
         a3sql::dispatch(&sql, &[]);
     }
 

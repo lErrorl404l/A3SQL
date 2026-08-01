@@ -12,7 +12,7 @@ pub(crate) use sql::{split_sql, substitute_params};
 use std::cell::Cell;
 
 use crate::engine;
-use crate::engine::error::{error_response, ok_response, ErrorCode};
+use crate::engine::error::{ErrorCode, error_response, ok_response};
 use crate::ffi::{CREDENTIALS, REMOTE};
 
 // ── Re‑entrancy guard ───────────────────────────────────────────────────────
@@ -118,10 +118,11 @@ pub(crate) fn dispatch_inner(db: &mut engine::Database, input: &str, args: &[&st
             if !path.is_empty() && save_args.is_empty() {
                 save_args.push(path);
             }
-        } else if let Some(path) = trimmed.strip_prefix("SAVE ") {
-            if !path.is_empty() && save_args.is_empty() {
-                save_args.push(path);
-            }
+        } else if let Some(path) = trimmed.strip_prefix("SAVE ")
+            && !path.is_empty()
+            && save_args.is_empty()
+        {
+            save_args.push(path);
         }
         return commands::handle_save(db, &save_args);
     }
@@ -131,10 +132,11 @@ pub(crate) fn dispatch_inner(db: &mut engine::Database, input: &str, args: &[&st
             if !path.is_empty() && load_args.is_empty() {
                 load_args.push(path);
             }
-        } else if let Some(path) = trimmed.strip_prefix("LOAD ") {
-            if !path.is_empty() && load_args.is_empty() {
-                load_args.push(path);
-            }
+        } else if let Some(path) = trimmed.strip_prefix("LOAD ")
+            && !path.is_empty()
+            && load_args.is_empty()
+        {
+            load_args.push(path);
         }
         return commands::handle_load(db, &load_args);
     }
@@ -153,10 +155,11 @@ pub(crate) fn dispatch_inner(db: &mut engine::Database, input: &str, args: &[&st
             if !port.is_empty() && listen_args.is_empty() {
                 listen_args.push(port);
             }
-        } else if let Some(port) = trimmed.strip_prefix("LISTEN ") {
-            if !port.is_empty() && listen_args.is_empty() {
-                listen_args.push(port);
-            }
+        } else if let Some(port) = trimmed.strip_prefix("LISTEN ")
+            && !port.is_empty()
+            && listen_args.is_empty()
+        {
+            listen_args.push(port);
         }
         return commands::handle_listen(&listen_args);
     }
@@ -318,7 +321,7 @@ pub(crate) fn dispatch_inner(db: &mut engine::Database, input: &str, args: &[&st
 /// returns the original input unchanged.
 #[cfg(feature = "auth")]
 fn verify_auth(input: &str) -> Result<&str, String> {
-    use crate::engine::error::{error_response, ErrorCode};
+    use crate::engine::error::{ErrorCode, error_response};
 
     if !crate::config::CONFIG.auth_enabled() {
         return Ok(input);

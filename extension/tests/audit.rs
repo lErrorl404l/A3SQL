@@ -188,14 +188,26 @@ fn audit_joins() {
         ),
         "INSERT R",
     );
-    let r = dispatch("SELECT a_j_left.id, a_j_left.label, a_j_right.category FROM a_j_left INNER JOIN a_j_right ON a_j_left.id = a_j_right.id", &[]);
+    let r = dispatch(
+        "SELECT a_j_left.id, a_j_left.label, a_j_right.category FROM a_j_left INNER JOIN a_j_right ON a_j_left.id = a_j_right.id",
+        &[],
+    );
     contains(&r, "alpha", "INNER alpha");
     contains(&r, "cat2", "INNER cat2");
-    let r = dispatch("SELECT a_j_left.id, a_j_left.label, a_j_right.category FROM a_j_left LEFT JOIN a_j_right ON a_j_left.id = a_j_right.id", &[]);
+    let r = dispatch(
+        "SELECT a_j_left.id, a_j_left.label, a_j_right.category FROM a_j_left LEFT JOIN a_j_right ON a_j_left.id = a_j_right.id",
+        &[],
+    );
     contains(&r, "beta", "LEFT beta");
-    let r = dispatch("SELECT a_j_left.id, a_j_left.label, a_j_right.category FROM a_j_left CROSS JOIN a_j_right WHERE a_j_left.id = 'a' AND a_j_right.id = 'c'", &[]);
+    let r = dispatch(
+        "SELECT a_j_left.id, a_j_left.label, a_j_right.category FROM a_j_left CROSS JOIN a_j_right WHERE a_j_left.id = 'a' AND a_j_right.id = 'c'",
+        &[],
+    );
     contains(&r, "alpha", "CROSS");
-    let r = dispatch("SELECT a_j_left.id, a_j_left.label, a_j_right.category FROM a_j_left FULL OUTER JOIN a_j_right ON a_j_left.id = a_j_right.id", &[]);
+    let r = dispatch(
+        "SELECT a_j_left.id, a_j_left.label, a_j_right.category FROM a_j_left FULL OUTER JOIN a_j_right ON a_j_left.id = a_j_right.id",
+        &[],
+    );
     contains(&r, "alpha", "FULL alpha");
     contains(&r, "cat3", "FULL cat3");
 }
@@ -440,7 +452,13 @@ fn audit_triggers() {
         &dispatch("CREATE TABLE a_trg_data (id STRING PRIMARY KEY, val INT)", &[]),
         "CREATE data",
     );
-    ok(&dispatch("CREATE TRIGGER a_trg_after_update AFTER UPDATE ON a_trg_data BEGIN INSERT INTO a_trg_log VALUES ('x_log', 'updated') END", &[]), "CREATE TRIGGER");
+    ok(
+        &dispatch(
+            "CREATE TRIGGER a_trg_after_update AFTER UPDATE ON a_trg_data BEGIN INSERT INTO a_trg_log VALUES ('x_log', 'updated') END",
+            &[],
+        ),
+        "CREATE TRIGGER",
+    );
     ok(
         &dispatch("INSERT INTO a_trg_data VALUES ('x', 100)", &[]),
         "INSERT data",
@@ -629,7 +647,13 @@ fn audit_fk_cascade() {
         &dispatch("CREATE TABLE a_fkc_parent (id STRING PRIMARY KEY)", &[]),
         "CREATE parent",
     );
-    ok(&dispatch("CREATE TABLE a_fkc_child (id STRING PRIMARY KEY, pid STRING REFERENCES a_fkc_parent(id) ON DELETE CASCADE)", &[]), "CREATE child");
+    ok(
+        &dispatch(
+            "CREATE TABLE a_fkc_child (id STRING PRIMARY KEY, pid STRING REFERENCES a_fkc_parent(id) ON DELETE CASCADE)",
+            &[],
+        ),
+        "CREATE child",
+    );
     ok(
         &dispatch("INSERT INTO a_fkc_parent VALUES ('p1'), ('p2')", &[]),
         "INSERT parent",

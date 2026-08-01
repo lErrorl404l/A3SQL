@@ -58,10 +58,10 @@ impl Table {
 
         // Check PK uniqueness
         let pk = self.pk_key(&row);
-        if let Some(ref key) = pk {
-            if self.pk_set.contains(key) {
-                return Err(EngineError::DuplicateKey(key.clone()));
-            }
+        if let Some(ref key) = pk
+            && self.pk_set.contains(key)
+        {
+            return Err(EngineError::DuplicateKey(key.clone()));
         }
 
         // Check UNIQUE columns (before mutating state — a rejected UNIQUE
@@ -107,12 +107,12 @@ impl Table {
     /// Remove a row from all indices (used before row is deleted).
     fn remove_from_indices(&mut self, row_idx: usize, row: &[DbValue]) {
         for (meta, impl_) in &mut self.indices {
-            if let Some(col_idx) = self.col_index.get(&meta.column) {
-                if let Some(val) = row.get(*col_idx) {
-                    match impl_ {
-                        IndexImpl::BTree(idx) => idx.remove(row_idx, val),
-                        IndexImpl::Trigram(idx) => idx.remove(row_idx, val),
-                    }
+            if let Some(col_idx) = self.col_index.get(&meta.column)
+                && let Some(val) = row.get(*col_idx)
+            {
+                match impl_ {
+                    IndexImpl::BTree(idx) => idx.remove(row_idx, val),
+                    IndexImpl::Trigram(idx) => idx.remove(row_idx, val),
                 }
             }
         }
@@ -124,7 +124,7 @@ impl Table {
             // Clear and rebuild
             let col_idx_opt = self.col_index.get(&meta.column).copied();
             match impl_ {
-                IndexImpl::BTree(ref mut idx) => {
+                IndexImpl::BTree(idx) => {
                     *idx = BTreeIndex::new(&meta.column);
                     if let Some(ci) = col_idx_opt {
                         for (ri, row) in self.rows.iter().enumerate() {
@@ -132,7 +132,7 @@ impl Table {
                         }
                     }
                 }
-                IndexImpl::Trigram(ref mut idx) => {
+                IndexImpl::Trigram(idx) => {
                     *idx = TrigramIndex::new(&meta.column);
                     if let Some(ci) = col_idx_opt {
                         for (ri, row) in self.rows.iter().enumerate() {
@@ -150,18 +150,18 @@ impl Table {
     pub fn replace_by_pk(&mut self, full_row: Vec<DbValue>) -> Result<bool, EngineError> {
         // Build the PK key from the FULL row — pk_key joins every PK column,
         // so a partial (single-column) key never matches a composite PK.
-        if let Some(key) = self.pk_key(&full_row) {
-            if let Some(&idx) = self.pk_row_index.get(&key) {
-                // Remove old UNIQUE keys for the replaced row, then re-add
-                // for the new values (PK is unchanged so pk maps stay valid)
-                for ukey in Self::unique_keys(&self.columns, &self.rows[idx]) {
-                    self.unique_set.remove(&ukey);
-                }
-                self.rows[idx] = full_row;
-                self.unique_set
-                    .extend(Self::unique_keys(&self.columns, &self.rows[idx]));
-                return Ok(true);
+        if let Some(key) = self.pk_key(&full_row)
+            && let Some(&idx) = self.pk_row_index.get(&key)
+        {
+            // Remove old UNIQUE keys for the replaced row, then re-add
+            // for the new values (PK is unchanged so pk maps stay valid)
+            for ukey in Self::unique_keys(&self.columns, &self.rows[idx]) {
+                self.unique_set.remove(&ukey);
             }
+            self.rows[idx] = full_row;
+            self.unique_set
+                .extend(Self::unique_keys(&self.columns, &self.rows[idx]));
+            return Ok(true);
         }
         // Row didn't exist — normal insert (validates + maintains indexes)
         self.insert(full_row)?;

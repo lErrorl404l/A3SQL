@@ -9,8 +9,8 @@ use sqlparser::ast::{Expr, OrderByExpr, SelectItem, WindowFrame, WindowFrameBoun
 
 use super::super::super::functions::builtin::extract_func_arg;
 use super::super::super::functions::eval::{eval_expr, eval_literal_expr};
-use super::super::super::value::db_value_cmp;
 use super::super::super::value::DbValue;
+use super::super::super::value::db_value_cmp;
 use crate::engine::error::EngineError;
 
 pub(crate) fn has_window_function(projection: &[SelectItem]) -> bool {

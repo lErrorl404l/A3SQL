@@ -6,7 +6,7 @@
 pub(crate) use sqlparser::ast::Expr;
 
 pub(crate) use super::database::Database;
-pub(crate) use super::value::{db_value_cmp, json_val_to_dbvalue, Column, ColumnType, DbValue};
+pub(crate) use super::value::{Column, ColumnType, DbValue, db_value_cmp, json_val_to_dbvalue};
 
 pub(crate) use super::table::Table;
 

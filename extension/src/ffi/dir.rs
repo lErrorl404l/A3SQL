@@ -150,7 +150,7 @@ fn sql_handler(payload: Vec<String>) -> String {
 ///
 /// # Safety
 /// `output` must be a valid, writable buffer of at least `output_size` bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn RVExtensionVersion(output: *mut c_char, output_size: u32) {
     with_extension(|_| {}); // ensure extension + plugins are initialised
     let version = version_bytes();
@@ -190,7 +190,7 @@ unsafe fn write_output(output: *mut c_char, output_size: u32, resp: &str) {
 ///
 /// # Safety
 /// `output` must be a valid, writable buffer of at least `output_size` bytes.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn RVExtension(output: *mut c_char, output_size: u32, function: *const c_char) {
     let input = if function.is_null() {
         Cow::Borrowed("")
@@ -223,7 +223,7 @@ pub unsafe extern "C" fn RVExtension(output: *mut c_char, output_size: u32, func
 ///
 /// # Safety
 /// All pointer arguments must be valid, non-null pointers from the Arma engine.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn RVExtensionArgs(
     output: *mut c_char,
     output_size: u32,
@@ -282,7 +282,7 @@ pub unsafe extern "C" fn RVExtensionArgs(
 ///
 /// # Safety
 /// `callbackProc` must be a valid function pointer provided by the Arma engine.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn RVExtensionRegisterCallback(callbackProc: Option<Callback>) {
     let mut cb = CALLBACK.lock().unwrap();
     *cb = callbackProc;

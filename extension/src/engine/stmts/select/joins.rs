@@ -150,18 +150,15 @@ pub(crate) fn exec_select_joins(query: &Query, select: &Select, db: &mut Databas
                         let mut common = Vec::new();
                         for right_col in &rt.columns {
                             for left_tbl in &tbls[0..right_ti] {
-                                if let Ok(lt) = db.get_table(&left_tbl.name) {
-                                    if lt.columns.iter().any(|c| c.name == right_col.name) {
-                                        // Store (col_name, left_table_idx, right_start_in_flat_row + col_idx)
-                                        if let Some(&lp) = col_map.get(&format!("{}.{}", left_tbl.name, right_col.name))
-                                        {
-                                            if let Some(&rp) =
-                                                col_map.get(&format!("{}.{}", right_name, right_col.name))
-                                            {
-                                                common.push((right_col.name.clone(), lp, rp));
-                                                break;
-                                            }
-                                        }
+                                if let Ok(lt) = db.get_table(&left_tbl.name)
+                                    && lt.columns.iter().any(|c| c.name == right_col.name)
+                                {
+                                    // Store (col_name, left_table_idx, right_start_in_flat_row + col_idx)
+                                    if let Some(&lp) = col_map.get(&format!("{}.{}", left_tbl.name, right_col.name))
+                                        && let Some(&rp) = col_map.get(&format!("{}.{}", right_name, right_col.name))
+                                    {
+                                        common.push((right_col.name.clone(), lp, rp));
+                                        break;
                                     }
                                 }
                             }
@@ -213,15 +210,13 @@ pub(crate) fn exec_select_joins(query: &Query, select: &Select, db: &mut Databas
                     // Left side: look up bare name in col_map (ambiguous but standard SQL uses qualified)
                     // Try qualified: find which left table has this column
                     for left_tbl in &tbls[0..ti] {
-                        if let Ok(lt) = db.get_table(&left_tbl.name) {
-                            if lt.columns.iter().any(|c| c.name == cname) {
-                                if let Some(&lp) = col_map.get(&format!("{}.{}", left_tbl.name, cname)) {
-                                    if let Some(&rp) = col_map.get(&format!("{}.{}", tbl.name, cname)) {
-                                        pairs.push((lp, rp));
-                                        break;
-                                    }
-                                }
-                            }
+                        if let Ok(lt) = db.get_table(&left_tbl.name)
+                            && lt.columns.iter().any(|c| c.name == cname)
+                            && let Some(&lp) = col_map.get(&format!("{}.{}", left_tbl.name, cname))
+                            && let Some(&rp) = col_map.get(&format!("{}.{}", tbl.name, cname))
+                        {
+                            pairs.push((lp, rp));
+                            break;
                         }
                     }
                 }
@@ -494,10 +489,10 @@ fn eval_expr_on_flat_row(
             // Zero-arg "functions" like USER/CURRENT_USER (sqlparser maps the
             // reserved keywords to a bare function call) may actually be a
             // column reference — check col_map before treating as a function.
-            if matches!(func.args, FunctionArguments::None) {
-                if let Some(&pos) = col_map.get(&name) {
-                    return Ok(row[pos].clone());
-                }
+            if matches!(func.args, FunctionArguments::None)
+                && let Some(&pos) = col_map.get(&name)
+            {
+                return Ok(row[pos].clone());
             }
             if name == "fuzzy_match" {
                 let args = match &func.args {
@@ -543,7 +538,7 @@ fn eval_expr_on_flat_row(
                 .transpose()?;
             for cw in conditions.iter() {
                 let matched = match &operand_val {
-                    Some(ref op_val) => *op_val == eval_expr_on_flat_row(&cw.condition, row, col_map)?,
+                    Some(op_val) => *op_val == eval_expr_on_flat_row(&cw.condition, row, col_map)?,
                     None => is_truthy(&eval_expr_on_flat_row(&cw.condition, row, col_map)?),
                 };
                 if matched {

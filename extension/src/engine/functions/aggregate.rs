@@ -10,8 +10,8 @@ use sqlparser::ast::{Expr, Function, Select, SelectItem};
 
 use super::super::functions::builtin::{extract_func_arg, get_func_arg_unnamed, value_to_string};
 use super::super::functions::eval::{eval_expr, eval_literal_expr, is_truthy};
-use super::super::value::db_value_cmp;
 use super::super::value::DbValue;
+use super::super::value::db_value_cmp;
 use crate::engine::error::EngineError;
 
 pub(crate) fn has_group_by(select: &Select) -> bool {
@@ -245,10 +245,10 @@ fn eval_projection_expr(
                         if !passes_filter(f, r, col_map) {
                             continue;
                         }
-                        if let Ok(val) = eval_expr(arg, r, col_map) {
-                            if !matches!(val, DbValue::Null) {
-                                vals.push(value_to_string(&val));
-                            }
+                        if let Ok(val) = eval_expr(arg, r, col_map)
+                            && !matches!(val, DbValue::Null)
+                        {
+                            vals.push(value_to_string(&val));
                         }
                     }
                     Ok(("GROUP_CONCAT".to_string(), DbValue::String(vals.join(&separator))))
@@ -265,12 +265,11 @@ fn eval_projection_expr(
                             if !passes_filter(f, r, col_map) {
                                 continue;
                             }
-                            if let Ok(arg) = extract_func_arg(f) {
-                                if let Ok(val) = eval_expr(arg, r, col_map) {
-                                    if !seen.contains(&val) {
-                                        seen.push(val);
-                                    }
-                                }
+                            if let Ok(arg) = extract_func_arg(f)
+                                && let Ok(val) = eval_expr(arg, r, col_map)
+                                && !seen.contains(&val)
+                            {
+                                seen.push(val);
                             }
                         }
                         DbValue::Int(seen.len() as i64)

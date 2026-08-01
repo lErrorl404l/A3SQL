@@ -68,10 +68,10 @@ pub(crate) fn apply_limit_offset<'a>(
 
 pub(crate) fn parse_expr_as_usize(expr: Option<&Expr>) -> Option<usize> {
     let expr = expr?;
-    if let Expr::Value(v) = expr {
-        if let sqlparser::ast::Value::Number(s, _) = &v.value {
-            return s.parse::<usize>().ok();
-        }
+    if let Expr::Value(v) = expr
+        && let sqlparser::ast::Value::Number(s, _) = &v.value
+    {
+        return s.parse::<usize>().ok();
     }
     None
 }

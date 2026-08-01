@@ -103,10 +103,11 @@ pub(crate) fn eval_command(name: &str, args: &[DbValue]) -> Result<DbValue, Stri
     }
 
     // 2. Fallback based on return type metadata
-    if let Some(info) = super::database::lookup_info(name) {
-        if info.ret.is_implementable() && !args.is_empty() {
-            return Ok(args[0].clone());
-        }
+    if let Some(info) = super::database::lookup_info(name)
+        && info.ret.is_implementable()
+        && !args.is_empty()
+    {
+        return Ok(args[0].clone());
     }
 
     // 3. Unknown / game-engine-only command — return nil gracefully

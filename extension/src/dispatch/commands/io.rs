@@ -2,7 +2,7 @@ use std::path::Path;
 
 use crate::config::CONFIG;
 use crate::engine;
-use crate::engine::error::{error_response, ok_response, ErrorCode};
+use crate::engine::error::{ErrorCode, error_response, ok_response};
 
 // ── Path validation ─────────────────────────────────────────────────────
 

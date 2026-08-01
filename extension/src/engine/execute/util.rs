@@ -149,10 +149,10 @@ pub(crate) fn format_projected_result(
 pub(super) fn drop_index_by_name(db: &mut Database, name: &str) -> bool {
     let table_names: Vec<String> = db.table_names().iter().map(|s| s.to_string()).collect();
     for tname in table_names {
-        if let Ok(table) = db.get_table_mut(&tname) {
-            if table.drop_index(name).is_ok() {
-                return true;
-            }
+        if let Ok(table) = db.get_table_mut(&tname)
+            && table.drop_index(name).is_ok()
+        {
+            return true;
         }
     }
     false

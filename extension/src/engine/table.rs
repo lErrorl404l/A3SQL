@@ -13,7 +13,7 @@ use super::index::{BTreeIndex, IndexMeta, IndexType, TrigramIndex};
 use super::trigger::TriggerInfo;
 use super::value::{Column, DbValue};
 
-pub(crate) use schema::{trigrams, ForeignKeyInfo, IndexImpl};
+pub(crate) use schema::{ForeignKeyInfo, IndexImpl, trigrams};
 
 /// An in-memory table.
 #[derive(Debug, Clone)]
@@ -142,10 +142,10 @@ impl Table {
     /// Returns `Some(row_indices)` if a BTreeIndex exists on the column, `None` otherwise.
     pub fn btree_lookup(&self, column: &str, value: &DbValue) -> Option<Vec<usize>> {
         for (_, impl_) in &self.indices {
-            if let IndexImpl::BTree(ref idx) = impl_ {
-                if idx.column() == column {
-                    return Some(idx.lookup(value));
-                }
+            if let IndexImpl::BTree(idx) = impl_
+                && idx.column() == column
+            {
+                return Some(idx.lookup(value));
             }
         }
         None

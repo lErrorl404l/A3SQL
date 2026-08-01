@@ -45,7 +45,10 @@ fn test_save_load_cycle() {
     // Reset and create patch_rules
     let r = a3sql::dispatch("DROP TABLE IF EXISTS patch_rules", &[]);
     assert!(r.contains("\"OK\""), "drop: {}", r);
-    let r = a3sql::dispatch("CREATE TABLE patch_rules (id STRING PRIMARY KEY, name STRING, active INT, target_type STRING, property STRING, value STRING, group_name STRING, notes STRING)", &[]);
+    let r = a3sql::dispatch(
+        "CREATE TABLE patch_rules (id STRING PRIMARY KEY, name STRING, active INT, target_type STRING, property STRING, value STRING, group_name STRING, notes STRING)",
+        &[],
+    );
     assert!(r.contains("\"OK\""), "create: {}", r);
 
     // Insert two rules

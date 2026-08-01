@@ -251,7 +251,7 @@ mod tests {
     fn json_db_roundtrip() {
         let db = make_db();
         let json = super::json::export_json_db(&db); // full DB JSON
-                                                     // Parse and verify structure
+        // Parse and verify structure
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert!(parsed.get("tables").is_some());
     }

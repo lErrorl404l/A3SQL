@@ -6,7 +6,7 @@ use sqlparser::ast::{Delete, FromTable, ReferentialAction, TableFactor};
 
 use super::super::database::Database;
 use super::super::error::EngineError;
-use super::super::execute::{format_projected_result, LAST_CHANGES};
+use super::super::execute::{LAST_CHANGES, format_projected_result};
 use super::super::functions::eval::{eval_expr, is_truthy};
 use super::super::value::DbValue;
 use super::ddl::object_name_str;
@@ -20,7 +20,7 @@ pub(crate) fn exec_delete(del: &Delete, db: &mut Database) -> Result<String, Eng
                 _ => {
                     return Err(EngineError::Exec(
                         "DELETE: only simple table references supported".into(),
-                    ))
+                    ));
                 }
             },
             None => return Err(EngineError::Exec("DELETE must specify a table".into())),
@@ -47,10 +47,10 @@ pub(crate) fn exec_delete(del: &Delete, db: &mut Database) -> Result<String, Eng
                     continue;
                 }
                 for fk in &t.foreign_keys {
-                    if fk.foreign_table == table_name {
-                        if let Some(&ci) = t.col_index.get(&fk.local_column) {
-                            refs.push((tn.to_string(), ci));
-                        }
+                    if fk.foreign_table == table_name
+                        && let Some(&ci) = t.col_index.get(&fk.local_column)
+                    {
+                        refs.push((tn.to_string(), ci));
                     }
                 }
             }

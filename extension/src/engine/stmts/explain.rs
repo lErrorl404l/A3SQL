@@ -26,11 +26,11 @@ pub(crate) fn explain_statement(stmt: &Statement, db: &Database) -> Result<Strin
                             let mut scan = json!({"type": "SeqScan", "table": tname});
 
                             // Show available indexes on this table
-                            if let Ok(table) = db.get_table(&tname) {
-                                if !table.indices.is_empty() {
-                                    let idxs: Vec<&str> = table.indices.iter().map(|(m, _)| m.name.as_str()).collect();
-                                    scan["indexes"] = json!(idxs);
-                                }
+                            if let Ok(table) = db.get_table(&tname)
+                                && !table.indices.is_empty()
+                            {
+                                let idxs: Vec<&str> = table.indices.iter().map(|(m, _)| m.name.as_str()).collect();
+                                scan["indexes"] = json!(idxs);
                             }
                             steps.push(scan);
                         }
@@ -59,11 +59,11 @@ pub(crate) fn explain_statement(stmt: &Statement, db: &Database) -> Result<Strin
                 }
 
                 // GROUP BY
-                if let GroupByExpr::Expressions(exprs, _) = &select.group_by {
-                    if !exprs.is_empty() {
-                        let gb: Vec<String> = exprs.iter().map(|e| format!("{}", e)).collect();
-                        steps.push(json!({"type": "GroupBy", "columns": gb}));
-                    }
+                if let GroupByExpr::Expressions(exprs, _) = &select.group_by
+                    && !exprs.is_empty()
+                {
+                    let gb: Vec<String> = exprs.iter().map(|e| format!("{}", e)).collect();
+                    steps.push(json!({"type": "GroupBy", "columns": gb}));
                 }
 
                 // HAVING
@@ -72,13 +72,12 @@ pub(crate) fn explain_statement(stmt: &Statement, db: &Database) -> Result<Strin
                 }
 
                 // ORDER BY
-                if let Some(order_by) = &query.order_by {
-                    if let OrderByKind::Expressions(exprs) = &order_by.kind {
-                        if !exprs.is_empty() {
-                            let ob: Vec<String> = exprs.iter().map(|e| format!("{}", e.expr)).collect();
-                            steps.push(json!({"type": "OrderBy", "columns": ob}));
-                        }
-                    }
+                if let Some(order_by) = &query.order_by
+                    && let OrderByKind::Expressions(exprs) = &order_by.kind
+                    && !exprs.is_empty()
+                {
+                    let ob: Vec<String> = exprs.iter().map(|e| format!("{}", e.expr)).collect();
+                    steps.push(json!({"type": "OrderBy", "columns": ob}));
                 }
 
                 // LIMIT / OFFSET

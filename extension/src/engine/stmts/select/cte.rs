@@ -92,40 +92,40 @@ pub(crate) fn exec_cte_query(query: &Query, db: &mut Database) -> Result<String,
     }
 
     // Handle recursive CTEs: WITH RECURSIVE cte AS (anchor UNION ALL recursive)
-    if let Some(with) = &query.with {
-        if with.recursive {
-            for cte in &with.cte_tables {
-                let alias = cte.alias.name.value.to_lowercase();
-                if let SetExpr::SetOperation {
-                    op: _,
-                    left: _anchor,
-                    right: _recursive,
-                    ..
-                } = &*cte.query.body
-                {
-                    // ponytail: anchor is already in db via first pass above.
-                    // The recursive term references the CTE alias — run it in a loop
-                    // until no new rows are produced (iterative fixpoint).
-                    for _iteration in 0..100 {
-                        let prev_count = db.get_table(&alias).map(|t| t.row_count()).unwrap_or(0);
-                        let json = if matches!(&*cte.query.body, SetExpr::SetOperation { .. }) {
-                            exec_union(&cte.query.body, &cte.query, db)?
-                        } else {
-                            exec_select(&cte.query, db)?
-                        };
-                        let current: Vec<Vec<serde_json::Value>> = serde_json::from_str(&json).unwrap_or_default();
-                        let current_count = current.len().saturating_sub(1);
-                        if current_count <= prev_count {
-                            break; // fixpoint reached
-                        }
-                        // Insert new rows, skipping duplicates
-                        if let Ok(table) = db.get_table_mut(&alias) {
-                            for row_data in &current[1..] {
-                                let db_row: Vec<DbValue> = row_data.iter().map(json_val_to_dbvalue).collect();
-                                let exists = table.rows.iter().any(|r| r == &db_row);
-                                if !exists {
-                                    let _ = table.insert(db_row);
-                                }
+    if let Some(with) = &query.with
+        && with.recursive
+    {
+        for cte in &with.cte_tables {
+            let alias = cte.alias.name.value.to_lowercase();
+            if let SetExpr::SetOperation {
+                op: _,
+                left: _anchor,
+                right: _recursive,
+                ..
+            } = &*cte.query.body
+            {
+                // ponytail: anchor is already in db via first pass above.
+                // The recursive term references the CTE alias — run it in a loop
+                // until no new rows are produced (iterative fixpoint).
+                for _iteration in 0..100 {
+                    let prev_count = db.get_table(&alias).map(|t| t.row_count()).unwrap_or(0);
+                    let json = if matches!(&*cte.query.body, SetExpr::SetOperation { .. }) {
+                        exec_union(&cte.query.body, &cte.query, db)?
+                    } else {
+                        exec_select(&cte.query, db)?
+                    };
+                    let current: Vec<Vec<serde_json::Value>> = serde_json::from_str(&json).unwrap_or_default();
+                    let current_count = current.len().saturating_sub(1);
+                    if current_count <= prev_count {
+                        break; // fixpoint reached
+                    }
+                    // Insert new rows, skipping duplicates
+                    if let Ok(table) = db.get_table_mut(&alias) {
+                        for row_data in &current[1..] {
+                            let db_row: Vec<DbValue> = row_data.iter().map(json_val_to_dbvalue).collect();
+                            let exists = table.rows.iter().any(|r| r == &db_row);
+                            if !exists {
+                                let _ = table.insert(db_row);
                             }
                         }
                     }
@@ -146,54 +146,53 @@ pub(crate) fn exec_cte_query(query: &Query, db: &mut Database) -> Result<String,
     }
 
     // SELECT INTO TABLE — create table from query results
-    if let Ok(json) = result.as_deref() {
-        if let SetExpr::Select(select) = &*query.body {
-            if let Some(ref into) = select.into {
-                let target_name = into.name.to_string().to_lowercase();
-                if !into.table {
-                    // non-table INTO (e.g. INTO OUTFILE) not supported
-                } else if let Ok(rows) = serde_json::from_str::<Vec<Vec<serde_json::Value>>>(json) {
-                    if rows.len() >= 2 {
-                        let header = &rows[0];
-                        let cols: Vec<Column> = header
-                            .iter()
-                            .enumerate()
-                            .map(|(i, h)| {
-                                let dtype = rows[1]
-                                    .get(i)
-                                    .map(|v| match v {
-                                        serde_json::Value::Number(n) => {
-                                            if n.is_f64() {
-                                                ColumnType::Float
-                                            } else {
-                                                ColumnType::Int
-                                            }
-                                        }
-                                        serde_json::Value::Bool(_) => ColumnType::Bool,
-                                        _ => ColumnType::String,
-                                    })
-                                    .unwrap_or(ColumnType::String);
-                                Column {
-                                    name: h.as_str().unwrap_or(&format!("col{}", i)).to_lowercase(),
-                                    dtype,
-                                    primary_key: false,
-                                    not_null: false,
-                                    default: None,
-                                    default_expr: None,
-                                    auto_increment: false,
-                                    unique: false,
+    if let Ok(json) = result.as_deref()
+        && let SetExpr::Select(select) = &*query.body
+        && let Some(ref into) = select.into
+    {
+        let target_name = into.name.to_string().to_lowercase();
+        if !into.table {
+            // non-table INTO (e.g. INTO OUTFILE) not supported
+        } else if let Ok(rows) = serde_json::from_str::<Vec<Vec<serde_json::Value>>>(json)
+            && rows.len() >= 2
+        {
+            let header = &rows[0];
+            let cols: Vec<Column> = header
+                .iter()
+                .enumerate()
+                .map(|(i, h)| {
+                    let dtype = rows[1]
+                        .get(i)
+                        .map(|v| match v {
+                            serde_json::Value::Number(n) => {
+                                if n.is_f64() {
+                                    ColumnType::Float
+                                } else {
+                                    ColumnType::Int
                                 }
-                            })
-                            .collect();
-                        if let Ok(mut table) = Table::new(target_name.clone(), cols) {
-                            for row_data in &rows[1..] {
-                                let db_row: Vec<DbValue> = row_data.iter().map(json_val_to_dbvalue).collect();
-                                let _ = table.insert(db_row);
                             }
-                            db.add_table(target_name.clone(), table);
-                        }
+                            serde_json::Value::Bool(_) => ColumnType::Bool,
+                            _ => ColumnType::String,
+                        })
+                        .unwrap_or(ColumnType::String);
+                    Column {
+                        name: h.as_str().unwrap_or(&format!("col{}", i)).to_lowercase(),
+                        dtype,
+                        primary_key: false,
+                        not_null: false,
+                        default: None,
+                        default_expr: None,
+                        auto_increment: false,
+                        unique: false,
                     }
+                })
+                .collect();
+            if let Ok(mut table) = Table::new(target_name.clone(), cols) {
+                for row_data in &rows[1..] {
+                    let db_row: Vec<DbValue> = row_data.iter().map(json_val_to_dbvalue).collect();
+                    let _ = table.insert(db_row);
                 }
+                db.add_table(target_name.clone(), table);
             }
         }
     }

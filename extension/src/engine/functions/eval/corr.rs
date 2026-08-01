@@ -53,10 +53,11 @@ fn rewrite_outer_refs(expr: &Expr, subq_tables: &[String], row: &[DbValue], col_
             let name = ident.value.to_lowercase();
             // If the column name is NOT a column in any subquery table, it must
             // come from an outer (correlated) table — substitute its current value.
-            if col_map.contains_key(&name) && !subq_tables.contains(&name) {
-                if let Some(&pos) = col_map.get(&name) {
-                    return dbvalue_to_literal_expr(&row[pos]);
-                }
+            if col_map.contains_key(&name)
+                && !subq_tables.contains(&name)
+                && let Some(&pos) = col_map.get(&name)
+            {
+                return dbvalue_to_literal_expr(&row[pos]);
             }
             expr.clone()
         }
@@ -135,7 +136,7 @@ pub(super) fn rewrite_if_correlated(query: &Query, row: &[DbValue], col_map: &Ha
     }
     let subq_tables = subquery_table_names(query);
     let mut q = query.clone();
-    if let SetExpr::Select(ref mut s) = &mut *q.body {
+    if let SetExpr::Select(s) = &mut *q.body {
         s.selection = s
             .selection
             .as_ref()
@@ -171,10 +172,10 @@ fn spanned_val(v: Value, span: Span) -> sqlparser::ast::ValueWithSpan {
 /// Check if a subquery is correlated (references any outer-table columns).
 fn is_correlated(query: &Query, col_map: &HashMap<String, usize>) -> bool {
     let subq_tables = subquery_table_names(query);
-    if let SetExpr::Select(select) = &*query.body {
-        if let Some(selection) = &select.selection {
-            return has_outer_refs(selection, &subq_tables, col_map);
-        }
+    if let SetExpr::Select(select) = &*query.body
+        && let Some(selection) = &select.selection
+    {
+        return has_outer_refs(selection, &subq_tables, col_map);
     }
     false
 }

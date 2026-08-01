@@ -145,10 +145,10 @@ pub(crate) fn run_pre_query_hooks(sql: &str) -> Option<String> {
     let reg = PLUGIN_REGISTRY.lock().unwrap();
     for plugin in &reg.plugins {
         for hook in &plugin.hooks {
-            if let Hook::PreQuery(f) = hook {
-                if let Some(err) = f(sql) {
-                    return Some(err);
-                }
+            if let Hook::PreQuery(f) = hook
+                && let Some(err) = f(sql)
+            {
+                return Some(err);
             }
         }
     }
@@ -257,7 +257,7 @@ fn load_plugin_file(path: &str) -> Result<String, EngineError> {
 
 /// C-callable function for plugins to register a SQL function.
 /// Called from the plugin's init() via the callback pointer.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub extern "C" fn a3sql_plugin_register_function(
     plugin_name: *const std::ffi::c_char,
     func_name: *const std::ffi::c_char,

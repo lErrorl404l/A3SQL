@@ -12,7 +12,7 @@ use sqlparser::ast::{
 };
 
 use super::super::database::Database;
-use super::super::execute::{execute, LAST_CHANGES, LAST_INSERT_ROWID};
+use super::super::execute::{LAST_CHANGES, LAST_INSERT_ROWID, execute};
 use super::super::index::IndexType as A3IndexType;
 use super::super::stmts::ddl::object_name_str;
 use super::super::table::{IndexImpl, Table};
@@ -415,7 +415,7 @@ pub(crate) fn exec_std_function(
                     return Err(EngineError::TypeError {
                         expected: "integer".into(),
                         actual: format!("{:?}", vals[1]),
-                    })
+                    });
                 }
             };
             if vals.len() >= 3 {
@@ -425,7 +425,7 @@ pub(crate) fn exec_std_function(
                         return Err(EngineError::TypeError {
                             expected: "integer".into(),
                             actual: format!("{:?}", vals[2]),
-                        })
+                        });
                     }
                 };
                 Ok(DbValue::String(s.chars().skip(start).take(length).collect()))
@@ -456,7 +456,7 @@ pub(crate) fn exec_std_function(
                     return Err(EngineError::TypeError {
                         expected: "numeric".into(),
                         actual: format!("{:?}", vals[0]),
-                    })
+                    });
                 }
             };
             let decimals = if vals.len() >= 2 {
@@ -466,7 +466,7 @@ pub(crate) fn exec_std_function(
                         return Err(EngineError::TypeError {
                             expected: "integer".into(),
                             actual: format!("{:?}", vals[1]),
-                        })
+                        });
                     }
                 }
             } else {
@@ -769,10 +769,10 @@ pub(crate) fn exec_std_function(
             let mut out = String::new();
             for i in 0..args.len() {
                 let v = eval_args(i + 1)?;
-                if let Some(n) = to_f64(&v[i]) {
-                    if let Some(c) = char::from_u32(n as u32) {
-                        out.push(c);
-                    }
+                if let Some(n) = to_f64(&v[i])
+                    && let Some(c) = char::from_u32(n as u32)
+                {
+                    out.push(c);
                 }
             }
             Ok(DbValue::String(out))
@@ -987,7 +987,7 @@ pub(crate) fn try_trigram_index<'a>(where_expr: Option<&Expr>, table: &'a Table)
 
     // Check for trigram index on this column
     let trigram = table.find_index(&col_name, A3IndexType::Trigram)?;
-    let IndexImpl::Trigram(ref idx) = trigram else {
+    let IndexImpl::Trigram(idx) = trigram else {
         unreachable!()
     };
 

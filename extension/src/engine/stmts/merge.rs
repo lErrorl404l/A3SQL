@@ -63,14 +63,14 @@ pub(crate) fn exec_merge(merge: &Merge, db: &mut Database) -> Result<String, Eng
                                 for a in assignments {
                                     if let sqlparser::ast::AssignmentTarget::ColumnName(n) = &a.target {
                                         let cn = n.to_string().to_lowercase();
-                                        if let Some(&ci) = tgt.col_index.get(&cn) {
-                                            if let Ok(v) = crate::engine::functions::eval::eval_expr(
+                                        if let Some(&ci) = tgt.col_index.get(&cn)
+                                            && let Ok(v) = crate::engine::functions::eval::eval_expr(
                                                 &a.value,
                                                 &tgt.rows[ri],
                                                 &tgt.col_index,
-                                            ) {
-                                                tgt.rows[ri][ci] = v;
-                                            }
+                                            )
+                                        {
+                                            tgt.rows[ri][ci] = v;
                                         }
                                     }
                                 }
@@ -98,22 +98,22 @@ pub(crate) fn exec_merge(merge: &Merge, db: &mut Database) -> Result<String, Eng
         }
         if !is_matched {
             for cl in &merge.clauses {
-                if matches!(cl.clause_kind, MergeClauseKind::NotMatched) {
-                    if let MergeAction::Insert(_) = &cl.action {
-                        let mut row = Vec::new();
-                        for tc in &tgt_cols {
-                            if let Some(si) = src_cols.iter().position(|s| s == tc) {
-                                row.push(sr[si].clone());
-                            } else {
-                                row.push(DbValue::Null);
-                            }
+                if matches!(cl.clause_kind, MergeClauseKind::NotMatched)
+                    && let MergeAction::Insert(_) = &cl.action
+                {
+                    let mut row = Vec::new();
+                    for tc in &tgt_cols {
+                        if let Some(si) = src_cols.iter().position(|s| s == tc) {
+                            row.push(sr[si].clone());
+                        } else {
+                            row.push(DbValue::Null);
                         }
-                        let _ = tgt.insert(row.clone());
-                        if return_select.is_some() {
-                            affected_rows.push(row);
-                        }
-                        inserted += 1;
                     }
+                    let _ = tgt.insert(row.clone());
+                    if return_select.is_some() {
+                        affected_rows.push(row);
+                    }
+                    inserted += 1;
                 }
             }
         }
