@@ -410,12 +410,15 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)] // creates/removes the data dir - fs blocked by miri isolation
     fn accepts_relative_paths() {
+        // Pure path validation: safe_data_path only checks components + symlinks,
+        // it writes NOTHING — so no cleanup is needed here. (The previous
+        // remove_dir_all(CONFIG.data_dir()) deleted the process-global data dir
+        // while durability tests were mid-write in it -> intermittent flakes
+        // under the parallel suite.)
         let r = safe_data_path("a3sql.bin");
         assert!(r.is_ok(), "expected OK, got {}", err_msg(r));
         let r = safe_data_path("subdir/a3sql.bin");
         assert!(r.is_ok(), "expected OK, got {}", err_msg(r));
-        // cleanup side effects from the accepted cases
-        let _ = std::fs::remove_dir_all(CONFIG.data_dir());
     }
 
     #[test]
