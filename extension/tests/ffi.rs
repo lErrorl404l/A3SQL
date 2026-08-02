@@ -246,6 +246,135 @@ fn ffi_args_wrong_arg_count_vanilla_is_graceful() {
     assert!(out.contains("PONG"), "{out}");
 }
 
+// ── Output-buffer overflow: fail-loud, never silent truncation ────────────
+
+/// Number of data rows in a SELECT response (`[0,"OK",[["col1"],[val1],...]]`).
+fn row_count(resp: &str) -> usize {
+    resp.matches("],[").count()
+}
+
+#[test]
+fn ffi_overflow_returns_err_envelope_with_byte_counts_and_cursor_hint() {
+    let _g = setup();
+    // Fixture: ~5.5KB response — past any small caller buffer, but well under
+    // dispatch's own 30KB guard so the FFI boundary is what overflows.
+    a3sql::dispatch("CREATE TABLE ffi_ovf (id INT PRIMARY KEY, val STRING)", &[]);
+    for batch in 0..5 {
+        let vals: String = (0..20)
+            .map(|i| {
+                let n = batch * 20 + i;
+                format!("({}, 'padding_{}_abcdefghijklmnopqrstuvwxyz0123456789')", n, n)
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let r = a3sql::dispatch(&format!("INSERT INTO ffi_ovf VALUES {}", vals), &[]);
+        assert!(r.starts_with("[0,"), "insert batch {batch}: {r}");
+    }
+    let (full, _) = string_call("SELECT * FROM ffi_ovf ORDER BY id", 16384);
+    assert!(
+        full.len() > 256,
+        "fixture must overflow a small buffer: len={}",
+        full.len()
+    );
+
+    // Small caller buffer: must be an ERR_EXEC envelope, not truncated JSON.
+    let (out, _) = string_call("SELECT * FROM ffi_ovf ORDER BY id", 256);
+    assert!(out.starts_with("[-1,"), "must be an error envelope: {out}");
+    assert!(out.contains("ERR_EXEC"), "{out}");
+    assert!(out.contains("Result exceeds output buffer"), "{out}");
+    assert!(
+        out.contains(&format!("{} bytes > 256 limit", full.len())),
+        "byte counts must show response size and output_size: {out}"
+    );
+    assert!(out.contains("cursor create"), "cursor paging hint: {out}");
+    assert!(out.contains("cursor fetch"), "cursor paging hint: {out}");
+}
+
+#[test]
+fn ffi_args_overflow_returns_err_envelope() {
+    let _g = setup();
+    a3sql::dispatch("CREATE TABLE ffi_ovf2 (id INT PRIMARY KEY, val STRING)", &[]);
+    let vals: Vec<String> = (0..4)
+        .map(|i| {
+            format!(
+                "({}, 'abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789')",
+                i
+            )
+        })
+        .collect();
+    let r = a3sql::dispatch(&format!("INSERT INTO ffi_ovf2 VALUES {}", vals.join(", ")), &[]);
+    assert!(r.starts_with("[0,"), "insert: {r}");
+    // output_size 200 fits the ~170-byte ERR_EXEC envelope but not the
+    // ~310-byte response: RVExtensionArgs must surface the full envelope.
+    let (rc, out) = args_call("SELECT * FROM ffi_ovf2", &[], 200);
+    assert_eq!(rc, 0, "ABI return code unchanged: {out}");
+    assert!(out.starts_with("[-1,"), "{out}");
+    assert!(out.contains("ERR_EXEC"), "{out}");
+    assert!(out.contains("Result exceeds output buffer"), "{out}");
+    assert!(out.contains("cursor create"), "{out}");
+}
+
+#[test]
+fn ffi_exact_fit_returns_full_response_byte_identical() {
+    let _g = setup();
+    a3sql::dispatch("CREATE TABLE ffi_fit (id INT PRIMARY KEY, val STRING)", &[]);
+    let r = a3sql::dispatch("INSERT INTO ffi_fit VALUES (1, 'héllo'), (2, 'wörld')", &[]);
+    assert!(r.starts_with("[0,"), "insert: {r}");
+    let (full, _) = string_call("SELECT * FROM ffi_fit ORDER BY id", 4096);
+    assert!(full.starts_with("[0,"), "fixture: {full}");
+
+    // output_size = full.len() + 1 leaves room for the full response + null.
+    let (out, _) = string_call("SELECT * FROM ffi_fit ORDER BY id", full.len() as u32 + 1);
+    assert_eq!(out, full, "exact fit must be byte-identical");
+
+    // One byte less must NOT fit — the same query now errors loudly.
+    let (out, _) = string_call("SELECT * FROM ffi_fit ORDER BY id", full.len() as u32);
+    assert!(out.starts_with("[-1,"), "one byte short must overflow: {out}");
+    assert!(out.contains("ERR_EXEC"), "{out}");
+}
+
+#[test]
+fn ffi_cursor_paging_round_trips_large_table() {
+    let _g = setup();
+    // ~46KB of data — a single SELECT cannot fit Arma's buffer.
+    a3sql::dispatch("CREATE TABLE ffi_big (id INT PRIMARY KEY, val STRING)", &[]);
+    let total = 420;
+    for batch in 0..(total / 20) {
+        let vals: String = (0..20)
+            .map(|i| {
+                let n = batch * 20 + i;
+                format!("({}, '{}')", n, "x".repeat(100))
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let r = a3sql::dispatch(&format!("INSERT INTO ffi_big VALUES {}", vals), &[]);
+        assert!(r.starts_with("[0,"), "insert batch {batch}: {r}");
+    }
+
+    // Direct SELECT of the whole table must fail loud, never truncate.
+    let (out, _) = string_call("SELECT * FROM ffi_big ORDER BY id", 4096);
+    assert!(out.starts_with("[-1,"), "oversized select must error: {out}");
+    assert!(out.contains("ERR_"), "error envelope: {out}");
+
+    // Page through with a cursor: every inserted row must come back.
+    let (out, _) = string_call("cursor create ffi_big_cur SELECT * FROM ffi_big ORDER BY id", 16384);
+    assert!(out.starts_with("[0,"), "cursor create: {out}");
+    let mut fetched = 0;
+    loop {
+        let (out, _) = string_call("cursor fetch ffi_big_cur 100", 16384);
+        assert!(out.starts_with("[0,"), "cursor fetch page: {out}");
+        let rows = row_count(&out);
+        if rows == 0 {
+            break;
+        }
+        fetched += rows;
+    }
+    assert_eq!(
+        fetched, total,
+        "cursor paging must round-trip every row (fetched {fetched} of {total})"
+    );
+}
+
 // ── Pointer-contract violations ────────────────────────────────────────────
 
 #[test]

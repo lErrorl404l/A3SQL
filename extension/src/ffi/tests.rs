@@ -124,6 +124,37 @@ fn write_output_null_buffer_is_noop() {
     unsafe { write_output(std::ptr::null_mut(), 8, "hello") };
 }
 
+#[test]
+fn write_output_reports_truncation_flag() {
+    let mut buf = [0i8; 16];
+    // Fitting response: not truncated, full content written.
+    // SAFETY: test buffer is valid for output_size bytes.
+    let fits = unsafe { write_output(buf.as_mut_ptr(), 16, "hello") };
+    assert!(!fits, "fitting response must not report truncation");
+    assert_eq!(read_cstr(buf.as_ptr()), "hello");
+
+    // Oversized response: truncated flag set, UTF-8-safe prefix still written.
+    let truncated = unsafe { write_output(buf.as_mut_ptr(), 5, "ok:é") };
+    assert!(truncated, "oversized response must report truncation");
+    assert_eq!(read_cstr(buf.as_ptr()), "ok:", "prefix still written");
+}
+
+#[test]
+fn write_output_truncation_flag_edge_cases() {
+    let mut buf = [0x41i8; 8];
+    // Empty response on any size is never a truncation.
+    // SAFETY: test buffer is valid for output_size bytes.
+    let empty = unsafe { write_output(buf.as_mut_ptr(), 0, "") };
+    assert!(!empty, "empty response never truncates");
+
+    // Null buffer: no write, but the fit decision is still reported.
+    // SAFETY: write_output tolerates a null output pointer.
+    let fits = unsafe { write_output(std::ptr::null_mut(), 8, "hello") };
+    assert!(!fits);
+    let truncated = unsafe { write_output(std::ptr::null_mut(), 2, "hello") };
+    assert!(truncated, "null buffer with oversized resp still reports truncation");
+}
+
 // ── RVExtensionVersion ─────────────────────────────────────────────
 
 #[test]

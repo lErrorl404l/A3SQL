@@ -29,6 +29,7 @@ use arma_rs::Extension;
 
 use crate::dispatch;
 use crate::engine;
+use crate::engine::error::{ErrorCode, error_response};
 
 /// SQF callback ABI — mirrors [`arma_rs::Callback`](https://docs.rs/arma-rs/latest/arma_rs/type.Callback.html):
 /// `extern "system" fn(*const c_char, *const c_char, *const c_char) -> c_int`.
@@ -61,14 +62,14 @@ pub(crate) static REMOTE: LazyLock<Mutex<Option<std::net::TcpStream>>> = LazyLoc
 /// Output buffer size from Arma engine. 30 KB matches Arma 3 v2.20's
 /// `callExtension` ceiling — bigger result sets fit without round-trips.
 ///
-/// # FFI output-buffer cap (documented, not enforced here)
+/// # FFI output-buffer cap (fail-loud, never silent data loss)
 /// `OUTPUT_BUF_SIZE` is the *caller-supplied* buffer ceiling, not a server
 /// limit: the REPL server is unbounded and returns full result sets. A host
 /// that passes a smaller `output_size` to [`write_output`](fn.write_output)
-/// truncates the response at `output_size - 1` bytes, backing off to the last
-/// complete UTF-8 codepoint so the buffer never holds invalid UTF-8. Arma
-/// always passes the full 30 KB, so truncation is latent, not live. Hosts
-/// that shrink the buffer must expect truncated (but valid) JSON.
+/// now receives an `ERR_EXEC` envelope (with byte counts and a cursor-paging
+/// hint) instead of a silently truncated response — see
+/// [`write_response`](fn.write_response). Arma always passes the full 30 KB,
+/// so the truncation path is latent, not live, but when it fires it is loud.
 #[allow(
     dead_code,
     reason = "OUTPUT_BUF_SIZE is a public constant checked in dispatch.rs and passed to Arma via RVExtensionArgs"
@@ -182,10 +183,14 @@ pub unsafe extern "C" fn RVExtensionVersion(output: *mut c_char, output_size: u3
 /// `output_size - 1` bytes and null-terminated. A no-op for empty responses
 /// (leaves the buffer untouched, matching Arma's expectation of `""`).
 ///
+/// Returns `true` when the full response did not fit (i.e. was truncated) —
+/// the caller must then report the truncation instead of handing the mod a
+/// partial result as if it were complete.
+///
 /// # Safety
 /// `output` must be a valid, writable buffer of at least `output_size` bytes
 /// (or null, in which case nothing is written).
-unsafe fn write_output(output: *mut c_char, output_size: u32, resp: &str) {
+unsafe fn write_output(output: *mut c_char, output_size: u32, resp: &str) -> bool {
     let bytes = resp.as_bytes();
     let mut len = bytes.len().min(output_size.saturating_sub(1) as usize);
     // Back off to the last complete UTF-8 codepoint boundary: a truncation
@@ -202,6 +207,25 @@ unsafe fn write_output(output: *mut c_char, output_size: u32, resp: &str) {
             std::ptr::copy_nonoverlapping(bytes.as_ptr(), output as *mut u8, len);
             *output.add(len) = 0;
         }
+    }
+    len < bytes.len()
+}
+
+/// Write a dispatch response into the engine output buffer. When the full
+/// response does not fit, the buffer is instead re-written with an `ERR_EXEC`
+/// envelope (byte counts + cursor-paging hint) so a mod sees an explicit
+/// error rather than silently truncated data. The envelope itself is bounded
+/// by the same UTF-8 back-off: a pathological tiny `output_size` yields
+/// valid UTF-8 in the buffer, never a panic.
+unsafe fn write_response(output: *mut c_char, output_size: u32, resp: &str) {
+    if unsafe { write_output(output, output_size, resp) } {
+        let msg = format!(
+            "Result exceeds output buffer ({} bytes > {} limit) — use 'cursor create <name> <query>' + 'cursor fetch <name> [limit]' to page large results",
+            resp.len(),
+            output_size
+        );
+        // SAFETY: same buffer contract as above; the write is back-off bounded.
+        unsafe { write_output(output, output_size, &error_response(ErrorCode::Exec, &msg)) };
     }
 }
 
@@ -223,7 +247,7 @@ pub unsafe extern "C" fn RVExtension(output: *mut c_char, output_size: u32, func
     };
     let resp = dispatch::dispatch(&input, &[]);
     // SAFETY: `output`/`output_size` are the engine buffer contract.
-    unsafe { write_output(output, output_size, &resp) };
+    unsafe { write_response(output, output_size, &resp) };
 }
 
 /// STRING callExtension ARRAY — main entry point.
@@ -301,7 +325,7 @@ pub unsafe extern "C" fn RVExtensionArgs(
     }
     let resp = dispatch::dispatch(&function_str, &args);
     // SAFETY: `output`/`output_size` are the engine buffer contract.
-    unsafe { write_output(output, output_size, &resp) };
+    unsafe { write_response(output, output_size, &resp) };
     0
 }
 
