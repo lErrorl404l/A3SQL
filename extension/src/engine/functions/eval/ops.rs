@@ -18,7 +18,7 @@ pub(crate) fn to_float(v: &DbValue) -> Option<f64> {
     }
 }
 
-fn arith_op<F, G>(a: &DbValue, b: &DbValue, int_op: F, float_op: G) -> Result<DbValue, EngineError>
+fn arith_op<F, G>(a: &DbValue, op: &BinaryOperator, b: &DbValue, int_op: F, float_op: G) -> Result<DbValue, EngineError>
 where
     F: Fn(i64, i64) -> i64,
     G: Fn(f64, f64) -> f64,
@@ -27,9 +27,12 @@ where
     if matches!(a, DbValue::Null) || matches!(b, DbValue::Null) {
         return Ok(DbValue::Null);
     }
-    // Integer division by zero guard: pass a wrapper that checks
+    // Integer division by zero guard: i64 / 0 panics, and only Divide can
+    // divide. Plus/Minus/Multiply with a zero operand are perfectly valid
+    // (`5 + 0` must not error).
+    let is_div = matches!(op, BinaryOperator::Divide);
     let safe_int = |x: i64, y: i64| -> Result<i64, EngineError> {
-        if y == 0 {
+        if is_div && y == 0 {
             Err(EngineError::Exec("Division by zero".into()))
         } else {
             Ok(int_op(x, y))
@@ -95,10 +98,10 @@ pub(crate) fn apply_binary_op(left: &DbValue, op: &BinaryOperator, right: &DbVal
         BinaryOperator::LtEq => cmp_values(left, right, |o| o.is_le()),
         BinaryOperator::Gt => cmp_values(left, right, |o| o.is_gt()),
         BinaryOperator::GtEq => cmp_values(left, right, |o| o.is_ge()),
-        BinaryOperator::Plus => arith_op(left, right, |a, b| a + b, |a, b| a + b),
-        BinaryOperator::Minus => arith_op(left, right, |a, b| a - b, |a, b| a - b),
-        BinaryOperator::Multiply => arith_op(left, right, |a, b| a * b, |a, b| a * b),
-        BinaryOperator::Divide => arith_op(left, right, |a, b| a / b, |a, b| a / b),
+        BinaryOperator::Plus => arith_op(left, op, right, |a, b| a + b, |a, b| a + b),
+        BinaryOperator::Minus => arith_op(left, op, right, |a, b| a - b, |a, b| a - b),
+        BinaryOperator::Multiply => arith_op(left, op, right, |a, b| a * b, |a, b| a * b),
+        BinaryOperator::Divide => arith_op(left, op, right, |a, b| a / b, |a, b| a / b),
         BinaryOperator::Modulo => match (to_float(left), to_float(right)) {
             (Some(a), Some(b)) if b != 0.0 => Ok(DbValue::Float(a % b)),
             _ => Err(EngineError::TypeError {
@@ -175,5 +178,25 @@ pub(crate) fn is_truthy(v: &DbValue) -> bool {
         DbValue::String(s) => !s.is_empty(),
         DbValue::Strings(arr) => !arr.is_empty(),
         DbValue::Floats(arr) => !arr.is_empty(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regression (found by T2 proptests): the division-by-zero guard used to
+    /// reject a zero RHS for EVERY int op — `5 + 0`, `5 - 0`, `5 * 0` all
+    /// errored with "Division by zero". Only Divide can divide.
+    #[test]
+    fn int_ops_with_zero_rhs_are_valid() {
+        let plus = apply_binary_op(&DbValue::Int(5), &BinaryOperator::Plus, &DbValue::Int(0)).unwrap();
+        assert_eq!(plus, DbValue::Int(5));
+        let minus = apply_binary_op(&DbValue::Int(5), &BinaryOperator::Minus, &DbValue::Int(0)).unwrap();
+        assert_eq!(minus, DbValue::Int(5));
+        let mul = apply_binary_op(&DbValue::Int(5), &BinaryOperator::Multiply, &DbValue::Int(0)).unwrap();
+        assert_eq!(mul, DbValue::Int(0));
+        // Division by zero still errors.
+        assert!(apply_binary_op(&DbValue::Int(5), &BinaryOperator::Divide, &DbValue::Int(0)).is_err());
     }
 }

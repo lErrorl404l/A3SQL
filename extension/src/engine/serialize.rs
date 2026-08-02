@@ -318,4 +318,61 @@ mod tests {
         assert_eq!("binary".parse::<Format>().unwrap(), Format::Binary);
         assert!("unknown".parse::<Format>().is_err());
     }
+
+    /// Regression (found by T2 proptests): export writes "STRINGS[]"/"FLOATS[]",
+    /// which import matched as plain "strings"/"floats" → array columns came
+    /// back as STRING. The array type must survive the JSON round-trip.
+    #[test]
+    fn json_array_types_roundtrip() {
+        let mut db = Database::new();
+        let cols = vec![
+            Column {
+                name: "id".into(),
+                dtype: ColumnType::Int,
+                primary_key: true,
+                not_null: false,
+                default: None,
+                default_expr: None,
+                auto_increment: false,
+                unique: false,
+            },
+            Column {
+                name: "tags".into(),
+                dtype: ColumnType::Strings,
+                primary_key: false,
+                not_null: false,
+                default: None,
+                default_expr: None,
+                auto_increment: false,
+                unique: false,
+            },
+            Column {
+                name: "scores".into(),
+                dtype: ColumnType::Floats,
+                primary_key: false,
+                not_null: false,
+                default: None,
+                default_expr: None,
+                auto_increment: false,
+                unique: false,
+            },
+        ];
+        let mut table = Table::new("items".into(), cols).unwrap();
+        table
+            .insert(vec![
+                DbValue::Int(1),
+                DbValue::Strings(vec!["a".into(), "b".into()]),
+                DbValue::Floats(vec![1.5, 2.5]),
+            ])
+            .unwrap();
+        db.create_table("items", table).unwrap();
+        let orig = db.get_table("items").unwrap();
+        let json = export_json(orig);
+        let mut db2 = Database::new();
+        import_json("items", &json, &mut db2).unwrap();
+        let imported = db2.get_table("items").unwrap();
+        assert_eq!(orig.rows, imported.rows);
+        assert_eq!(orig.columns[1].dtype, imported.columns[1].dtype, "tags column");
+        assert_eq!(orig.columns[2].dtype, imported.columns[2].dtype, "scores column");
+    }
 }

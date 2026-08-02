@@ -1,0 +1,11 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 84372dc6d002524974562b1fe11f62716a2196bdfae6a276c36eba31d6875ab2 # shrinks to (vals, x) = ([0, 0], 0)
+cc 139b00264227321464a77d482dbbf05755ac95924ff3bae41bc4169dfc83b2a9 # shrinks to (pks, v) = ([0], 0)
+cc f3fba619eb7f4c2a4de9bdf42a26cbda680a604efc0b908a047c93c34ad3d072 # shrinks to (pairs, x, y) = ([(0, "")], 0, "")
+cc 2774816d806602f04993c90debdf4cda3cfafcbd7cb8aba3e93bc665764d8284 # shrinks to (pairs, x) = ([(0, "")], 0)
+cc e6b7b9fe615f1ac0da9aa8d0d4d5052f1189abfcfc5a2f45430702c6564fac42 # shrinks to (vals, pred, x, y) = ([65, 12, 62, 9, 8, 60, 11, 7, 16, 39], 4, 30, 7)

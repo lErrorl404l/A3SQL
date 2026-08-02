@@ -67,7 +67,12 @@ pub(crate) fn import_json(table_name: &str, json_str: &str, db: &mut Database) -
                     .to_string();
                 let type_str = col_obj.get("type").and_then(|v| v.as_str()).unwrap_or("String");
                 let primary_key = col_obj.get("primary_key").and_then(|v| v.as_bool()).unwrap_or(false);
-                let dtype = match type_str.to_lowercase().as_str() {
+                // Normalize: export writes the Display name ("STRINGS[]") — strip
+                // a trailing "[]" so array types ("strings[]"/"floats[]") and
+                // their plain forms ("strings"/"string") all resolve.
+                let type_lc = type_str.to_lowercase();
+                let type_base = type_lc.strip_suffix("[]").unwrap_or(&type_lc);
+                let dtype = match type_base {
                     "bool" | "boolean" => ColumnType::Bool,
                     "int" | "integer" => ColumnType::Int,
                     "float" | "double" => ColumnType::Float,

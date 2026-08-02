@@ -1175,6 +1175,12 @@ fn range_bounds(expr: &Expr, table: &Table) -> Option<(String, Bound<String>, Bo
             }
             coerce_bound(&mut lo, table, &col_name)?;
             coerce_bound(&mut hi, table, &col_name)?;
+            // Reversed bounds (`v BETWEEN 50 AND 10`) are always false.
+            // BTreeMap::range PANICS on start > end, so fall back to the scan —
+            // the scan evaluates the reversed BETWEEN correctly to empty.
+            if encode_key(&lo) > encode_key(&hi) {
+                return None;
+            }
             Some((
                 col_name,
                 Bound::Included(encode_key(&lo)),

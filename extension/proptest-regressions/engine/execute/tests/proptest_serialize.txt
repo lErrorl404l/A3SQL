@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 3076e10122c35fe0a568fc0aefe4b38a511370253e62f981b3974b231e7ea961 # shrinks to (sp, rows) = (StrArr, [])
+cc ede36e03adde93a168695e22a3559245b9f8df548a23a0cff674c7d45e4d83bb # shrinks to (sp, rows) = (FltArr, [[Int(0), Floats([1.547591558184606e60]), Floats([])]])
