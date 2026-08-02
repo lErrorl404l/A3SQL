@@ -27,6 +27,7 @@ use proptest::prelude::*;
 use proptest::strategy::BoxedStrategy;
 
 use super::helpers::*;
+use crate::engine::functions::builtin::{try_btree_index, try_pk_index};
 use crate::engine::index::IndexType;
 use crate::engine::prelude::*;
 

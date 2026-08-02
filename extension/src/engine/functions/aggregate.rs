@@ -195,35 +195,6 @@ pub(crate) fn compute_aggregate_rows(
     Ok((header, rows))
 }
 
-/// Compute aggregate functions over partitions (groups) of rows, formatted
-/// as the JSON result string ([[header], row1, ...], or `[]` when the
-/// partition set is empty).
-pub(crate) fn compute_aggregates(
-    partitions: &[Vec<&[DbValue]>],
-    projection: &[SelectItem],
-    col_map: &HashMap<String, usize>,
-) -> Result<String, EngineError> {
-    let (header, rows) = compute_aggregate_rows(partitions, projection, col_map)?;
-    if header.is_empty() {
-        return Ok("[]".to_string());
-    }
-    let rows_json: Vec<String> = rows
-        .iter()
-        .map(|r| {
-            format!(
-                "[{}]",
-                r.iter().map(|v| v.to_json_string()).collect::<Vec<_>>().join(",")
-            )
-        })
-        .collect();
-    let header_json: String = header
-        .iter()
-        .map(|h| format!("\"{}\"", h))
-        .collect::<Vec<_>>()
-        .join(",");
-    Ok(format!("[[{}],{}]", header_json, rows_json.join(",")))
-}
-
 pub(crate) fn projection_expr_name(expr: &Expr) -> String {
     match expr {
         Expr::Function(f) => f.name.to_string().to_uppercase(),

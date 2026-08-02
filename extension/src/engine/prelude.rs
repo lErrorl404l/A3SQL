@@ -10,16 +10,10 @@ pub(crate) use super::value::{Column, ColumnType, DbValue, db_value_cmp, json_va
 
 pub(crate) use super::table::Table;
 
-// Re-export key execution utilities
-pub(crate) use super::execute::format_projected_result;
-
 // Common helper functions
 pub(crate) use super::functions::aggregate::projection_expr_name;
-pub(crate) use super::functions::builtin::{
-    get_func_arg_unnamed, materialize_view, resolve_single_table, sql_val_to_db, try_btree_index, try_pk_index,
-    try_trigram_index, value_to_string,
-};
-pub(crate) use super::functions::eval::{apply_binary_op, eval_expr, is_truthy};
+pub(crate) use super::functions::builtin::{get_func_arg_unnamed, materialize_view, sql_val_to_db, value_to_string};
+pub(crate) use super::functions::eval::{apply_binary_op, is_truthy};
 
 /// Recursively check an expression tree for subqueries (Expr::Subquery /
 /// Expr::Exists). The thread-local DB snapshot is only needed when one is

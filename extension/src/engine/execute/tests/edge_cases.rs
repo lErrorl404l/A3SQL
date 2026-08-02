@@ -1,6 +1,7 @@
 // Edge case tests: empty tables, NULL handling, bulk operations
 
 use super::helpers::*;
+use crate::engine::functions::builtin::try_trigram_index;
 use crate::engine::prelude::*;
 
 #[test]
