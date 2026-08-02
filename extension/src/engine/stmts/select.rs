@@ -17,6 +17,7 @@ use crate::engine::prelude::*;
 use crate::engine::value::GroupKey;
 
 pub(crate) mod cte;
+pub(crate) mod derived;
 pub(crate) mod joins;
 pub(crate) mod sort;
 pub(crate) mod union;

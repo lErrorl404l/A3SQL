@@ -16,12 +16,13 @@ pub(crate) mod ops;
 // from the same paths as before the split:
 //
 //   crate::engine::functions::eval::{eval_expr, apply_binary_op, is_truthy, ...}
-pub(crate) use expr::{eval_expr, eval_literal_expr, exec_function};
+pub(crate) use expr::{eval_expr, eval_literal_expr, eval_subquery_value, eval_subquery_values, exec_function};
 pub(crate) use ops::{apply_binary_op, is_truthy, to_float};
 
 // Subquery correlation + nondeterminism detection, used by the executor's
-// subquery cache (execute/select.rs).
-pub(crate) use corr::query_has_from;
+// subquery cache (execute/select.rs) and by the JOIN handler's derived-table
+// rejection (stmts/select/joins.rs).
+pub(crate) use corr::{has_outer_refs, query_has_from, subquery_table_names};
 pub(crate) use nondet::query_has_nondeterministic;
 
 // ── Tests ─────────────────────────────────────────────────────────────────

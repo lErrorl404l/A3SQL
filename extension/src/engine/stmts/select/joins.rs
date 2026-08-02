@@ -9,7 +9,10 @@ use sqlparser::ast::{
     Expr, FunctionArguments, LimitClause, OrderByKind, Query, Select, SelectItem, TableFactor, TableWithJoins,
 };
 
+use super::super::super::execute::{SUBQ_DB, clear_subq_cache};
 use super::super::super::functions::builtin::{curdate_value, exec_std_function, now_value, simple_like, values_equal};
+use super::super::super::functions::eval::{eval_subquery_value, eval_subquery_values};
+use super::derived::resolve_any_factor;
 use super::sort::parse_expr_as_usize;
 use crate::engine::error::EngineError;
 use crate::engine::prelude::*;
@@ -23,23 +26,32 @@ pub(crate) fn resolve_table_from_joins(tj: &TableWithJoins) -> Result<String, En
 }
 
 /// Check if the FROM clause has multiple tables or JOINs.
+/// A derived table (FROM (SELECT ...) d) also routes here — it needs the
+/// joins handler to materialise the subquery into a temp table.
 pub(crate) fn has_multiple_tables(select: &Select) -> bool {
-    select.from.len() > 1 || select.from.iter().any(|t| !t.joins.is_empty())
+    select.from.len() > 1
+        || select.from.iter().any(|t| !t.joins.is_empty())
+        || select
+            .from
+            .iter()
+            .any(|t| matches!(t.relation, TableFactor::Derived { .. }))
 }
 
 /// Execute a SELECT with JOINs. Uses a flat-row column map with absolute positions.
 pub(crate) fn exec_select_joins(query: &Query, select: &Select, db: &mut Database) -> Result<String, EngineError> {
     use sqlparser::ast::{JoinConstraint, JoinOperator};
 
-    // ── Resolve all tables in FROM + JOINs ──────────────────────────
-    /// Extract alias name from a TableFactor (tracks aliased self-joins).
-    fn table_alias(factor: &TableFactor) -> Option<String> {
-        match factor {
-            TableFactor::Table { alias, .. } => alias.as_ref().map(|a| a.name.value.to_lowercase()),
-            _ => None,
-        }
+    // Subqueries in JOIN ON predicates and derived tables read the SUBQ_DB
+    // snapshot. The single-table path sets it in exec_select, but JOIN queries
+    // route straight here — set it (and clear the per-statement subquery cache
+    // along with it, matching set_subq_snapshot_if_needed) before evaluating
+    // any ON clause or materialising any derived table.
+    if crate::engine::prelude::query_has_subquery(query) {
+        SUBQ_DB.with(|snap| *snap.borrow_mut() = Some(db.clone()));
+        clear_subq_cache();
     }
 
+    // ── Resolve all tables in FROM + JOINs ──────────────────────────
     struct Tbl {
         name: String,          // actual table name
         alias: Option<String>, // optional user-supplied alias
@@ -51,10 +63,11 @@ pub(crate) fn exec_select_joins(query: &Query, select: &Select, db: &mut Databas
     let mut tbls: Vec<Tbl> = Vec::new();
     let mut abs: usize = 0;
     let mut view_tables: Vec<String> = Vec::new();
+    let mut temp_tables: Vec<String> = Vec::new();
+    let mut derived_ctr: usize = 0;
 
     for twj in &select.from {
-        let (n, t) = resolve_table_factor(&twj.relation, db)?;
-        let a = table_alias(&twj.relation);
+        let (n, a, t) = resolve_any_factor(&twj.relation, db, &mut derived_ctr, &mut temp_tables)?;
         if db.has_view(&n) {
             view_tables.push(n.clone());
         }
@@ -69,8 +82,7 @@ pub(crate) fn exec_select_joins(query: &Query, select: &Select, db: &mut Databas
         });
         abs += c;
         for j in &twj.joins {
-            let (jn, jt) = resolve_table_factor(&j.relation, db)?;
-            let ja = table_alias(&j.relation);
+            let (jn, ja, jt) = resolve_any_factor(&j.relation, db, &mut derived_ctr, &mut temp_tables)?;
             if db.has_view(&jn) {
                 view_tables.push(jn.clone());
             }
@@ -330,6 +342,9 @@ pub(crate) fn exec_select_joins(query: &Query, select: &Select, db: &mut Databas
         for name in &view_tables {
             let _ = db.drop_table(name);
         }
+        for name in &temp_tables {
+            let _ = db.drop_table(name);
+        }
         return super::super::super::functions::aggregate::compute_aggregates(
             &group_partitions,
             &select.projection,
@@ -426,6 +441,9 @@ pub(crate) fn exec_select_joins(query: &Query, select: &Select, db: &mut Databas
         })
         .collect();
     for name in &view_tables {
+        let _ = db.drop_table(name);
+    }
+    for name in &temp_tables {
         let _ = db.drop_table(name);
     }
     if rj.is_empty() {
@@ -563,6 +581,20 @@ fn eval_expr_on_flat_row(
             let ge = db_value_cmp(&val, &l) != Ordering::Less;
             let le = db_value_cmp(&val, &h) != Ordering::Greater;
             Ok(DbValue::Bool(if *negated { !(ge && le) } else { ge && le }))
+        }
+        Expr::Subquery(query) => eval_subquery_value(query, row, col_map),
+        Expr::InSubquery {
+            expr,
+            subquery,
+            negated,
+        } => {
+            let val = eval_expr_on_flat_row(expr, row, col_map)?;
+            let found = eval_subquery_values(subquery, row, col_map)?.contains(&val);
+            Ok(DbValue::Bool(if *negated { !found } else { found }))
+        }
+        Expr::Exists { subquery, negated } => {
+            let vals = eval_subquery_values(subquery, row, col_map)?;
+            Ok(DbValue::Bool(if *negated { vals.is_empty() } else { !vals.is_empty() }))
         }
         _ => Err(EngineError::Exec(format!("Unsupported expression in JOIN: {:?}", expr))),
     }

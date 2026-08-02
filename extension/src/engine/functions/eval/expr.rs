@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use sqlparser::ast::{Expr, Function, FunctionArguments, TrimWhereField};
+use sqlparser::ast::{Expr, Function, FunctionArguments, Query, TrimWhereField};
 
 use super::super::super::execute::select::exec_subquery;
 use super::super::super::table::Table;
@@ -158,22 +158,14 @@ pub(crate) fn eval_expr(
             Ok(DbValue::Bool(if *negated { !found } else { found }))
         }
         Expr::Function(func) => exec_function(func, row, col_map),
-        Expr::Subquery(query) => {
-            let subq_q = rewrite_if_correlated(query, row, col_map);
-            let correlated = matches!(&subq_q, std::borrow::Cow::Owned(_));
-            let vals = exec_subquery(&subq_q, correlated)?;
-            Ok(vals.into_iter().next().unwrap_or(DbValue::Null))
-        }
+        Expr::Subquery(query) => eval_subquery_value(query, row, col_map),
         Expr::InSubquery {
             expr,
             subquery,
             negated,
         } => {
             let val = eval_expr(expr, row, col_map)?;
-            let subq_q = rewrite_if_correlated(subquery, row, col_map);
-            let correlated = matches!(&subq_q, std::borrow::Cow::Owned(_));
-            let subq_result = exec_subquery(&subq_q, correlated)?;
-            let found = subq_result.contains(&val);
+            let found = eval_subquery_values(subquery, row, col_map)?.contains(&val);
             Ok(DbValue::Bool(if *negated { !found } else { found }))
         }
         Expr::Case {
@@ -212,9 +204,7 @@ pub(crate) fn eval_expr(
             Ok(DbValue::Bool(if *negated { !(ge && le) } else { ge && le }))
         }
         Expr::Exists { subquery, negated } => {
-            let subq_q = rewrite_if_correlated(subquery, row, col_map);
-            let correlated = matches!(&subq_q, std::borrow::Cow::Owned(_));
-            let vals = exec_subquery(&subq_q, correlated)?;
+            let vals = eval_subquery_values(subquery, row, col_map)?;
             Ok(DbValue::Bool(if *negated { vals.is_empty() } else { !vals.is_empty() }))
         }
         Expr::Cast { expr, data_type, .. } => {
@@ -292,6 +282,36 @@ pub(crate) fn eval_expr(
         }
         _ => Err(EngineError::Exec(format!("Unsupported expression: {:?}", expr))),
     }
+}
+
+/// Execute a subquery against the current row context, returning all values
+/// (first column of every result row). Correlated subqueries are rewritten
+/// per-row via [`rewrite_if_correlated`] before execution; uncorrelated ones
+/// hit the per-statement SUBQ_CACHE inside `exec_subquery`.
+///
+/// Shared by `eval_expr` and the JOIN ON evaluator (`eval_expr_on_flat_row`),
+/// so both paths use the exact same snapshot-based subquery machinery.
+pub(crate) fn eval_subquery_values(
+    query: &Query,
+    row: &[DbValue],
+    col_map: &HashMap<String, usize>,
+) -> Result<Vec<DbValue>, EngineError> {
+    let subq_q = rewrite_if_correlated(query, row, col_map);
+    let correlated = matches!(&subq_q, std::borrow::Cow::Owned(_));
+    exec_subquery(&subq_q, correlated)
+}
+
+/// Evaluate a scalar subquery: the first value of the first result column, or
+/// NULL when the subquery returns no rows.
+pub(crate) fn eval_subquery_value(
+    query: &Query,
+    row: &[DbValue],
+    col_map: &HashMap<String, usize>,
+) -> Result<DbValue, EngineError> {
+    Ok(eval_subquery_values(query, row, col_map)?
+        .into_iter()
+        .next()
+        .unwrap_or(DbValue::Null))
 }
 
 pub(crate) fn eval_literal_expr(expr: &Expr) -> Result<DbValue, EngineError> {

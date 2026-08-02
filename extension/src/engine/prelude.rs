@@ -3,7 +3,7 @@
 // Use `use crate::engine::prelude::*;` in engine submodules instead of
 // deep `super::super::super::` import chains.
 
-pub(crate) use sqlparser::ast::{Expr, Query, SetExpr, Statement};
+pub(crate) use sqlparser::ast::{Expr, Query, SetExpr, Statement, TableFactor};
 
 pub(crate) use super::database::Database;
 pub(crate) use super::value::{Column, ColumnType, DbValue, db_value_cmp, json_val_to_dbvalue};
@@ -16,8 +16,8 @@ pub(crate) use super::execute::format_projected_result;
 // Common helper functions
 pub(crate) use super::functions::aggregate::projection_expr_name;
 pub(crate) use super::functions::builtin::{
-    get_func_arg_unnamed, materialize_view, resolve_single_table, resolve_table_factor, sql_val_to_db, try_btree_index,
-    try_pk_index, try_trigram_index, value_to_string,
+    get_func_arg_unnamed, materialize_view, resolve_single_table, sql_val_to_db, try_btree_index, try_pk_index,
+    try_trigram_index, value_to_string,
 };
 pub(crate) use super::functions::eval::{apply_binary_op, eval_expr, is_truthy};
 
@@ -93,23 +93,38 @@ fn set_expr_has_subquery(se: &SetExpr) -> bool {
                 }
                 || select.having.as_ref().is_some_and(expr_has_subquery)
                 || select.from.iter().any(|twj| {
-                    twj.joins.iter().any(|j| match &j.join_operator {
-                        sqlparser::ast::JoinOperator::Join(c)
-                        | sqlparser::ast::JoinOperator::Inner(c)
-                        | sqlparser::ast::JoinOperator::Left(c)
-                        | sqlparser::ast::JoinOperator::LeftOuter(c)
-                        | sqlparser::ast::JoinOperator::Right(c)
-                        | sqlparser::ast::JoinOperator::RightOuter(c) => match c {
-                            sqlparser::ast::JoinConstraint::On(e) => expr_has_subquery(e),
-                            _ => false,
-                        },
-                        _ => false,
-                    })
+                    factor_has_subquery(&twj.relation)
+                        || twj.joins.iter().any(|j| {
+                            factor_has_subquery(&j.relation)
+                                || match &j.join_operator {
+                                    sqlparser::ast::JoinOperator::Join(c)
+                                    | sqlparser::ast::JoinOperator::Inner(c)
+                                    | sqlparser::ast::JoinOperator::Left(c)
+                                    | sqlparser::ast::JoinOperator::LeftOuter(c)
+                                    | sqlparser::ast::JoinOperator::Right(c)
+                                    | sqlparser::ast::JoinOperator::RightOuter(c)
+                                    | sqlparser::ast::JoinOperator::FullOuter(c)
+                                    | sqlparser::ast::JoinOperator::CrossJoin(c) => match c {
+                                        sqlparser::ast::JoinConstraint::On(e) => expr_has_subquery(e),
+                                        _ => false,
+                                    },
+                                    _ => false,
+                                }
+                        })
                 })
         }
         SetExpr::SetOperation { left, right, .. } => set_expr_has_subquery(left) || set_expr_has_subquery(right),
         SetExpr::Query(q) => query_has_subquery(q),
         SetExpr::Values(values) => values.rows.iter().any(|r| r.content.iter().any(expr_has_subquery)),
+        _ => false,
+    }
+}
+
+/// Does a FROM/join table factor contain a subquery (a derived table)? The
+/// derived table's body needs the SUBQ_DB snapshot just like any subquery.
+fn factor_has_subquery(factor: &TableFactor) -> bool {
+    match factor {
+        TableFactor::Derived { subquery, .. } => query_has_subquery(subquery),
         _ => false,
     }
 }

@@ -842,8 +842,8 @@ pub(crate) fn materialize_view(name: &str, db: &mut Database) -> Result<(), Engi
     Ok(())
 }
 
-/// Infer ColumnType from a JSON value (shared with CTE code).
-fn json_type_to_column(v: &serde_json::Value) -> ColumnType {
+/// Infer ColumnType from a JSON value (shared with CTE/derived-table code).
+pub(crate) fn json_type_to_column(v: &serde_json::Value) -> ColumnType {
     match v {
         serde_json::Value::Null => ColumnType::String,
         serde_json::Value::Bool(_) => ColumnType::Bool,
@@ -856,26 +856,6 @@ fn json_type_to_column(v: &serde_json::Value) -> ColumnType {
         }
         serde_json::Value::String(_) => ColumnType::String,
         _ => ColumnType::String,
-    }
-}
-
-/// Resolve a table factor, materialising a view if the name is not a real table.
-pub(crate) fn resolve_table_factor(
-    factor: &TableFactor,
-    db: &mut Database,
-) -> Result<(String, crate::engine::table::Table), EngineError> {
-    match factor {
-        TableFactor::Table { name, .. } => {
-            let tname = object_name_str(name);
-            if !db.has_table(&tname) && db.has_view(&tname) {
-                materialize_view(&tname, db)?;
-            }
-            let table = db.get_table(&tname).map_err(EngineError::Exec)?.clone();
-            Ok((tname, table))
-        }
-        _ => Err(EngineError::Exec(
-            "Only simple table references supported in FROM".into(),
-        )),
     }
 }
 

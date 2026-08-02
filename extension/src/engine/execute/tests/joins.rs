@@ -529,3 +529,204 @@ fn join_with_order_by() {
     let r = parse_and_exec("SELECT a.k FROM a INNER JOIN b ON a.k = b.k ORDER BY a.k ASC", &mut db).unwrap();
     assert!(r.contains("a") && r.contains("b"), "join order: {}", r);
 }
+
+// ── Subqueries in JOIN ON ────────────────────────────────────────────────
+
+fn subq_db() -> Database {
+    let mut db = Database::new();
+    let ca = vec![
+        Column {
+            name: "id".into(),
+            dtype: ColumnType::Int,
+            primary_key: false,
+            not_null: false,
+            default: None,
+            default_expr: None,
+            auto_increment: false,
+            unique: false,
+        },
+        Column {
+            name: "v".into(),
+            dtype: ColumnType::String,
+            primary_key: false,
+            not_null: false,
+            default: None,
+            default_expr: None,
+            auto_increment: false,
+            unique: false,
+        },
+    ];
+    let mut a = Table::new("a".into(), ca).unwrap();
+    a.insert(vec![DbValue::Int(1), DbValue::String("one".into())]).unwrap();
+    a.insert(vec![DbValue::Int(2), DbValue::String("two".into())]).unwrap();
+    db.create_table("a", a).unwrap();
+    let cb = vec![
+        Column {
+            name: "id".into(),
+            dtype: ColumnType::Int,
+            primary_key: false,
+            not_null: false,
+            default: None,
+            default_expr: None,
+            auto_increment: false,
+            unique: false,
+        },
+        Column {
+            name: "d".into(),
+            dtype: ColumnType::String,
+            primary_key: false,
+            not_null: false,
+            default: None,
+            default_expr: None,
+            auto_increment: false,
+            unique: false,
+        },
+    ];
+    let mut b = Table::new("b".into(), cb).unwrap();
+    b.insert(vec![DbValue::Int(1), DbValue::String("desc1".into())])
+        .unwrap();
+    b.insert(vec![DbValue::Int(3), DbValue::String("desc3".into())])
+        .unwrap();
+    db.create_table("b", b).unwrap();
+    let cc = vec![Column {
+        name: "aid".into(),
+        dtype: ColumnType::Int,
+        primary_key: false,
+        not_null: false,
+        default: None,
+        default_expr: None,
+        auto_increment: false,
+        unique: false,
+    }];
+    let mut c = Table::new("c".into(), cc).unwrap();
+    c.insert(vec![DbValue::Int(1)]).unwrap();
+    db.create_table("c", c).unwrap();
+    db
+}
+
+#[test]
+fn join_on_scalar_subquery() {
+    let mut db = subq_db();
+    // ON subquery reads table b (snapshot path); scalar value MIN(id)=1.
+    let r = parse_and_exec(
+        "SELECT * FROM a INNER JOIN b ON a.id = (SELECT MIN(id) FROM b)",
+        &mut db,
+    )
+    .unwrap();
+    assert!(r.contains("one"), "id=1 must match: {}", r);
+    assert!(!r.contains("two"), "id=2 must not match: {}", r);
+}
+
+#[test]
+fn join_on_in_subquery() {
+    let mut db = subq_db();
+    let r = parse_and_exec(
+        "SELECT * FROM a INNER JOIN b ON a.id IN (SELECT id FROM b WHERE d = 'desc1')",
+        &mut db,
+    )
+    .unwrap();
+    assert!(r.contains("one"), "id=1 in subquery result: {}", r);
+    assert!(!r.contains("two"), "id=2 not in subquery result: {}", r);
+}
+
+#[test]
+fn join_on_exists_correlated() {
+    let mut db = subq_db();
+    // Correlated EXISTS — the per-row rewrite substitutes a.id from the flat row.
+    let r = parse_and_exec(
+        "SELECT * FROM a INNER JOIN b ON EXISTS (SELECT 1 FROM c WHERE c.aid = a.id)",
+        &mut db,
+    )
+    .unwrap();
+    assert!(r.contains("one"), "a.id=1 exists in c: {}", r);
+    assert!(!r.contains("two"), "a.id=2 missing from c: {}", r);
+}
+
+#[test]
+fn full_outer_join_on_subquery() {
+    let mut db = subq_db();
+    // FullOuter ON subquery — the subquery walker must flag this so the
+    // snapshot is taken (previously only Join/Inner/Left/Right were walked).
+    let r = parse_and_exec(
+        "SELECT * FROM a FULL OUTER JOIN b ON a.id = (SELECT MIN(id) FROM b)",
+        &mut db,
+    )
+    .unwrap();
+    assert!(r.contains("one"), "id=1 match: {}", r);
+    assert!(r.contains("two"), "preserved left row: {}", r);
+    assert!(r.contains("desc3"), "b row 3: {}", r);
+}
+
+// ── Derived tables in FROM ───────────────────────────────────────────────
+
+#[test]
+fn derived_table_alone() {
+    let mut db = subq_db();
+    let r = parse_and_exec("SELECT * FROM (SELECT id, v FROM a) d", &mut db).unwrap();
+    assert!(r.contains("one") && r.contains("two"), "derived rows: {}", r);
+    assert!(r.contains("d.id"), "qualified header: {}", r);
+    let r2 = parse_and_exec("SELECT v FROM (SELECT id, v FROM a) d", &mut db).unwrap();
+    assert!(r2.contains("one") && r2.contains("two"), "bare col: {}", r2);
+    assert!(!r2.contains("d.id"), "projected header: {}", r2);
+}
+
+#[test]
+fn derived_table_join() {
+    let mut db = subq_db();
+    let r = parse_and_exec(
+        "SELECT * FROM (SELECT id, v FROM a) d INNER JOIN b ON d.id = b.id",
+        &mut db,
+    )
+    .unwrap();
+    assert!(r.contains("one"), "id=1 matches: {}", r);
+    assert!(!r.contains("two"), "id=2 excluded: {}", r);
+    assert!(r.contains("desc1"), "b desc1: {}", r);
+}
+
+#[test]
+fn derived_table_join_on_subquery() {
+    let mut db = subq_db();
+    // Derived table + scalar subquery in ON — both new paths together.
+    let r = parse_and_exec(
+        "SELECT * FROM (SELECT id FROM a) d INNER JOIN b ON d.id = (SELECT MIN(id) FROM b)",
+        &mut db,
+    )
+    .unwrap();
+    assert!(r.contains("1"), "d.id=1: {}", r);
+    assert!(r.contains("desc1") && r.contains("desc3"), "cross b rows: {}", r);
+}
+
+#[test]
+fn derived_table_empty() {
+    let mut db = subq_db();
+    let r = parse_and_exec("SELECT * FROM (SELECT id FROM a WHERE id = 999) d", &mut db).unwrap();
+    assert!(r.contains("d.id"), "header only: {}", r);
+    assert!(!r.contains("999"), "no data rows: {}", r);
+}
+
+#[test]
+fn join_on_derived_table() {
+    let mut db = subq_db();
+    // Derived table on the RIGHT of the JOIN (resolved via j.relation).
+    let r = parse_and_exec(
+        "SELECT * FROM a INNER JOIN (SELECT id, d FROM b) d ON a.id = d.id",
+        &mut db,
+    )
+    .unwrap();
+    assert!(r.contains("one"), "id=1 matches: {}", r);
+    assert!(!r.contains("two"), "id=2 excluded: {}", r);
+    assert!(r.contains("desc1"), "b desc1: {}", r);
+    assert!(!r.contains("desc3"), "id=3 excluded: {}", r);
+}
+
+#[test]
+fn derived_table_correlated_rejected() {
+    let mut db = subq_db();
+    // o is not a table of the derived subquery → qualified outer ref.
+    let r = parse_and_exec("SELECT * FROM (SELECT o.id FROM a) d", &mut db);
+    assert!(
+        r.is_err() && r.clone().unwrap_err().contains("correlated subquery in FROM"),
+        "expected correlated-in-FROM error, got {:?}",
+        r
+    );
+}

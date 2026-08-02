@@ -12,7 +12,10 @@ use super::super::super::value::DbValue;
 // ── Correlated subquery helpers ─────────────────────────────────────
 
 /// Extract table names used in a subquery's FROM clause.
-fn subquery_table_names(query: &Query) -> Vec<String> {
+/// (Also used to detect correlated derived tables — a FROM subquery has no
+/// outer row context, so references to tables outside its own FROM are
+/// unsupported.)
+pub(crate) fn subquery_table_names(query: &Query) -> Vec<String> {
     let mut names = Vec::new();
     if let SetExpr::Select(select) = &*query.body {
         for twj in &select.from {
@@ -230,7 +233,7 @@ fn is_correlated(query: &Query, col_map: &HashMap<String, usize>, own_cols: &Has
 
 /// Walk an expression tree checking for column references that are NOT in
 /// the subquery's own tables but ARE in the outer col_map.
-fn has_outer_refs(
+pub(crate) fn has_outer_refs(
     expr: &Expr,
     subq_tables: &[String],
     own_cols: &HashSet<String>,
