@@ -107,7 +107,9 @@ pub(crate) fn exec_cte_query(query: &Query, db: &mut Database) -> Result<String,
                 // ponytail: anchor is already in db via first pass above.
                 // The recursive term references the CTE alias — run it in a loop
                 // until no new rows are produced (iterative fixpoint).
-                for _iteration in 0..100 {
+                const MAX_ITERS: usize = 100;
+                let mut reached_fixpoint = false;
+                for _iteration in 0..MAX_ITERS {
                     let prev_count = db.get_table(&alias).map(|t| t.row_count()).unwrap_or(0);
                     let json = if matches!(&*cte.query.body, SetExpr::SetOperation { .. }) {
                         exec_union(&cte.query.body, &cte.query, db)?
@@ -117,6 +119,7 @@ pub(crate) fn exec_cte_query(query: &Query, db: &mut Database) -> Result<String,
                     let current: Vec<Vec<serde_json::Value>> = serde_json::from_str(&json).unwrap_or_default();
                     let current_count = current.len().saturating_sub(1);
                     if current_count <= prev_count {
+                        reached_fixpoint = true;
                         break; // fixpoint reached
                     }
                     // Insert new rows, skipping duplicates
@@ -129,6 +132,11 @@ pub(crate) fn exec_cte_query(query: &Query, db: &mut Database) -> Result<String,
                             }
                         }
                     }
+                }
+                if !reached_fixpoint {
+                    return Err(EngineError::Exec(format!(
+                        "recursive CTE '{alias}' did not terminate within {MAX_ITERS} iterations"
+                    )));
                 }
             }
         }

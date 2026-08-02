@@ -1853,3 +1853,44 @@ fn window_lag_lead_first_last_work() {
     .unwrap();
     assert!(r5.contains("5") && r5.contains("10"), "last_value: {}", r5);
 }
+
+#[test]
+fn recursive_cte_numbers_and_org_tree() {
+    let mut db = Database::new();
+    // 1..=5 via recursive CTE
+    let r = parse_and_exec(
+        "WITH RECURSIVE nums(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM nums WHERE n < 5) SELECT n FROM nums",
+        &mut db,
+    )
+    .unwrap();
+    for n in 1..=5 {
+        assert!(r.contains(&format!("[{}]", n)), "nums {}: {}", n, r);
+    }
+    // Org-tree traversal with depth
+    parse_and_exec("CREATE TABLE emp (id INT, mgr INT)", &mut db).unwrap();
+    parse_and_exec("INSERT INTO emp VALUES (1,0),(2,1),(3,1),(4,2),(5,4)", &mut db).unwrap();
+    let r2 = parse_and_exec(
+        "WITH RECURSIVE tree(id) AS (SELECT id FROM emp WHERE mgr=0 UNION ALL SELECT e.id FROM emp e JOIN tree t ON e.mgr=t.id) SELECT id FROM tree ORDER BY id",
+        &mut db,
+    )
+    .unwrap();
+    for id in 1..=5 {
+        assert!(r2.contains(&format!("[{}]", id)), "tree {}: {}", id, r2);
+    }
+}
+
+#[test]
+fn recursive_cte_non_termination_errors() {
+    // An infinite recursion must error (iteration cap), not silently truncate.
+    let mut db = Database::new();
+    let r = parse_and_exec(
+        "WITH RECURSIVE loop(n) AS (SELECT 1 UNION ALL SELECT n+1 FROM loop) SELECT n FROM loop",
+        &mut db,
+    );
+    let err = r.unwrap_err();
+    assert!(
+        err.contains("did not terminate"),
+        "expected termination error, got: {}",
+        err
+    );
+}
