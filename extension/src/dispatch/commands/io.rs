@@ -208,38 +208,57 @@ pub(crate) fn handle_load(db: &mut engine::Database, args: &[&str]) -> String {
         Ok(p) => p,
         Err(e) => return e,
     };
-    let bytes = match std::fs::read(&path) {
-        Ok(b) => b,
-        Err(e) => return error_response(ErrorCode::Io, &format!("Read failed: {}", e)),
+    let bak_path = with_ext_suffix(&path, "bak");
+    let bak_name = bak_path.file_name().and_then(|f| f.to_str()).unwrap_or("").to_string();
+
+    // Load is all-or-nothing: parse into a fresh Database and swap it in only
+    // on success, so a failed load never destroys the current in-memory state.
+    // The .bak fallback also fires when the main save is *missing* — a crash
+    // between the two renames in handle_save leaves the main file absent
+    // (already renamed to .bak) with the new save stranded in .tmp.
+    let mut fresh = engine::Database::new();
+    let main_result: Result<(), (ErrorCode, String)> = match std::fs::read(&path) {
+        Ok(bytes) => engine::serialize::import_binary(&bytes, &mut fresh)
+            .map_err(|e| (ErrorCode::Exec, format!("Load failed: {}", e))),
+        Err(e) => Err((ErrorCode::Io, format!("Read failed: {}", e))),
     };
-    db.clear();
-    match engine::serialize::import_binary(&bytes, db) {
-        Ok(()) => ok_response(&format!(
-            "\"Loaded from '{}/{}'\"",
-            CONFIG.data_dir().display(),
-            filename
-        )),
-        Err(e) => {
-            // Main save corrupt/truncated — fall back to the last good .bak
+
+    match main_result {
+        Ok(()) => {
+            *db = fresh;
+            ok_response(&format!(
+                "\"Loaded from '{}/{}'\"",
+                CONFIG.data_dir().display(),
+                filename
+            ))
+        }
+        Err((code, main_err)) => {
+            // Main save missing or corrupt — fall back to the last good .bak
             // (created by handle_save before each successful rename).
-            let bak_path = with_ext_suffix(&path, "bak");
+            fresh = engine::Database::new();
+            let main_flaw = if code == ErrorCode::Io {
+                "main save unreadable"
+            } else {
+                "main save corrupt"
+            };
             match std::fs::read(&bak_path) {
-                Ok(bak_bytes) => {
-                    db.clear();
-                    match engine::serialize::import_binary(&bak_bytes, db) {
-                        Ok(()) => ok_response(&format!(
-                            "\"Loaded from backup '{}/{}' (main save corrupt: {})\"",
+                Ok(bak_bytes) => match engine::serialize::import_binary(&bak_bytes, &mut fresh) {
+                    Ok(()) => {
+                        *db = fresh;
+                        ok_response(&format!(
+                            "\"Loaded from backup '{}/{}' ({}: {})\"",
                             CONFIG.data_dir().display(),
-                            bak_path.file_name().and_then(|f| f.to_str()).unwrap_or(""),
-                            e
-                        )),
-                        Err(bak_e) => error_response(
-                            ErrorCode::Exec,
-                            &format!("Load failed (main: {}; backup: {})", e, bak_e),
-                        ),
+                            bak_name,
+                            main_flaw,
+                            main_err
+                        ))
                     }
-                }
-                Err(_) => error_response(ErrorCode::Exec, &format!("Load failed: {}", e)),
+                    Err(bak_e) => error_response(
+                        ErrorCode::Exec,
+                        &format!("Load failed (main: {}; backup: {})", main_err, bak_e),
+                    ),
+                },
+                Err(_) => error_response(code, &main_err),
             }
         }
     }
@@ -439,5 +458,296 @@ mod tests {
         let r = ensure_within_data_dir(&dir.join("fresh.bin"), &dir);
         assert!(r.is_ok(), "regular new file must be accepted: {}", err2(r));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── Crash-recovery / durability (T4) ─────────────────────────────────
+    // Exercises the real handle_save/handle_load against the configured data
+    // dir (the existing test pattern), replaying the on-disk states each crash
+    // window in the atomic-save leaves behind.
+
+    use crate::engine::table::Table;
+    use crate::engine::value::*;
+
+    /// Two-column table ("items": id STRING PK, val INT) with 2 rows, plus an
+    /// optional third row so v1/v2 saves are distinguishable.
+    fn make_db(extra_row: bool) -> engine::Database {
+        let mut db = engine::Database::new();
+        let cols = vec![
+            Column {
+                name: "id".into(),
+                dtype: ColumnType::String,
+                primary_key: true,
+                not_null: false,
+                default: None,
+                default_expr: None,
+                auto_increment: false,
+                unique: false,
+            },
+            Column {
+                name: "val".into(),
+                dtype: ColumnType::Int,
+                primary_key: false,
+                not_null: false,
+                default: None,
+                default_expr: None,
+                auto_increment: false,
+                unique: false,
+            },
+        ];
+        let mut table = Table::new("items".into(), cols).unwrap();
+        table
+            .insert(vec![DbValue::String("a".into()), DbValue::Int(10)])
+            .unwrap();
+        table
+            .insert(vec![DbValue::String("b".into()), DbValue::Int(20)])
+            .unwrap();
+        if extra_row {
+            table
+                .insert(vec![DbValue::String("c".into()), DbValue::Int(30)])
+                .unwrap();
+        }
+        db.create_table("items", table).unwrap();
+        db
+    }
+
+    fn row_count(db: &engine::Database) -> usize {
+        db.get_table("items").unwrap().rows.len()
+    }
+
+    /// Unique filename per run/test so parallel tests and repeated runs never
+    /// collide in the shared data dir.
+    fn unique_file(tag: &str) -> String {
+        format!("a3sql_crash_{}_{}.bin", std::process::id(), tag)
+    }
+
+    fn cleanup(tag: &str) {
+        let f = unique_file(tag);
+        for suffix in ["", ".bak", ".tmp"] {
+            let _ = std::fs::remove_file(CONFIG.data_dir().join(format!("{f}{suffix}")));
+        }
+    }
+
+    /// Independent FNV-1a 64-bit (standard offset basis + prime) used to
+    /// verify the checksum trailer, not copied from the engine.
+    fn fnv1a(data: &[u8]) -> u64 {
+        let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+        for b in data {
+            hash ^= u64::from(*b);
+            hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        hash
+    }
+
+    #[test]
+    fn binary_format_checksum_and_corruption_detection() {
+        let bytes = engine::serialize::export_binary(&make_db(false));
+        // Header: 4-byte magic "A3SQ" + 1-byte format version.
+        assert_eq!(&bytes[0..4], b"A3SQ", "magic");
+        assert_eq!(bytes[4], 0x02, "format version");
+        // Trailer: 8-byte FNV-1a over everything before it, stored LE.
+        let payload_end = bytes.len() - 8;
+        let stored = u64::from_le_bytes(bytes[payload_end..].try_into().unwrap());
+        assert_eq!(
+            stored,
+            fnv1a(&bytes[..payload_end]),
+            "trailer must be FNV-1a of payload"
+        );
+        // A clean save round-trips.
+        let mut clean = engine::Database::new();
+        engine::serialize::import_binary(&bytes, &mut clean).unwrap();
+        assert_eq!(clean.get_table("items").unwrap().rows.len(), 2);
+        // Any payload bit-flip must be rejected by the checksum.
+        for offset in [5usize, 6, 12, payload_end - 1] {
+            let mut bad = bytes.clone();
+            bad[offset] ^= 0x01;
+            let mut t = engine::Database::new();
+            let e = engine::serialize::import_binary(&bad, &mut t).unwrap_err();
+            assert!(
+                e.contains("Checksum"),
+                "bit-flip at byte {} must hit checksum, got: {}",
+                offset,
+                e
+            );
+        }
+        // Truncation at any point must be rejected.
+        for cut in [13usize, payload_end / 2, payload_end - 1] {
+            let mut t = engine::Database::new();
+            assert!(
+                engine::serialize::import_binary(&bytes[..cut], &mut t).is_err(),
+                "truncation to {} bytes must be detected",
+                cut
+            );
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)] // fs blocked by miri isolation
+    fn save_load_roundtrip_first_save_is_atomic() {
+        let tag = "roundtrip";
+        cleanup(tag);
+        let filename = unique_file(tag);
+        let dir = CONFIG.data_dir().to_path_buf();
+        let main = dir.join(&filename);
+
+        let r = handle_save(&make_db(false), &[filename.as_str()]);
+        assert!(r.contains("\"OK\""), "save: {}", r);
+        assert!(main.exists(), "main save must exist");
+        assert!(!dir.join(format!("{filename}.tmp")).exists(), "no .tmp left after save");
+        assert!(!dir.join(format!("{filename}.bak")).exists(), "no .bak on first save");
+
+        let mut fresh = engine::Database::new();
+        let r = handle_load(&mut fresh, &[filename.as_str()]);
+        assert!(r.contains("\"OK\""), "load: {}", r);
+        assert!(fresh.has_table("items"));
+        assert_eq!(row_count(&fresh), 2);
+        assert_eq!(fresh.get_table("items").unwrap().columns[0].name, "id");
+        cleanup(tag);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)] // fs blocked by miri isolation
+    fn second_save_rotates_bak_corrupt_main_recovers() {
+        let tag = "bak_rotate";
+        cleanup(tag);
+        let filename = unique_file(tag);
+        let dir = CONFIG.data_dir().to_path_buf();
+        let main = dir.join(&filename);
+        let bak = dir.join(format!("{filename}.bak"));
+
+        // v1 (2 rows), then v2 (3 rows) → main=v2, bak=v1.
+        assert!(handle_save(&make_db(false), &[filename.as_str()]).contains("\"OK\""));
+        assert!(handle_save(&make_db(true), &[filename.as_str()]).contains("\"OK\""));
+        let v1_bytes = std::fs::read(&bak).unwrap();
+        assert_eq!(
+            v1_bytes,
+            engine::serialize::export_binary(&make_db(false)),
+            ".bak must hold the previous good save (v1)"
+        );
+
+        // Corrupt the main save inside the payload.
+        let mut main_bytes = std::fs::read(&main).unwrap();
+        main_bytes[8] ^= 0xff;
+        std::fs::write(&main, &main_bytes).unwrap();
+
+        // Load must fall back to .bak and restore v1.
+        let mut fresh = engine::Database::new();
+        let r = handle_load(&mut fresh, &[filename.as_str()]);
+        assert!(r.contains("backup"), "expected backup fallback, got: {}", r);
+        assert_eq!(row_count(&fresh), 2, "bak holds v1 (2 rows)");
+        assert!(
+            !fresh
+                .get_table("items")
+                .unwrap()
+                .rows
+                .iter()
+                .any(|row| row[0] == DbValue::String("c".into())),
+            "v2 row must not leak through the backup"
+        );
+        // .bak itself stays intact.
+        assert_eq!(std::fs::read(&bak).unwrap(), v1_bytes);
+        cleanup(tag);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)] // fs blocked by miri isolation
+    fn mid_write_crash_leaves_tmp_and_preserves_last_good() {
+        let tag = "midwrite";
+        cleanup(tag);
+        let filename = unique_file(tag);
+        let dir = CONFIG.data_dir().to_path_buf();
+        let main = dir.join(&filename);
+        let tmp = dir.join(format!("{filename}.tmp"));
+
+        assert!(handle_save(&make_db(false), &[filename.as_str()]).contains("\"OK\"")); // v1 on disk
+        let v1_bytes = std::fs::read(&main).unwrap();
+
+        // Crash mid-write of v2: only half the new payload reaches .tmp.
+        let v2 = engine::serialize::export_binary(&make_db(true));
+        std::fs::write(&tmp, &v2[..v2.len() / 2]).unwrap();
+
+        // The interrupted write must never have touched the main file.
+        assert_eq!(
+            std::fs::read(&main).unwrap(),
+            v1_bytes,
+            "main untouched by mid-write crash"
+        );
+
+        // Load recovers the last good save (v1); the stale .tmp is ignored.
+        let mut fresh = engine::Database::new();
+        let r = handle_load(&mut fresh, &[filename.as_str()]);
+        assert!(r.contains("\"OK\""), "load after mid-write crash: {}", r);
+        assert_eq!(row_count(&fresh), 2);
+
+        // A subsequent save overwrites the stale .tmp and yields a valid file.
+        assert!(handle_save(&make_db(true), &[filename.as_str()]).contains("\"OK\""));
+        assert!(!tmp.exists(), "stale .tmp must be gone after the next save");
+        let mut fresh2 = engine::Database::new();
+        let r = handle_load(&mut fresh2, &[filename.as_str()]);
+        assert!(r.contains("\"OK\""), "load after recovery save: {}", r);
+        assert_eq!(row_count(&fresh2), 3, "v2 fully recovered");
+        cleanup(tag);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)] // fs blocked by miri isolation
+    fn crash_between_renames_recovers_from_bak() {
+        let tag = "rename_gap";
+        cleanup(tag);
+        let filename = unique_file(tag);
+        let dir = CONFIG.data_dir().to_path_buf();
+        let main = dir.join(&filename);
+        let bak = dir.join(format!("{filename}.bak"));
+        let tmp = dir.join(format!("{filename}.tmp"));
+
+        assert!(handle_save(&make_db(false), &[filename.as_str()]).contains("\"OK\"")); // v1
+        assert!(handle_save(&make_db(true), &[filename.as_str()]).contains("\"OK\"")); // v2 → main=v2, bak=v1
+
+        // Replay the crash window inside handle_save: the first rename
+        // (main→bak) completed, the second (tmp→main) never ran. The main file
+        // is absent; only .bak plus a stranded .tmp remain.
+        std::fs::write(&tmp, b"partial").unwrap();
+        std::fs::rename(&main, &bak).unwrap();
+        assert!(!main.exists(), "crash window leaves the main file absent");
+
+        // Load must recover from .bak (the previous good save, v2: 3 rows).
+        let mut fresh = engine::Database::new();
+        let r = handle_load(&mut fresh, &[filename.as_str()]);
+        assert!(
+            r.contains("backup"),
+            "expected backup fallback for missing main, got: {}",
+            r
+        );
+        assert_eq!(row_count(&fresh), 3, ".bak holds the previous good save (v2)");
+        cleanup(tag);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)] // fs blocked by miri isolation
+    fn failed_load_preserves_in_memory_state() {
+        let tag = "state_keep";
+        cleanup(tag);
+        let filename = unique_file(tag);
+        let dir = CONFIG.data_dir().to_path_buf();
+        let main = dir.join(&filename);
+
+        // In-memory DB with live data; save it once (no .bak on first save).
+        let mut db = make_db(true);
+        assert!(handle_save(&db, &[filename.as_str()]).contains("\"OK\""));
+        assert_eq!(row_count(&db), 3);
+
+        // Corrupt the main save → load fails → in-memory data must survive.
+        let mut bytes = std::fs::read(&main).unwrap();
+        bytes[7] ^= 0xff;
+        std::fs::write(&main, &bytes).unwrap();
+        let r = handle_load(&mut db, &[filename.as_str()]);
+        assert!(!r.contains("\"OK\""), "corrupt load must fail: {}", r);
+        assert_eq!(row_count(&db), 3, "failed load must not destroy in-memory data");
+        assert!(db.has_table("items"));
+
+        // Missing file → load fails → in-memory data must survive.
+        let r = handle_load(&mut db, &["no_such_file_xyz.bin"]);
+        assert!(!r.contains("\"OK\""), "missing-file load must fail: {}", r);
+        assert_eq!(row_count(&db), 3, "missing-file load must not destroy in-memory data");
+        cleanup(tag);
     }
 }
