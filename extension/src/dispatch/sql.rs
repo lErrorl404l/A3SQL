@@ -3,7 +3,6 @@
 use crate::engine;
 use crate::engine::error::{A3sqlError, ErrorCode, ok_response};
 use crate::engine::execute;
-use crate::parser::parse_sql;
 
 // ── SQL splitting ──────────────────────────────────────────────────────────
 
@@ -164,9 +163,9 @@ pub(super) fn exec_sql_statements(db: &mut engine::Database, statements: &[Strin
             continue;
         }
 
-        match parse_sql(&sql) {
+        match db.cached_parse(&sql) {
             Ok(stmts) => {
-                for stmt in &stmts {
+                for stmt in stmts.iter() {
                     // Set COPY STDIN data from callExtension args before execution
                     if !args.is_empty() && matches!(stmt, sqlparser::ast::Statement::Copy { to: false, .. }) {
                         let data = &args[0];

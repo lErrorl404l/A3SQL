@@ -443,6 +443,42 @@ fn bench_frame_mix(c: &mut Criterion) {
     a3sql::dispatch("DROP TABLE bench_fm", &[]);
 }
 
+fn bench_parse_cache(c: &mut Criterion) {
+    // P1: parse cache — repeated identical SQL must skip the sqlparser
+    // re-parse. cold = unique query text every iteration (guaranteed miss),
+    // warm = identical text every iteration (hit after the first), churn = 10
+    // distinct queries cycling (hit path with multiple live entries).
+    a3sql::dispatch("DROP TABLE IF EXISTS bench_pc", &[]);
+    a3sql::dispatch("CREATE TABLE bench_pc (k STRING PRIMARY KEY, v INT)", &[]);
+    for i in 0..1000i64 {
+        let sql = format!("INSERT INTO bench_pc VALUES ('k{}', {})", i, i);
+        a3sql::dispatch(&sql, &[]);
+    }
+
+    let mut group = c.benchmark_group("parse_cache");
+    group.sample_size(100);
+    let mut counter: u64 = 0;
+    group.bench_function("cold_parse_miss", |b| {
+        b.iter(|| {
+            counter += 1;
+            a3sql::dispatch(&format!("SELECT v FROM bench_pc WHERE k = 'k{}'", counter % 1000), &[])
+        })
+    });
+    group.bench_function("warm_parse_hit", |b| {
+        b.iter(|| a3sql::dispatch("SELECT v FROM bench_pc WHERE k = 'k500'", &[]))
+    });
+    group.bench_function("churn_10_queries", |b| {
+        let mut i: u64 = 0;
+        b.iter(|| {
+            let idx = i % 10;
+            i += 1;
+            a3sql::dispatch(&format!("SELECT v FROM bench_pc WHERE k = 'k{}'", idx), &[])
+        })
+    });
+    group.finish();
+    a3sql::dispatch("DROP TABLE bench_pc", &[]);
+}
+
 fn bench_composite_pk(c: &mut Criterion) {
     // M5 headline: a WHERE matching ALL columns of a composite PK must resolve
     // via pk_row_index in O(1) instead of scanning. Larger volume so the
@@ -512,5 +548,6 @@ criterion_group!(
     bench_range,
     bench_frame_mix,
     bench_groupby_wide,
+    bench_parse_cache,
 );
 criterion_main!(benches);

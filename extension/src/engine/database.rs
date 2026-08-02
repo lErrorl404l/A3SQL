@@ -7,6 +7,7 @@
 
 pub(crate) mod cursor;
 pub(crate) mod prepared;
+pub(crate) mod sql_cache;
 pub(crate) mod views;
 
 pub(crate) use cursor::CursorState;
@@ -40,6 +41,8 @@ pub(crate) struct Database {
     pub cursors: HashMap<String, CursorState>,
     /// Prepared SQL statements (name → template + arg count).
     pub prepared: HashMap<String, PreparedStmt>,
+    /// LRU parse cache: exact SQL text → parsed AST (P1).
+    cache: sql_cache::LruSqlCache,
 }
 
 impl Database {
@@ -53,6 +56,7 @@ impl Database {
             config: HashMap::new(),
             cursors: HashMap::new(),
             prepared: HashMap::new(),
+            cache: sql_cache::LruSqlCache::new(),
         }
     }
 
@@ -202,6 +206,7 @@ impl Database {
         self.views.clear();
         self.cursors.clear();
         self.prepared.clear();
+        self.cache.clear();
     }
 }
 
