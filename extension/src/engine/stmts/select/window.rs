@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use sqlparser::ast::{Expr, OrderByExpr, SelectItem, WindowFrame, WindowFrameBound, WindowFrameUnits, WindowType};
 
-use super::super::super::functions::builtin::extract_func_arg;
+use super::super::super::functions::builtin::{extract_func_arg, get_func_arg_unnamed};
 use super::super::super::functions::eval::{eval_expr, eval_literal_expr};
 use super::super::super::value::DbValue;
 use super::super::super::value::db_value_cmp;
@@ -510,6 +510,66 @@ pub(crate) fn compute_window_functions(
                             }
                         }
                         computed[part_indices[pos]] = DbValue::Int(rank);
+                    }
+                }
+                "lag" | "lead" => {
+                    // LAG(expr [, offset [, default]]) / LEAD(expr [, offset [, default]])
+                    let args = match &func.args {
+                        sqlparser::ast::FunctionArguments::List(l) => l.args.as_slice(),
+                        _ => &[],
+                    };
+                    let arg = args.first().and_then(|a| get_func_arg_unnamed(a).ok());
+                    // Offset: literal integer, default 1.
+                    let offset = args
+                        .get(1)
+                        .and_then(|a| get_func_arg_unnamed(a).ok())
+                        .and_then(|e| eval_literal_expr(e).ok())
+                        .and_then(|v| match v {
+                            DbValue::Int(i) => Some(i.max(0) as usize),
+                            DbValue::Float(f) if f >= 0.0 => Some(f as usize),
+                            _ => None,
+                        })
+                        .unwrap_or(1);
+                    let default = args.get(2).and_then(|a| get_func_arg_unnamed(a).ok());
+                    for (pos, &idx) in part_indices.iter().enumerate() {
+                        let target = if func_name == "lag" {
+                            pos.checked_sub(offset)
+                        } else {
+                            pos.checked_add(offset)
+                        };
+                        match target.and_then(|t| part_indices.get(t)) {
+                            Some(&src) => match arg {
+                                Some(e) => {
+                                    computed[idx] = eval_expr(e, &rows[src], col_map).unwrap_or(DbValue::Null);
+                                }
+                                None => computed[idx] = DbValue::Null,
+                            },
+                            None => match default {
+                                Some(d) => {
+                                    computed[idx] = eval_expr(d, &rows[idx], col_map).unwrap_or(DbValue::Null);
+                                }
+                                None => computed[idx] = DbValue::Null,
+                            },
+                        }
+                    }
+                }
+                "first_value" | "last_value" => {
+                    // FIRST_VALUE(expr) / LAST_VALUE(expr) — value at the frame
+                    // boundary (or partition boundary when no frame is given).
+                    let arg = extract_func_arg(func).ok();
+                    for (pos, &idx) in part_indices.iter().enumerate() {
+                        let (fs, fe) = if let Some(ref f) = spec.window_frame {
+                            frame_bounds(f, part_indices, rows, &spec.order_by, col_map, pos)
+                        } else {
+                            (0, part_indices.len().saturating_sub(1))
+                        };
+                        let target = if func_name == "first_value" { fs } else { fe };
+                        match part_indices.get(target).and_then(|&t| arg.map(|e| (t, e))) {
+                            Some((t, e)) => {
+                                computed[idx] = eval_expr(e, &rows[t], col_map).unwrap_or(DbValue::Null);
+                            }
+                            _ => computed[idx] = DbValue::Null,
+                        }
                     }
                 }
                 "count" | "sum" | "avg" | "min" | "max" => {

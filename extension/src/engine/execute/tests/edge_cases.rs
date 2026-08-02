@@ -1813,3 +1813,42 @@ fn int_arithmetic_wraps_not_panics() {
     let r2 = parse_and_exec("SELECT 9223372036854775807 + 1", &mut db).unwrap();
     assert!(r2.contains("-9223372036854775808"), "MAX+1 wraps to MIN: {}", r2);
 }
+
+#[test]
+fn window_lag_lead_first_last_work() {
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE t (g TEXT, v INT)", &mut db).unwrap();
+    parse_and_exec("INSERT INTO t VALUES ('a',1),('a',3),('a',5),('b',10)", &mut db).unwrap();
+    // LAG over the whole table ordered by v: [NULL, 1, 3, 5]
+    let r = parse_and_exec("SELECT v, LAG(v) OVER (ORDER BY v) FROM t", &mut db).unwrap();
+    assert!(
+        r.contains("[1,null]") || r.contains("[1,Null]"),
+        "lag first null: {}",
+        r
+    );
+    assert!(r.contains("5"), "lag chain: {}", r);
+    // LEAD: [3, 5, 10, NULL]
+    let r2 = parse_and_exec("SELECT v, LEAD(v) OVER (ORDER BY v) FROM t", &mut db).unwrap();
+    assert!(r2.contains("3") && r2.contains("10"), "lead: {}", r2);
+    // LAG with offset 2 + default -1, partitioned
+    let r3 = parse_and_exec(
+        "SELECT v, LAG(v, 2, -1) OVER (PARTITION BY g ORDER BY v) FROM t ORDER BY v",
+        &mut db,
+    )
+    .unwrap();
+    assert!(r3.contains("-1"), "lag default: {}", r3);
+    // FIRST_VALUE per partition
+    let r4 = parse_and_exec(
+        "SELECT v, FIRST_VALUE(v) OVER (PARTITION BY g ORDER BY v) FROM t ORDER BY v",
+        &mut db,
+    )
+    .unwrap();
+    assert!(r4.contains("1") && r4.contains("10"), "first_value: {}", r4);
+    // LAST_VALUE per partition (default frame = whole partition)
+    let r5 = parse_and_exec(
+        "SELECT v, LAST_VALUE(v) OVER (PARTITION BY g ORDER BY v) FROM t ORDER BY v",
+        &mut db,
+    )
+    .unwrap();
+    assert!(r5.contains("5") && r5.contains("10"), "last_value: {}", r5);
+}
