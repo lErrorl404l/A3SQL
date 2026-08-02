@@ -720,6 +720,43 @@ fn join_on_derived_table() {
 }
 
 #[test]
+fn derived_table_natural_join() {
+    let mut db = subq_db();
+    // Derived table on the LEFT of a NATURAL join (common col: id).
+    let r = parse_and_exec("SELECT * FROM (SELECT id, v FROM a) d NATURAL JOIN b", &mut db).unwrap();
+    assert!(r.contains("one"), "id=1 match: {}", r);
+    assert!(r.contains("desc1"), "b desc1: {}", r);
+    assert!(!r.contains("two"), "id=2 excluded: {}", r);
+    assert!(!r.contains("desc3"), "id=3 excluded: {}", r);
+}
+
+#[test]
+fn natural_join_derived_right() {
+    let mut db = subq_db();
+    // Derived table on the RIGHT of a NATURAL join (common cols: id, v).
+    let r = parse_and_exec("SELECT * FROM a NATURAL JOIN (SELECT id, v FROM a) d", &mut db).unwrap();
+    assert!(r.contains("one"), "id=1 match: {}", r);
+    assert!(r.contains("two"), "id=2 match: {}", r);
+    assert!(r.contains("d.v"), "derived col present: {}", r);
+}
+
+#[test]
+fn derived_table_using() {
+    let mut db = subq_db();
+    // USING against a derived table on the LEFT.
+    let r = parse_and_exec("SELECT * FROM (SELECT id, v FROM a) d JOIN b USING (id)", &mut db).unwrap();
+    assert!(r.contains("one"), "id=1 match: {}", r);
+    assert!(r.contains("desc1"), "b desc1: {}", r);
+    assert!(!r.contains("two"), "id=2 excluded: {}", r);
+    assert!(!r.contains("desc3"), "id=3 excluded: {}", r);
+    // USING against a derived table on the RIGHT.
+    let r2 = parse_and_exec("SELECT * FROM a JOIN (SELECT id, v FROM a) d USING (id)", &mut db).unwrap();
+    assert!(r2.contains("one"), "id=1 match: {}", r2);
+    assert!(r2.contains("two"), "id=2 match: {}", r2);
+    assert!(r2.contains("d.v"), "derived col present: {}", r2);
+}
+
+#[test]
 fn derived_table_correlated_rejected() {
     let mut db = subq_db();
     // o is not a table of the derived subquery → qualified outer ref.

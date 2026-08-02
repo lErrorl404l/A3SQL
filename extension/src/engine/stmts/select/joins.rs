@@ -182,6 +182,10 @@ pub(crate) fn exec_select_joins_rows(
                 let right_ti = i + 1;
                 if right_ti < tbls.len() {
                     let right_name = &tbls[right_ti].name;
+                    // col_map is keyed on the display qualifier (alias if any,
+                    // else table name) — see the col_map build above. Derived
+                    // tables register by alias, so lookups must use it too.
+                    let right_qual = tbls[right_ti].alias.as_deref().unwrap_or(right_name);
                     if let Ok(rt) = db.get_table(right_name) {
                         // For each right column, find if any left table has the same name
                         let mut common = Vec::new();
@@ -190,9 +194,10 @@ pub(crate) fn exec_select_joins_rows(
                                 if let Ok(lt) = db.get_table(&left_tbl.name)
                                     && lt.columns.iter().any(|c| c.name == right_col.name)
                                 {
+                                    let left_qual = left_tbl.alias.as_deref().unwrap_or(&left_tbl.name);
                                     // Store (col_name, left_table_idx, right_start_in_flat_row + col_idx)
-                                    if let Some(&lp) = col_map.get(&format!("{}.{}", left_tbl.name, right_col.name))
-                                        && let Some(&rp) = col_map.get(&format!("{}.{}", right_name, right_col.name))
+                                    if let Some(&lp) = col_map.get(&format!("{}.{}", left_qual, right_col.name))
+                                        && let Some(&rp) = col_map.get(&format!("{}.{}", right_qual, right_col.name))
                                     {
                                         common.push((right_col.name.clone(), lp, rp));
                                         break;
@@ -246,14 +251,18 @@ pub(crate) fn exec_select_joins_rows(
                     let cname = obj.to_string().to_lowercase();
                     // Left side: look up bare name in col_map (ambiguous but standard SQL uses qualified)
                     // Try qualified: find which left table has this column
+                    let right_qual = tbl.alias.as_deref().unwrap_or(&tbl.name);
                     for left_tbl in &tbls[0..ti] {
                         if let Ok(lt) = db.get_table(&left_tbl.name)
                             && lt.columns.iter().any(|c| c.name == cname)
-                            && let Some(&lp) = col_map.get(&format!("{}.{}", left_tbl.name, cname))
-                            && let Some(&rp) = col_map.get(&format!("{}.{}", tbl.name, cname))
                         {
-                            pairs.push((lp, rp));
-                            break;
+                            let left_qual = left_tbl.alias.as_deref().unwrap_or(&left_tbl.name);
+                            if let Some(&lp) = col_map.get(&format!("{}.{}", left_qual, cname))
+                                && let Some(&rp) = col_map.get(&format!("{}.{}", right_qual, cname))
+                            {
+                                pairs.push((lp, rp));
+                                break;
+                            }
                         }
                     }
                 }
