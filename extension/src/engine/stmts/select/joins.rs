@@ -39,6 +39,31 @@ pub(crate) fn has_multiple_tables(select: &Select) -> bool {
 
 /// Execute a SELECT with JOINs. Uses a flat-row column map with absolute positions.
 pub(crate) fn exec_select_joins(query: &Query, select: &Select, db: &mut Database) -> Result<String, EngineError> {
+    let (header, rows) = exec_select_joins_rows(query, select, db)?;
+    let hq: Vec<String> = header.iter().map(|h| format!("\"{}\"", h)).collect();
+    let rj: Vec<String> = rows
+        .iter()
+        .map(|r| {
+            format!(
+                "[{}]",
+                r.iter().map(|v| v.to_json_string()).collect::<Vec<_>>().join(",")
+            )
+        })
+        .collect();
+    if rj.is_empty() {
+        Ok(format!("[{}]", hq.join(",")))
+    } else {
+        Ok(format!("[[{}],{}]", hq.join(","), rj.join(",")))
+    }
+}
+
+/// Execute a SELECT with JOINs, returning the header names and per-row
+/// projected cell values (the exact cells the JSON formatter would emit).
+pub(crate) fn exec_select_joins_rows(
+    query: &Query,
+    select: &Select,
+    db: &mut Database,
+) -> Result<(Vec<String>, Vec<Vec<DbValue>>), EngineError> {
     use sqlparser::ast::{JoinConstraint, JoinOperator};
 
     // Subqueries in JOIN ON predicates and derived tables read the SUBQ_DB
@@ -345,7 +370,7 @@ pub(crate) fn exec_select_joins(query: &Query, select: &Select, db: &mut Databas
         for name in &temp_tables {
             let _ = db.drop_table(name);
         }
-        return super::super::super::functions::aggregate::compute_aggregates(
+        return super::super::super::functions::aggregate::compute_aggregate_rows(
             &group_partitions,
             &select.projection,
             &col_map,
@@ -400,26 +425,24 @@ pub(crate) fn exec_select_joins(query: &Query, select: &Select, db: &mut Databas
         .iter()
         .any(|item| matches!(item, SelectItem::Wildcard { .. }));
     let h: Vec<String> = if is_wildcard {
-        header.iter().map(|h| format!("\"{}\"", h)).collect()
+        header
     } else {
         select
             .projection
             .iter()
             .map(|item| match item {
-                SelectItem::UnnamedExpr(expr) => format!("\"{}\"", projection_expr_name(expr)),
-                SelectItem::ExprWithAlias { alias, .. } => {
-                    format!("\"{}\"", alias.value.to_lowercase())
-                }
+                SelectItem::UnnamedExpr(expr) => projection_expr_name(expr),
+                SelectItem::ExprWithAlias { alias, .. } => alias.value.to_lowercase(),
                 SelectItem::Wildcard { .. } => unreachable!(),
-                _ => format!("\"{:?}\"", item),
+                _ => format!("{:?}", item),
             })
             .collect()
     };
-    let rj: Vec<String> = rows
+    let r: Vec<Vec<DbValue>> = rows
         .iter()
         .map(|r| {
-            let c: Vec<String> = if is_wildcard {
-                r.iter().map(|v| v.to_json_string()).collect()
+            if is_wildcard {
+                r.clone()
             } else {
                 select
                     .projection
@@ -431,13 +454,10 @@ pub(crate) fn exec_select_joins(query: &Query, select: &Select, db: &mut Databas
                             SelectItem::Wildcard { .. } => return None,
                             _ => return None,
                         };
-                        eval_expr_on_flat_row(expr, r, &col_map)
-                            .ok()
-                            .map(|v| v.to_json_string())
+                        eval_expr_on_flat_row(expr, r, &col_map).ok()
                     })
                     .collect()
-            };
-            format!("[{}]", c.join(","))
+            }
         })
         .collect();
     for name in &view_tables {
@@ -446,11 +466,7 @@ pub(crate) fn exec_select_joins(query: &Query, select: &Select, db: &mut Databas
     for name in &temp_tables {
         let _ = db.drop_table(name);
     }
-    if rj.is_empty() {
-        Ok(format!("[{}]", h.join(",")))
-    } else {
-        Ok(format!("[[{}],{}]", h.join(","), rj.join(",")))
-    }
+    Ok((h, r))
 }
 
 fn eval_expr_on_flat_row(

@@ -144,14 +144,16 @@ pub(crate) fn sort_partitions<'a>(
     parts
 }
 
-/// Compute aggregate functions over partitions (groups) of rows.
-pub(crate) fn compute_aggregates(
+/// Compute aggregate functions over partitions (groups) of rows, returning
+/// the header names and one row of projected cell values per partition.
+/// Empty partitions → empty header AND empty rows (the `[]` result shape).
+pub(crate) fn compute_aggregate_rows(
     partitions: &[Vec<&[DbValue]>],
     projection: &[SelectItem],
     col_map: &HashMap<String, usize>,
-) -> Result<String, EngineError> {
+) -> Result<(Vec<String>, Vec<Vec<DbValue>>), EngineError> {
     if partitions.is_empty() {
-        return Ok("[]".to_string());
+        return Ok((Vec::new(), Vec::new()));
     }
 
     // Build header from projection
@@ -165,26 +167,49 @@ pub(crate) fn compute_aggregates(
     }
 
     // Compute one row per partition
-    let rows_json: Vec<String> = partitions
+    let rows: Vec<Vec<DbValue>> = partitions
         .iter()
         .map(|group| {
-            let cells: Vec<String> = projection
+            projection
                 .iter()
                 .map(|item| {
                     let expr = match item {
                         SelectItem::UnnamedExpr(e) => e,
                         SelectItem::ExprWithAlias { expr, .. } => expr,
-                        _ => return "null".to_string(),
+                        _ => return DbValue::Null,
                     };
                     eval_projection_expr(expr, group, col_map)
-                        .map(|(_, v)| v.to_json_string())
-                        .unwrap_or_else(|_| "null".to_string())
+                        .map(|(_, v)| v)
+                        .unwrap_or(DbValue::Null)
                 })
-                .collect();
-            format!("[{}]", cells.join(","))
+                .collect()
         })
         .collect();
 
+    Ok((header, rows))
+}
+
+/// Compute aggregate functions over partitions (groups) of rows, formatted
+/// as the JSON result string ([[header], row1, ...], or `[]` when the
+/// partition set is empty).
+pub(crate) fn compute_aggregates(
+    partitions: &[Vec<&[DbValue]>],
+    projection: &[SelectItem],
+    col_map: &HashMap<String, usize>,
+) -> Result<String, EngineError> {
+    let (header, rows) = compute_aggregate_rows(partitions, projection, col_map)?;
+    if header.is_empty() {
+        return Ok("[]".to_string());
+    }
+    let rows_json: Vec<String> = rows
+        .iter()
+        .map(|r| {
+            format!(
+                "[{}]",
+                r.iter().map(|v| v.to_json_string()).collect::<Vec<_>>().join(",")
+            )
+        })
+        .collect();
     let header_json: String = header
         .iter()
         .map(|h| format!("\"{}\"", h))

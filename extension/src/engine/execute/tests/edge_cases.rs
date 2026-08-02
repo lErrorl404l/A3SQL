@@ -366,6 +366,55 @@ fn select_by_pk_uses_fast_path_and_subqueries_still_work() {
 }
 
 #[test]
+fn subquery_rows_match_json_round_trip_semantics() {
+    // P3: exec_subquery consumes projected rows directly instead of the JSON
+    // serialize/re-parse round trip. Pin the flatten semantics: the first
+    // column of every result row, in order — scalar, multi-row IN, aggregate,
+    // join and empty subqueries must all yield the same values as before.
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE p3_t (id INT PRIMARY KEY, g STRING, v INT)", &mut db).unwrap();
+    parse_and_exec(
+        "INSERT INTO p3_t VALUES (1,'a',10),(2,'a',20),(3,'b',30),(4,'b',40),(5,'c',50)",
+        &mut db,
+    )
+    .unwrap();
+    parse_and_exec("CREATE TABLE p3_j (id INT PRIMARY KEY, w INT)", &mut db).unwrap();
+    parse_and_exec("INSERT INTO p3_j VALUES (1,100),(2,200),(3,300)", &mut db).unwrap();
+
+    // Multi-row IN subquery — flatten order and values
+    let r = parse_and_exec(
+        "SELECT id FROM p3_t WHERE id IN (SELECT id FROM p3_t WHERE v >= 30)",
+        &mut db,
+    )
+    .unwrap();
+    assert!(
+        r.contains("3") && r.contains("4") && r.contains("5") && !r.contains("[1]"),
+        "multi-row IN subquery: {}",
+        r
+    );
+    // Scalar subquery in WHERE (cache hit path)
+    let r = parse_and_exec(
+        "SELECT COUNT(*) FROM p3_t WHERE v = (SELECT v FROM p3_t WHERE id = 2)",
+        &mut db,
+    )
+    .unwrap();
+    assert!(r.contains("[1]"), "scalar subquery: {}", r);
+    // Aggregate subquery (compute_aggregate_rows path)
+    let r = parse_and_exec("SELECT (SELECT COUNT(*) FROM p3_t) AS c", &mut db).unwrap();
+    assert!(r.contains("[5]"), "aggregate subquery: {}", r);
+    // Join subquery (routes via exec_select_joins_rows)
+    let r = parse_and_exec(
+        "SELECT (SELECT COUNT(*) FROM p3_t t JOIN p3_j j ON t.id = j.id)",
+        &mut db,
+    )
+    .unwrap();
+    assert!(r.contains("[3]"), "join subquery: {}", r);
+    // Empty subquery → NULL scalar
+    let r = parse_and_exec("SELECT (SELECT v FROM p3_t WHERE id = 999)", &mut db).unwrap();
+    assert!(r.contains("null"), "empty subquery: {}", r);
+}
+
+#[test]
 fn composite_pk_partial_match_falls_back_to_scan() {
     // Bug regression: SELECT on ONE column of a composite PK wrongly used the
     // single-PK fast path, built a partial key (NULL |value) that never hit,

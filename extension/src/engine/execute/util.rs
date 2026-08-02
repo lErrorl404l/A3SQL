@@ -30,7 +30,7 @@ thread_local! {
 // cache hits. Correlated subqueries inline distinct literals per row → distinct
 // keys, no stale hits. Cleared whenever the snapshot is (re)set.
 thread_local! {
-    pub(crate) static SUBQ_CACHE: std::cell::RefCell<std::collections::HashMap<String, Vec<DbValue>>> =
+    pub(crate) static SUBQ_CACHE: std::cell::RefCell<std::collections::HashMap<String, Vec<Vec<DbValue>>>> =
         std::cell::RefCell::new(std::collections::HashMap::new());
 }
 

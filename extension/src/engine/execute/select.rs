@@ -14,15 +14,17 @@ use super::super::functions::aggregate::projection_expr_name;
 use super::super::functions::eval::{eval_expr, is_truthy, query_has_nondeterministic};
 use super::super::stmts::ddl::object_name_str;
 use super::super::stmts::select::sort::sort_rows;
-use super::super::value::{DbValue, GroupKey, json_val_to_dbvalue};
+use super::super::value::{DbValue, GroupKey};
 use super::SUBQ_DB;
-use super::format_projected_result;
 
 use crate::engine::error::EngineError;
 use crate::engine::functions::eval::query_has_from;
 use crate::engine::prelude::expr_has_subquery;
 
-/// Execute a SELECT query (single table, no JOINs).
+/// Execute a SELECT query (single table, no JOINs), returning the JSON result
+/// string. A thin wrapper over [`exec_select_rows`] + JSON formatting; JOIN
+/// queries are dispatched to the join executor unchanged (it owns the
+/// single-wrapped `[header]` shape for empty join results).
 pub(crate) fn exec_select(query: &Query, db: &mut Database) -> Result<String, EngineError> {
     let select: &Select = match &*query.body {
         SetExpr::Select(s) => s.as_ref(),
@@ -34,6 +36,27 @@ pub(crate) fn exec_select(query: &Query, db: &mut Database) -> Result<String, En
         return super::super::stmts::select::joins::exec_select_joins(query, select, db);
     }
 
+    let (header, rows) = exec_select_rows(query, db)?;
+    Ok(format_rows_json(&header, &rows))
+}
+
+/// Execute a SELECT query, returning the header names and per-row projected
+/// cell values — the exact cells the JSON formatters serialize. Subqueries
+/// consume the rows directly, skipping the JSON serialize/re-parse round trip.
+pub(crate) fn exec_select_rows(
+    query: &Query,
+    db: &mut Database,
+) -> Result<(Vec<String>, Vec<Vec<DbValue>>), EngineError> {
+    let select: &Select = match &*query.body {
+        SetExpr::Select(s) => s.as_ref(),
+        _ => return Err(EngineError::Exec("Only SELECT statements supported".into())),
+    };
+
+    // Route to multi-table handler if FROM has JOINs OR multiple tables
+    if super::super::stmts::select::joins::has_multiple_tables(select) {
+        return super::super::stmts::select::joins::exec_select_joins_rows(query, select, db);
+    }
+
     // Handle bare SELECT without FROM clause
     if select.from.is_empty() {
         // Snapshot DB only if subqueries/EXISTS are present (clone is O(rows))
@@ -43,17 +66,16 @@ pub(crate) fn exec_select(query: &Query, db: &mut Database) -> Result<String, En
         if let Some(where_expr) = &select.selection {
             let where_val = eval_expr(where_expr, &[], &HashMap::new()).unwrap_or(DbValue::Bool(false));
             if !is_truthy(&where_val) {
-                let h = select
+                let h: Vec<String> = select
                     .projection
                     .iter()
                     .map(|item| match item {
-                        SelectItem::UnnamedExpr(e) => format!("\"{}\"", projection_expr_name(e)),
-                        SelectItem::ExprWithAlias { alias, .. } => format!("\"{}\"", alias.value.to_lowercase()),
-                        _ => "\"*\"".into(),
+                        SelectItem::UnnamedExpr(e) => projection_expr_name(e),
+                        SelectItem::ExprWithAlias { alias, .. } => alias.value.to_lowercase(),
+                        _ => "*".into(),
                     })
-                    .collect::<Vec<_>>()
-                    .join(",");
-                return Ok(format!("[[{}]]", h));
+                    .collect();
+                return Ok((h, Vec::new()));
             }
         }
 
@@ -69,28 +91,22 @@ pub(crate) fn exec_select(query: &Query, db: &mut Database) -> Result<String, En
                 _ => format!("{:?}", item),
             })
             .collect();
-        let mut cells: Vec<String> = Vec::new();
+        let mut cells: Vec<DbValue> = Vec::new();
         for item in &select.projection {
             let expr = match item {
                 SelectItem::UnnamedExpr(e) => e,
                 SelectItem::ExprWithAlias { expr: e, .. } => e,
                 _ => {
-                    cells.push("null".into());
+                    cells.push(DbValue::Null);
                     continue;
                 }
             };
             match eval_expr(expr, row, &empty_cols) {
-                Ok(v) => cells.push(v.to_json_string()),
-                Err(_) => cells.push("null".into()),
+                Ok(v) => cells.push(v),
+                Err(_) => cells.push(DbValue::Null),
             }
         }
-        let h = header
-            .iter()
-            .map(|h| format!("\"{}\"", h))
-            .collect::<Vec<_>>()
-            .join(",");
-        let c = cells.join(",");
-        return Ok(format!("[[{}],[{}]]", h, c));
+        return Ok((header, vec![cells]));
     }
 
     // ── View resolution — materialise views referenced in FROM ──
@@ -198,7 +214,7 @@ pub(crate) fn exec_select(query: &Query, db: &mut Database) -> Result<String, En
         } else {
             group_partitions
         };
-        let result = super::super::functions::aggregate::compute_aggregates(
+        let result = super::super::functions::aggregate::compute_aggregate_rows(
             &group_partitions,
             &select.projection,
             &table.col_index,
@@ -297,12 +313,116 @@ pub(crate) fn exec_select(query: &Query, db: &mut Database) -> Result<String, En
     // 5. LIMIT / OFFSET
     let limited_rows = super::super::stmts::select::sort::apply_limit_offset(sorted_rows, &query.limit_clause)?;
 
-    // 6. Format result — respect SELECT projection (only show chosen columns)
-    let result = format_projected_result(limited_rows, &select.projection, &table.col_index, table);
+    // 6. Project rows to the SELECT projection's cell values (respect only
+    // chosen columns). JSON formatting happens in the caller.
+    let (header, rows) = project_cells(limited_rows, &select.projection, &table.col_index, table);
     for name in &view_tables {
         let _ = db.drop_table(name);
     }
-    Ok(result)
+    Ok((header, rows))
+}
+
+/// Project rows to the SELECT projection's cell values — the exact cells the
+/// JSON formatter serializes. Mirrors `format_projected_result` without the
+/// JSON serialization, so the subquery path can consume the values directly.
+fn project_cells(
+    rows: Vec<&[DbValue]>,
+    projection: &[SelectItem],
+    col_map: &HashMap<String, usize>,
+    table: &super::super::table::Table,
+) -> (Vec<String>, Vec<Vec<DbValue>>) {
+    let is_wildcard = projection
+        .iter()
+        .any(|item| matches!(item, SelectItem::Wildcard { .. }));
+    if is_wildcard {
+        return (
+            table.columns.iter().map(|c| c.name.clone()).collect(),
+            rows.iter().map(|r| r.to_vec()).collect(),
+        );
+    }
+
+    // Build header from projection
+    let header: Vec<String> = projection
+        .iter()
+        .map(|item| match item {
+            SelectItem::UnnamedExpr(expr) => projection_expr_name(expr),
+            SelectItem::ExprWithAlias { alias, .. } => alias.value.to_lowercase(),
+            SelectItem::Wildcard { .. } => unreachable!(),
+            _ => format!("{:?}", item),
+        })
+        .collect();
+
+    // Pre-count window functions in projection for correct column offset
+    let wf_prefix_counts: Vec<usize> = projection
+        .iter()
+        .scan(0, |count, item| {
+            let expr = match item {
+                SelectItem::UnnamedExpr(e) => Some(e),
+                SelectItem::ExprWithAlias { expr: e, .. } => Some(e),
+                _ => None,
+            };
+            let is_win = expr.is_some_and(|e| matches!(e, Expr::Function(f) if f.over.is_some()));
+            let idx = *count;
+            if is_win {
+                *count += 1;
+            }
+            Some(idx)
+        })
+        .collect();
+    let orig_cols = col_map.len();
+    let projected: Vec<Vec<DbValue>> = rows
+        .iter()
+        .map(|row| {
+            projection
+                .iter()
+                .enumerate()
+                .map(|(proj_idx, item)| {
+                    let expr = match item {
+                        SelectItem::UnnamedExpr(e) => Some(e),
+                        SelectItem::ExprWithAlias { expr: e, .. } => Some(e),
+                        SelectItem::Wildcard { .. } => None,
+                        _ => None,
+                    };
+                    if let Some(e) = expr {
+                        let is_window = matches!(e, Expr::Function(f) if f.over.is_some());
+                        if is_window {
+                            let win_col = orig_cols + wf_prefix_counts[proj_idx];
+                            if win_col < row.len() {
+                                return row[win_col].clone();
+                            }
+                        }
+                        eval_expr(e, row, col_map).unwrap_or(DbValue::Null)
+                    } else {
+                        DbValue::Null
+                    }
+                })
+                .collect()
+        })
+        .collect();
+    (header, projected)
+}
+
+/// Format projected SELECT rows as the JSON result string. An empty header
+/// (aggregate over an empty partition set) yields `[]`; otherwise the result
+/// is double-wrapped: [[header], row1, row2, ...].
+fn format_rows_json(header: &[String], rows: &[Vec<DbValue>]) -> String {
+    if header.is_empty() {
+        return "[]".into();
+    }
+    let hq: Vec<String> = header.iter().map(|h| format!("\"{}\"", h)).collect();
+    if rows.is_empty() {
+        return format!("[[{}]]", hq.join(","));
+    }
+    let rj: Vec<String> = rows
+        .iter()
+        .map(|r| {
+            format!(
+                "[{}]",
+                r.iter().map(|v| v.to_json_string()).collect::<Vec<_>>().join(",")
+            )
+        })
+        .collect();
+    format!("[[{}],{}]", hq.join(","), rj.join(","))
 }
 
 /// Set the thread-local DB snapshot only when the query needs it (contains a
@@ -324,8 +444,21 @@ fn set_subq_snapshot_if_needed(select: &Select, db: &Database) {
     }
 }
 
-/// Execute a subquery (SELECT) and return the first column of each row.
-/// Uses the thread-local DB snapshot set by exec_select (avoids deadlock).
+/// Execute a subquery and return the first column of each result row, in
+/// result order. A thin wrapper over [`exec_subquery_rows`] flattening each
+/// row to its first cell — the exact flatten the old JSON serialize/re-parse
+/// produced (scalar cells: Int/Float/Bool/String/Null all survive a JSON
+/// round trip unchanged).
+pub(crate) fn exec_subquery(query: &Query, correlated: bool) -> Result<Vec<DbValue>, EngineError> {
+    Ok(exec_subquery_rows(query, correlated)?
+        .into_iter()
+        .filter_map(|row| row.into_iter().next())
+        .collect())
+}
+
+/// Execute a subquery and return its projected rows directly (no JSON round
+/// trip). Uses the thread-local DB snapshot set by exec_select (avoids
+/// deadlock).
 ///
 /// Results are memoized per statement: eval_expr re-evaluates the subquery
 /// for every outer row, and cloning the snapshot is O(total rows) — without
@@ -340,7 +473,7 @@ fn set_subq_snapshot_if_needed(select: &Select, db: &Database) {
 ///   - `correlated`: the rewritten key is distinct per outer-row value combo,
 ///     so the cache would miss anyway; skipping it avoids the per-row
 ///     Debug-format key and the 10k-cap insert churn.
-pub(crate) fn exec_subquery(query: &Query, correlated: bool) -> Result<Vec<DbValue>, EngineError> {
+pub(crate) fn exec_subquery_rows(query: &Query, correlated: bool) -> Result<Vec<Vec<DbValue>>, EngineError> {
     let nondet = query_has_nondeterministic(query);
     if !correlated && !nondet {
         let key = format!("{:?}", query);
@@ -348,23 +481,22 @@ pub(crate) fn exec_subquery(query: &Query, correlated: bool) -> Result<Vec<DbVal
             return Ok(hit);
         }
         let mut db_copy = subq_db_snapshot(query)?;
-        let result_str = exec_select(query, &mut db_copy)?;
-        let values = parse_subquery_result(&result_str);
+        let (_, rows) = exec_select_rows(query, &mut db_copy)?;
         // Store in per-statement cache (key = rewritten query string). Cap growth:
         // a pathological number of DISTINCT correlated rewrites per statement is
         // bounded, and the cache is cleared on every statement anyway.
         super::SUBQ_CACHE.with(|c| {
             let mut cache = c.borrow_mut();
             if cache.len() < 10_000 {
-                cache.insert(key, values.clone());
+                cache.insert(key, rows.clone());
             }
         });
-        return Ok(values);
+        return Ok(rows);
     }
     // Uncacheable path — evaluate fresh against a per-call DB copy.
     let mut db_copy = subq_db_snapshot(query)?;
-    let result_str = exec_select(query, &mut db_copy)?;
-    Ok(parse_subquery_result(&result_str))
+    let (_, rows) = exec_select_rows(query, &mut db_copy)?;
+    Ok(rows)
 }
 
 /// Clone the database a subquery executes against. A FROM-less subquery
@@ -381,49 +513,6 @@ fn subq_db_snapshot(query: &Query) -> Result<Database, EngineError> {
             .cloned()
             .ok_or_else(|| EngineError::Exec("Subquery not supported in this context".to_string()))
     })
-}
-
-/// Parse a subquery's exec_select JSON result (format: [[header], [row1], ...])
-/// into the first column of each data row. exec_select returns raw data, NOT
-/// [code, msg, data] wrapped format.
-fn parse_subquery_result(result_str: &str) -> Vec<DbValue> {
-    let mut values = Vec::new();
-    match serde_json::from_str::<Vec<serde_json::Value>>(result_str) {
-        Ok(rows) => {
-            for row in rows.iter().skip(1) {
-                if let Some(arr) = row.as_array()
-                    && let Some(first) = arr.first()
-                {
-                    values.push(json_val_to_dbvalue(first));
-                }
-            }
-        }
-        Err(_) => {
-            // Fallback: parse raw string
-            if let Some(start) = result_str.find("[[")
-                && let Some(end) = result_str.rfind("]]")
-            {
-                let inner = &result_str[start + 1..end];
-                for row_str in inner.split("],[") {
-                    let cleaned = row_str.trim_matches('[').trim_matches(']').trim();
-                    if !cleaned.is_empty() {
-                        let val = cleaned.trim_matches('"');
-                        if let Ok(n) = val.parse::<i64>() {
-                            values.push(DbValue::Int(n));
-                        } else if let Ok(f) = val.parse::<f64>() {
-                            values.push(DbValue::Float(f));
-                        } else {
-                            values.push(DbValue::String(val.to_string()));
-                        }
-                    }
-                }
-                if values.len() > 1 {
-                    values.remove(0);
-                }
-            }
-        }
-    }
-    values
 }
 
 /// Apply ORDER BY and LIMIT from a Query to a parsed JSON result string.

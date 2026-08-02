@@ -443,6 +443,32 @@ fn bench_frame_mix(c: &mut Criterion) {
     a3sql::dispatch("DROP TABLE bench_fm", &[]);
 }
 
+fn bench_in_subquery(c: &mut Criterion) {
+    // P3: the subquery hot path previously serialized the result to JSON and
+    // re-parsed it (M6: ~104ms/100k rows). The PK-equality + IN shape takes
+    // the O(1) pk fast path on the outer (1 candidate row), so the dominant
+    // per-iteration cost is the 10k-row IN-subquery eval itself — where the
+    // removed serialize/re-parse shows as a delta (subquery runs once, cached).
+    a3sql::dispatch("DROP TABLE IF EXISTS bench_isq", &[]);
+    a3sql::dispatch("CREATE TABLE bench_isq (k STRING PRIMARY KEY, v INT)", &[]);
+    for i in 0..10_000i64 {
+        let sql = format!("INSERT INTO bench_isq VALUES ('k{}', {})", i, i);
+        a3sql::dispatch(&sql, &[]);
+    }
+    let mut group = c.benchmark_group("in_subquery");
+    group.sample_size(100);
+    group.bench_function("pk_outer_in_10000", |b| {
+        b.iter(|| {
+            a3sql::dispatch(
+                "SELECT v FROM bench_isq WHERE k = 'k1' AND v IN (SELECT v FROM bench_isq)",
+                &[],
+            )
+        })
+    });
+    group.finish();
+    a3sql::dispatch("DROP TABLE bench_isq", &[]);
+}
+
 fn bench_parse_cache(c: &mut Criterion) {
     // P1: parse cache — repeated identical SQL must skip the sqlparser
     // re-parse. cold = unique query text every iteration (guaranteed miss),
@@ -548,6 +574,7 @@ criterion_group!(
     bench_range,
     bench_frame_mix,
     bench_groupby_wide,
+    bench_in_subquery,
     bench_parse_cache,
 );
 criterion_main!(benches);
