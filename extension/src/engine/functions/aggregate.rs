@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 
 use indexmap::IndexMap;
-use sqlparser::ast::{Expr, Function, Select, SelectItem};
+use sqlparser::ast::{Expr, Function, FunctionArguments, Select, SelectItem};
 
 use super::super::functions::builtin::{extract_func_arg, get_func_arg_unnamed, value_to_string};
 use super::super::functions::eval::{eval_expr, eval_literal_expr, is_truthy};
@@ -265,8 +265,24 @@ fn eval_projection_expr(
                             }
                         }
                         DbValue::Int(seen.len() as i64)
-                    } else {
+                    } else if is_count_star(f) {
+                        // COUNT(*) — counts all rows, NULL or not
                         let cnt = rows.iter().filter(|r| passes_filter(f, r, col_map)).count();
+                        DbValue::Int(cnt as i64)
+                    } else {
+                        // COUNT(expr) — counts only non-NULL evaluations
+                        let mut cnt = 0usize;
+                        for r in rows {
+                            if !passes_filter(f, r, col_map) {
+                                continue;
+                            }
+                            if let Ok(arg) = extract_func_arg(f)
+                                && let Ok(val) = eval_expr(arg, r, col_map)
+                                && val != DbValue::Null
+                            {
+                                cnt += 1;
+                            }
+                        }
                         DbValue::Int(cnt as i64)
                     };
                     Ok(("COUNT".to_string(), count))
@@ -327,6 +343,21 @@ fn eval_expr_on_group(
 }
 
 /// Check if a row passes the aggregate FILTER clause (if any).
+/// True for `COUNT(*)` — a List containing a single `Expr::Wildcard`
+/// (sqlparser 0.62 has no FunctionArguments::Wildcard variant).
+fn is_count_star(func: &Function) -> bool {
+    if let sqlparser::ast::FunctionArguments::List(list) = &func.args
+        && list.args.len() == 1
+        && matches!(
+            &list.args[0],
+            sqlparser::ast::FunctionArg::Unnamed(sqlparser::ast::FunctionArgExpr::Wildcard)
+        )
+    {
+        return true;
+    }
+    matches!(func.args, FunctionArguments::None)
+}
+
 fn passes_filter(func: &Function, row: &[DbValue], col_map: &HashMap<String, usize>) -> bool {
     func.filter
         .as_ref()

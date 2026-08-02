@@ -1465,3 +1465,27 @@ fn m8_group_by_wide_perf_smoke() {
         assert!(r2.contains("[2]"), "group 1234 has 2 rows: {}", r2);
     }
 }
+
+#[test]
+fn count_expr_skips_nulls_in_left_join() {
+    // COUNT(expr) must count only non-NULL evaluations; COUNT(*) counts all.
+    // LEFT JOIN emits a NULL for the unmatched side; COUNT(f.owner) on that
+    // group must be 0, not 1.
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE users (uid INT PRIMARY KEY, name TEXT)", &mut db).unwrap();
+    parse_and_exec("INSERT INTO users VALUES (1, 'matt'), (4, 'jane')", &mut db).unwrap();
+    parse_and_exec("CREATE TABLE files (path STRING PRIMARY KEY, owner INT)", &mut db).unwrap();
+    parse_and_exec("INSERT INTO files VALUES ('/a', 1)", &mut db).unwrap();
+    let r = parse_and_exec(
+        "SELECT u.name, COUNT(f.owner) FROM users u LEFT JOIN files f ON f.owner=u.uid GROUP BY u.name ORDER BY u.name",
+        &mut db,
+    )
+    .unwrap();
+    assert!(r.contains("jane") && r.contains("0"), "COUNT(expr) skips NULL: {}", r);
+    let r2 = parse_and_exec(
+        "SELECT u.name, COUNT(*) FROM users u LEFT JOIN files f ON f.owner=u.uid GROUP BY u.name ORDER BY u.name",
+        &mut db,
+    )
+    .unwrap();
+    assert!(r2.contains("jane") && r2.contains("1"), "COUNT(*) counts all: {}", r2);
+}
