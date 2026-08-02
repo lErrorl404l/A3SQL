@@ -65,10 +65,10 @@ pub(crate) static REMOTE: LazyLock<Mutex<Option<std::net::TcpStream>>> = LazyLoc
 /// `OUTPUT_BUF_SIZE` is the *caller-supplied* buffer ceiling, not a server
 /// limit: the REPL server is unbounded and returns full result sets. A host
 /// that passes a smaller `output_size` to [`write_output`](fn.write_output)
-/// truncates the response at `output_size - 1` bytes, which can cut a
-/// multi-byte UTF-8 sequence mid-character (the buffer is a byte copy, not
-/// char-aware). Arma always passes the full 30 KB, so this is latent, not
-/// live. Hosts that shrink the buffer must expect truncated JSON.
+/// truncates the response at `output_size - 1` bytes, backing off to the last
+/// complete UTF-8 codepoint so the buffer never holds invalid UTF-8. Arma
+/// always passes the full 30 KB, so truncation is latent, not live. Hosts
+/// that shrink the buffer must expect truncated (but valid) JSON.
 #[allow(
     dead_code,
     reason = "OUTPUT_BUF_SIZE is a public constant checked in dispatch.rs and passed to Arma via RVExtensionArgs"
@@ -162,12 +162,19 @@ fn sql_handler(payload: Vec<String>) -> String {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RVExtensionVersion(output: *mut c_char, output_size: u32) {
     with_extension(|_| {}); // ensure extension + plugins are initialised
+    if output.is_null() || output_size == 0 {
+        return;
+    }
     let version = version_bytes();
-    let len = (output_size as usize).min(version.len());
-    // SAFETY: `output` is guaranteed valid by the Arma engine contract
-    // and `output_size` bounds the copy length.
+    // Bound to `output_size - 1` and always null-terminate: a caller with an
+    // undersized buffer must still receive a valid C string, not a truncated
+    // one without its terminator.
+    let len = (output_size as usize - 1).min(version.len());
+    // SAFETY: `output` is non-null, `output_size > 0`, and `len <= output_size - 1`
+    // keeps the null terminator at `output.add(len)` inside the buffer.
     unsafe {
         std::ptr::copy_nonoverlapping(version.as_ptr(), output as *mut u8, len);
+        *output.add(len) = 0;
     }
 }
 
@@ -180,7 +187,14 @@ pub unsafe extern "C" fn RVExtensionVersion(output: *mut c_char, output_size: u3
 /// (or null, in which case nothing is written).
 unsafe fn write_output(output: *mut c_char, output_size: u32, resp: &str) {
     let bytes = resp.as_bytes();
-    let len = bytes.len().min(output_size.saturating_sub(1) as usize);
+    let mut len = bytes.len().min(output_size.saturating_sub(1) as usize);
+    // Back off to the last complete UTF-8 codepoint boundary: a truncation
+    // that lands mid-codepoint would leave invalid UTF-8 bytes in the buffer
+    // (SQF's toArray/toString round-trip chokes on those). The response is
+    // always valid UTF-8, so at most 3 trailing bytes are dropped.
+    while len > 0 && !resp.is_char_boundary(len) {
+        len -= 1;
+    }
     if len > 0 && !output.is_null() {
         // SAFETY: `output` is non-null and `len <= output_size - 1` guarantees
         // the null terminator at `output.add(len)` is within the buffer.
@@ -230,6 +244,9 @@ pub unsafe extern "C" fn RVExtension(output: *mut c_char, output_size: u32, func
 /// - `2N` = wrong argument count (N = received count)
 /// - `9` = application error
 ///
+/// Returns `-1` when any pointer contract is violated (null `output`,
+/// `function`, or `argv`).
+///
 /// # Safety
 /// All pointer arguments must be valid, non-null pointers from the Arma engine.
 #[unsafe(no_mangle)]
@@ -247,6 +264,12 @@ pub unsafe extern "C" fn RVExtensionArgs(
 
     // arma-rs path: only the "sql" command (SQF-encoded payload array).
     if function_str == "sql" {
+        if argv.is_null() {
+            // arma-rs's command macro `unwrap()`s the argv pointer whenever
+            // argc matches the handler's arity (1 for `sql`), so a null argv
+            // would panic across the FFI boundary instead of returning a code.
+            return -1;
+        }
         return with_extension(|ext| {
             // SAFETY: All pointer arguments are guaranteed valid, non-null by the Arma engine contract.
             unsafe {
@@ -296,3 +319,10 @@ pub unsafe extern "C" fn RVExtensionRegisterCallback(callbackProc: Option<Callba
     let mut cb = CALLBACK.lock().unwrap();
     *cb = callbackProc;
 }
+
+// ── Tests ──────────────────────────────────────────────────────────────────
+// Unit tests for the FFI surface live in `tests.rs` (sibling module): they
+// need private access to `write_output` and `CALLBACK`. They run under the
+// normal test harness; the miri scope deliberately excludes the FFI surface.
+#[cfg(test)]
+mod tests;
