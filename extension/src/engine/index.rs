@@ -180,6 +180,38 @@ impl TrigramIndex {
 
         result.into_iter().collect()
     }
+
+    /// Candidate rows for a LIKE containment match on `run` — the longest
+    /// literal run of a `%..%` / `a%b` pattern (`run` must be >= 3 chars).
+    ///
+    /// Intersects the postings of every interior trigram window of `run`, so
+    /// every row whose text contains `run` as a substring is guaranteed to be
+    /// present: LIKE's verify-rescan then drops the false positives. Unlike
+    /// [`candidates`](Self::candidates) this does NOT use the top-3 union
+    /// heuristic — that is tuned for fuzzy partial matches and can skip rows
+    /// a containment filter must return.
+    pub(crate) fn like_candidates(&self, run: &str) -> Vec<usize> {
+        let lower = run.to_lowercase();
+        let bytes = lower.as_bytes();
+        if bytes.len() < 3 {
+            return Vec::new();
+        }
+        let mut windows: Vec<String> = bytes
+            .windows(3)
+            .map(|w| String::from_utf8_lossy(w).to_string())
+            .collect();
+        windows.sort();
+        windows.dedup();
+        let mut lists = windows.into_iter().filter_map(|tg| self.trigram_map.get(&tg));
+        let Some(first) = lists.next() else {
+            return Vec::new();
+        };
+        let mut acc: HashSet<usize> = first.clone();
+        for list in lists {
+            acc.retain(|row| list.contains(row));
+        }
+        acc.into_iter().collect()
+    }
 }
 
 // ── Encoding helpers ───────────────────────────────────────────────────

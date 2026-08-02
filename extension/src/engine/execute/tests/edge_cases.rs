@@ -1,6 +1,7 @@
 // Edge case tests: empty tables, NULL handling, bulk operations
 
 use super::helpers::*;
+use crate::engine::prelude::*;
 
 #[test]
 fn empty_table_select() {
@@ -1488,4 +1489,206 @@ fn count_expr_skips_nulls_in_left_join() {
     )
     .unwrap();
     assert!(r2.contains("jane") && r2.contains("1"), "COUNT(*) counts all: {}", r2);
+}
+
+// ── P2: plain LIKE with mid/end wildcards via TrigramIndex ──────────────
+
+/// WHERE clause of the first SELECT in `sql` — the same AST the executor
+/// passes to `try_trigram_index`.
+fn like_where_expr(sql: &str) -> Option<Expr> {
+    let stmts = crate::parser::parse_sql(sql).expect("parse_sql");
+    stmts.into_iter().find_map(|stmt| match stmt {
+        Statement::Query(q) => match &*q.body {
+            SetExpr::Select(s) => s.selection.clone(),
+            _ => None,
+        },
+        _ => None,
+    })
+}
+
+/// Run a `SELECT id ...` and return the matched ids as a set (order differs
+/// between the index path and the scan path, so compare as sets).
+fn like_ids(db: &mut Database, sql: &str) -> std::collections::HashSet<i64> {
+    let out = parse_and_exec(sql, db).unwrap_or_else(|e| panic!("{sql} failed: {e}"));
+    let rows: Vec<Vec<serde_json::Value>> = serde_json::from_str(&out).unwrap();
+    rows.into_iter()
+        .skip(1)
+        .filter_map(|r| r.first().and_then(|c| c.as_i64()))
+        .collect()
+}
+
+/// Prove the trigram fast path fires on `index_q` (and NOT on the `AND 1 = 1`
+/// scan-forced twin), and that both return the identical id set.
+fn assert_like_fast_path_eq(db: &mut Database, index_q: &str, scan_q: &str, expect_fire: bool) {
+    let table = db.get_table("t").unwrap();
+    assert_eq!(
+        try_trigram_index(like_where_expr(index_q).as_ref(), table).is_some(),
+        expect_fire,
+        "unexpected fast-path decision for: {index_q}"
+    );
+    assert!(
+        !try_trigram_index(like_where_expr(scan_q).as_ref(), table).is_some(),
+        "scan query hit fast path: {scan_q}"
+    );
+    assert_eq!(
+        like_ids(db, index_q),
+        like_ids(db, scan_q),
+        "index path != scan path for: {index_q}"
+    );
+}
+
+#[test]
+fn p2_like_containment_trigram_index() {
+    // `%alp%` on a trigram-indexed column: the index fires and the result is
+    // exactly the scan's — case-sensitive, NULL-safe. Also exercises the
+    // CREATE INDEX ... USING TRIGRAM DDL syntax (g).
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE t (id INT PRIMARY KEY, name TEXT)", &mut db).unwrap();
+    parse_and_exec("CREATE INDEX trigram_name ON t (name) USING TRIGRAM", &mut db).unwrap();
+    parse_and_exec(
+        "INSERT INTO t VALUES \
+         (1, 'alpha'), (2, 'alpine'), (3, 'beta'), (4, 'Alpine'), \
+         (5, 'xalp'), (6, 'alp'), (7, 'zalm'), (8, 'zalfx'), (9, NULL)",
+        &mut db,
+    )
+    .unwrap();
+
+    let index_q = "SELECT id FROM t WHERE name LIKE '%alp%'";
+    let scan_q = "SELECT id FROM t WHERE name LIKE '%alp%' AND 1 = 1";
+    assert_like_fast_path_eq(&mut db, index_q, scan_q, true);
+    assert_eq!(
+        like_ids(&mut db, index_q),
+        std::collections::HashSet::from([1, 2, 5, 6]),
+        "containment result: {}",
+        index_q
+    );
+}
+
+#[test]
+fn p2_like_start_end_wildcards() {
+    // `foo%bar`: longest literal run ('foo') drives the candidate set; the
+    // scan would also match 'barfoo' / 'fooXBar' if case folding or ordering
+    // were wrong, so this pins both.
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE t (id INT PRIMARY KEY, name TEXT)", &mut db).unwrap();
+    parse_and_exec("CREATE INDEX trigram_name ON t (name) USING TRIGRAM", &mut db).unwrap();
+    parse_and_exec(
+        "INSERT INTO t VALUES \
+         (1, 'foobar'), (2, 'foo123bar'), (3, 'foob'), (4, 'barfoo'), \
+         (5, 'fooXBar'), (6, 'xbz'), (7, 'barely')",
+        &mut db,
+    )
+    .unwrap();
+
+    let index_q = "SELECT id FROM t WHERE name LIKE 'foo%bar'";
+    let scan_q = "SELECT id FROM t WHERE name LIKE 'foo%bar' AND 1 = 1";
+    assert_like_fast_path_eq(&mut db, index_q, scan_q, true);
+    assert_eq!(
+        like_ids(&mut db, index_q),
+        std::collections::HashSet::from([1, 2]),
+        "foo%bar result: {}",
+        index_q
+    );
+}
+
+#[test]
+fn p2_like_multi_wildcard_short_runs_fall_back() {
+    // `%a%b%`: every literal run is 1 char, so no trigram is sound → scan.
+    // Ordering is respected: 'bxa' (b before a) must not match.
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE t (id INT PRIMARY KEY, name TEXT)", &mut db).unwrap();
+    parse_and_exec("CREATE INDEX trigram_name ON t (name) USING TRIGRAM", &mut db).unwrap();
+    parse_and_exec(
+        "INSERT INTO t VALUES \
+         (1, 'ab'), (2, 'axb'), (3, 'bxa'), (4, 'a'), (5, 'ba'), (6, 'aXb')",
+        &mut db,
+    )
+    .unwrap();
+
+    let index_q = "SELECT id FROM t WHERE name LIKE '%a%b%'";
+    let scan_q = "SELECT id FROM t WHERE name LIKE '%a%b%' AND 1 = 1";
+    assert_like_fast_path_eq(&mut db, index_q, scan_q, false);
+    assert_eq!(
+        like_ids(&mut db, index_q),
+        std::collections::HashSet::from([1, 2, 6]),
+        "%a%b% result: {}",
+        index_q
+    );
+}
+
+#[test]
+fn p2_like_short_run_falls_back() {
+    // `%al%`: longest literal run is 2 chars — a trigram index cannot serve
+    // it soundly (padding windows are positional, not containment) → scan.
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE t (id INT PRIMARY KEY, name TEXT)", &mut db).unwrap();
+    parse_and_exec("CREATE INDEX trigram_name ON t (name) USING TRIGRAM", &mut db).unwrap();
+    parse_and_exec(
+        "INSERT INTO t VALUES \
+         (1, 'alpha'), (2, 'alpine'), (3, 'beta'), (4, 'Alpine'), \
+         (5, 'xalp'), (6, 'alp'), (7, 'zalm'), (8, 'zalfx')",
+        &mut db,
+    )
+    .unwrap();
+
+    let index_q = "SELECT id FROM t WHERE name LIKE '%al%'";
+    let scan_q = "SELECT id FROM t WHERE name LIKE '%al%' AND 1 = 1";
+    assert_like_fast_path_eq(&mut db, index_q, scan_q, false);
+    assert_eq!(
+        like_ids(&mut db, index_q),
+        std::collections::HashSet::from([1, 2, 5, 6, 7, 8]),
+        "%al% result: {}",
+        index_q
+    );
+}
+
+#[test]
+fn p2_like_negated_falls_back() {
+    // NOT LIKE never uses the index (the candidate set would need the
+    // complement, which the verify-rescan cannot reconstruct) → scan.
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE t (id INT PRIMARY KEY, name TEXT)", &mut db).unwrap();
+    parse_and_exec("CREATE INDEX trigram_name ON t (name) USING TRIGRAM", &mut db).unwrap();
+    parse_and_exec(
+        "INSERT INTO t VALUES \
+         (1, 'alpha'), (2, 'alpine'), (3, 'beta'), (4, 'Alpine'), \
+         (5, 'xalp'), (6, 'alp'), (7, 'zalm'), (8, 'zalfx'), (9, NULL)",
+        &mut db,
+    )
+    .unwrap();
+
+    let index_q = "SELECT id FROM t WHERE name NOT LIKE '%alp%'";
+    let scan_q = "SELECT id FROM t WHERE name NOT LIKE '%alp%' AND 1 = 1";
+    assert_like_fast_path_eq(&mut db, index_q, scan_q, false);
+    assert_eq!(
+        like_ids(&mut db, index_q),
+        std::collections::HashSet::from([3, 4, 7, 8, 9]),
+        "NOT LIKE result: {}",
+        index_q
+    );
+}
+
+#[test]
+fn p2_like_no_index_falls_back() {
+    // Only a BTree index on the column: mid-wildcard LIKE must not use it → scan.
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE t (id INT PRIMARY KEY, name TEXT)", &mut db).unwrap();
+    parse_and_exec("CREATE INDEX idx_name ON t (name)", &mut db).unwrap();
+    parse_and_exec(
+        "INSERT INTO t VALUES \
+         (1, 'alpha'), (2, 'alpine'), (3, 'beta'), (4, 'Alpine'), \
+         (5, 'xalp'), (6, 'alp')",
+        &mut db,
+    )
+    .unwrap();
+
+    let index_q = "SELECT id FROM t WHERE name LIKE '%alp%'";
+    let scan_q = "SELECT id FROM t WHERE name LIKE '%alp%' AND 1 = 1";
+    assert_like_fast_path_eq(&mut db, index_q, scan_q, false);
+    assert_eq!(
+        like_ids(&mut db, index_q),
+        std::collections::HashSet::from([1, 2, 5, 6]),
+        "no-index result: {}",
+        index_q
+    );
 }

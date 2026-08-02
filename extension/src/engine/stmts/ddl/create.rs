@@ -297,8 +297,20 @@ pub(crate) fn exec_create_index(idx: &CreateIndex, db: &mut Database) -> Result<
         }
     }
 
+    use sqlparser::ast::IndexOption as SqlIdxOpt;
     use sqlparser::ast::IndexType as SqlIdx;
-    let index_type = match &idx.using {
+    // sqlparser 0.62 parses `USING <type>` into index_options (Using(..)); the
+    // legacy `using` field stays None, so reading only it silently created a
+    // BTree index for `USING TRIGRAM` / `USING GIN`. Accept both.
+    let using_type = idx
+        .index_options
+        .iter()
+        .find_map(|o| match o {
+            SqlIdxOpt::Using(t) => Some(t),
+            _ => None,
+        })
+        .or(idx.using.as_ref());
+    let index_type = match using_type {
         None | Some(SqlIdx::BTree) => A3IndexType::BTree,
         Some(SqlIdx::GIN) => A3IndexType::Trigram,
         Some(SqlIdx::Custom(id)) if id.value.to_uppercase() == "TRIGRAM" => A3IndexType::Trigram,

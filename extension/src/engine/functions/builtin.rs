@@ -316,6 +316,32 @@ fn like_match(val: &[char], pat: &[char], vi: usize, pi: usize) -> bool {
     }
 }
 
+/// Longest run of literal (non-wildcard) chars in a LIKE pattern, returned
+/// only when it spans >= 3 chars — the one case a trigram index can serve
+/// soundly: every row a `%run%`-style pattern matches contains the whole run
+/// as a substring, so all of the run's trigram windows appear in that row.
+/// Shorter runs fall back to the full scan (their windows are padding/positional).
+fn longest_literal_run(pattern: &str) -> Option<String> {
+    let mut best = "";
+    let mut best_len = 0;
+    let mut start = 0;
+    for (i, c) in pattern.char_indices() {
+        if c == '%' || c == '_' {
+            let run = &pattern[start..i];
+            if run.chars().count() > best_len {
+                best = run;
+                best_len = run.chars().count();
+            }
+            start = i + c.len_utf8();
+        }
+    }
+    let run = &pattern[start..];
+    if run.chars().count() > best_len {
+        best = run;
+    }
+    (best.chars().count() >= 3).then(|| best.to_string())
+}
+
 // ── Argument extraction ────────────────────────────────────────────────
 
 /// Get function argument as Expr, assuming Unnamed(FunctionArgExpr::Expr(e))
@@ -1204,11 +1230,13 @@ fn range_bounds(expr: &Expr, table: &Table) -> Option<(String, Bound<String>, Bo
     }
 }
 
-/// Try to use a TrigramIndex for a `fuzzy_match(col, pattern)` WHERE clause.
+/// Try to use a TrigramIndex for a `fuzzy_match(col, pattern)` WHERE clause
+/// or a plain `col LIKE '%..%'` containment predicate.
 /// Returns `Some(candidate_rows)` if a trigram index exists, `None` to fall back to full scan.
 pub(crate) fn try_trigram_index<'a>(where_expr: Option<&Expr>, table: &'a Table) -> Option<Vec<&'a [DbValue]>> {
     let expr = where_expr?;
-    let (col_name, pattern_val) = match expr {
+
+    let candidates: Vec<usize> = match expr {
         Expr::Function(f) if f.name.to_string().to_lowercase() == "fuzzy_match" => {
             let args = match &f.args {
                 FunctionArguments::List(list) => &list.args,
@@ -1237,18 +1265,42 @@ pub(crate) fn try_trigram_index<'a>(where_expr: Option<&Expr>, table: &'a Table)
                 },
                 _ => return None,
             };
-            (col_name, pattern_val)
+            let trigram = table.find_index(&col_name, A3IndexType::Trigram)?;
+            let IndexImpl::Trigram(idx) = trigram else {
+                unreachable!()
+            };
+            idx.candidates(&pattern_val)
+        }
+        // Plain LIKE with mid/end wildcards (`%foo%`, `foo%bar`, `%a%b%`):
+        // intersect the postings of the longest literal run (>= 3 chars).
+        // NOT LIKE (negated), ESCAPE, and short-run patterns fall through to
+        // the full scan — every row the scan keeps contains that run, so the
+        // candidate set is a superset and the verify-rescan stays exact.
+        Expr::Like {
+            expr: col_expr,
+            pattern,
+            negated: false,
+            escape_char: None,
+            ..
+        } => {
+            let col_name = column_ident(col_expr)?;
+            let pat = match pattern.as_ref() {
+                Expr::Value(v) => match sql_val_to_db(&v.value) {
+                    DbValue::String(s) => s,
+                    _ => return None,
+                },
+                _ => return None,
+            };
+            let run = longest_literal_run(&pat)?;
+            let trigram = table.find_index(&col_name, A3IndexType::Trigram)?;
+            let IndexImpl::Trigram(idx) = trigram else {
+                unreachable!()
+            };
+            idx.like_candidates(&run)
         }
         _ => return None,
     };
 
-    // Check for trigram index on this column
-    let trigram = table.find_index(&col_name, A3IndexType::Trigram)?;
-    let IndexImpl::Trigram(idx) = trigram else {
-        unreachable!()
-    };
-
-    let candidates = idx.candidates(&pattern_val);
     if candidates.is_empty() || candidates.len() >= table.rows.len() {
         return None; // not worth it, full scan is similar cost
     }
