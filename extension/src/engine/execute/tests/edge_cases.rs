@@ -1761,3 +1761,55 @@ fn having_with_aggregate_predicates_works() {
     let r3 = parse_and_exec("SELECT g FROM t GROUP BY g HAVING g != 'b'", &mut db).unwrap();
     assert!(r3.contains("a") && !r3.contains("b"), "col HAVING: {}", r3);
 }
+
+#[test]
+fn window_functions_emit_per_row_and_partition() {
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE t (g TEXT, v INT)", &mut db).unwrap();
+    parse_and_exec("INSERT INTO t VALUES ('a',1),('a',3),('a',5),('b',10)", &mut db).unwrap();
+    // OVER () — whole table, one row per input row
+    let r = parse_and_exec("SELECT g, SUM(v) OVER () FROM t", &mut db).unwrap();
+    assert_eq!(r.matches("19").count(), 4, "OVER() per-row: {}", r);
+    // PARTITION BY — per-partition totals
+    let r2 = parse_and_exec("SELECT g, SUM(v) OVER (PARTITION BY g) FROM t ORDER BY g", &mut db).unwrap();
+    assert!(r2.contains("\"a\"") && r2.contains("9"), "partition a: {}", r2);
+    assert!(r2.contains("\"b\"") && r2.contains("10"), "partition b: {}", r2);
+    // ORDER BY without frame — RANGE running sum
+    let r3 = parse_and_exec("SELECT v, SUM(v) OVER (ORDER BY v) FROM t ORDER BY v", &mut db).unwrap();
+    assert!(
+        r3.contains("1") && r3.contains("4") && r3.contains("9") && r3.contains("19"),
+        "running sum: {}",
+        r3
+    );
+}
+
+#[test]
+fn window_frame_rows_between_works() {
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE t (v INT)", &mut db).unwrap();
+    parse_and_exec("INSERT INTO t VALUES (1),(3),(5),(10)", &mut db).unwrap();
+    let r = parse_and_exec(
+        "SELECT v, SUM(v) OVER (ORDER BY v ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM t ORDER BY v",
+        &mut db,
+    )
+    .unwrap();
+    assert!(
+        r.contains("1") && r.contains("4") && r.contains("8") && r.contains("15"),
+        "frame: {}",
+        r
+    );
+}
+
+#[test]
+fn int_arithmetic_wraps_not_panics() {
+    // i64 overflow must wrap (SQLite semantics), never panic — fuzz-found.
+    let mut db = Database::new();
+    let r = parse_and_exec("SELECT -6423620319545181503 - -3770134356349998972", &mut db).unwrap();
+    assert!(
+        r.starts_with("[[\"EXPR\"]"),
+        "overflow query must return a value: {}",
+        r
+    );
+    let r2 = parse_and_exec("SELECT 9223372036854775807 + 1", &mut db).unwrap();
+    assert!(r2.contains("-9223372036854775808"), "MAX+1 wraps to MIN: {}", r2);
+}

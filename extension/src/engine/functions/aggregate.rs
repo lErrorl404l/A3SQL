@@ -41,6 +41,12 @@ pub(crate) fn has_aggregate(projection: &[SelectItem]) -> bool {
 fn contains_aggregate(expr: &Expr) -> bool {
     match expr {
         Expr::Function(f) => {
+            // Window functions (OVER clause) are NOT plain aggregates — they
+            // keep one output row per input row and are handled by the window
+            // module, not the GROUP BY/aggregate path.
+            if f.over.is_some() {
+                return false;
+            }
             let name = f.name.to_string().to_lowercase();
             matches!(name.as_str(), "count" | "sum" | "avg" | "min" | "max" | "group_concat")
         }

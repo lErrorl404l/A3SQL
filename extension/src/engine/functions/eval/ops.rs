@@ -98,9 +98,11 @@ pub(crate) fn apply_binary_op(left: &DbValue, op: &BinaryOperator, right: &DbVal
         BinaryOperator::LtEq => cmp_values(left, right, |o| o.is_le()),
         BinaryOperator::Gt => cmp_values(left, right, |o| o.is_gt()),
         BinaryOperator::GtEq => cmp_values(left, right, |o| o.is_ge()),
-        BinaryOperator::Plus => arith_op(left, op, right, |a, b| a + b, |a, b| a + b),
-        BinaryOperator::Minus => arith_op(left, op, right, |a, b| a - b, |a, b| a - b),
-        BinaryOperator::Multiply => arith_op(left, op, right, |a, b| a * b, |a, b| a * b),
+        // Wrapping arithmetic matches SQLite's i64 two's-complement semantics:
+        // i64 overflow never panics, it wraps (e.g. MIN - 1 = MAX).
+        BinaryOperator::Plus => arith_op(left, op, right, |a, b| a.wrapping_add(b), |a, b| a + b),
+        BinaryOperator::Minus => arith_op(left, op, right, |a, b| a.wrapping_sub(b), |a, b| a - b),
+        BinaryOperator::Multiply => arith_op(left, op, right, |a, b| a.wrapping_mul(b), |a, b| a * b),
         BinaryOperator::Divide => arith_op(left, op, right, |a, b| a / b, |a, b| a / b),
         BinaryOperator::Modulo => match (to_float(left), to_float(right)) {
             (Some(a), Some(b)) if b != 0.0 => Ok(DbValue::Float(a % b)),

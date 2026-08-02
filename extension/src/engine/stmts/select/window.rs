@@ -517,6 +517,10 @@ pub(crate) fn compute_window_functions(
                     for (pos, &idx) in part_indices.iter().enumerate() {
                         let (fs, fe) = if let Some(ref f) = spec.window_frame {
                             frame_bounds(f, part_indices, rows, &spec.order_by, col_map, pos)
+                        } else if !spec.order_by.is_empty() {
+                            // SQL default: ORDER BY without a frame clause is
+                            // RANGE UNBOUNDED PRECEDING .. CURRENT ROW (running).
+                            (0, pos)
                         } else {
                             (0, part_indices.len().saturating_sub(1))
                         };
