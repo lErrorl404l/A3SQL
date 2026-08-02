@@ -188,7 +188,7 @@ pub(crate) fn exec_select_rows(
         } else {
             vec![filtered_rows] // single group: all rows
         };
-        // HAVING — filter partitions after grouping
+        // HAVING — filter partitions after grouping (aggregates over the group)
         let group_partitions = if let Some(having) = &select.having {
             let flattened: Vec<Vec<&[DbValue]>> = group_partitions
                 .into_iter()
@@ -196,7 +196,9 @@ pub(crate) fn exec_select_rows(
                     if group.is_empty() {
                         return false;
                     }
-                    is_truthy(&eval_expr(having, group[0], &table.col_index).unwrap_or(DbValue::Bool(false)))
+                    super::super::functions::aggregate::eval_projection_expr(having, group, &table.col_index)
+                        .map(|(_, v)| is_truthy(&v))
+                        .unwrap_or(false)
                 })
                 .collect();
             flattened
@@ -229,7 +231,7 @@ pub(crate) fn exec_select_rows(
     let grouped_rows = if super::super::functions::aggregate::has_group_by(select) {
         let partitions =
             super::super::functions::aggregate::partition_by_group(&filtered_rows, select, &table.col_index)?;
-        // HAVING — filter after grouping
+        // HAVING — filter after grouping (aggregates over the group)
         let partitions: Vec<Vec<&[DbValue]>> = if let Some(having) = &select.having {
             partitions
                 .into_iter()
@@ -237,7 +239,9 @@ pub(crate) fn exec_select_rows(
                     if group.is_empty() {
                         return false;
                     }
-                    is_truthy(&eval_expr(having, group[0], &table.col_index).unwrap_or(DbValue::Bool(false)))
+                    super::super::functions::aggregate::eval_projection_expr(having, group, &table.col_index)
+                        .map(|(_, v)| is_truthy(&v))
+                        .unwrap_or(false)
                 })
                 .collect()
         } else {

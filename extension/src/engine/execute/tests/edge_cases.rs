@@ -1741,3 +1741,23 @@ fn p2_like_no_index_falls_back() {
         index_q
     );
 }
+
+#[test]
+fn having_with_aggregate_predicates_works() {
+    // HAVING must evaluate aggregates over the WHOLE group (COUNT(*) > 1),
+    // not as a scalar on the first row (which always yielded false).
+    let mut db = Database::new();
+    parse_and_exec("CREATE TABLE t (g TEXT, v INT)", &mut db).unwrap();
+    parse_and_exec("INSERT INTO t VALUES ('a', 1), ('a', 2), ('b', 3)", &mut db).unwrap();
+    let r = parse_and_exec("SELECT g, COUNT(*) FROM t GROUP BY g HAVING COUNT(*) > 1", &mut db).unwrap();
+    assert!(r.contains("a") && r.contains("2"), "COUNT(*) HAVING: {}", r);
+    assert!(!r.contains("b"), "b filtered out: {}", r);
+    let r2 = parse_and_exec(
+        "SELECT g, SUM(v) FROM t GROUP BY g HAVING SUM(v) > 2 ORDER BY g",
+        &mut db,
+    )
+    .unwrap();
+    assert!(r2.contains("a") && r2.contains("b"), "SUM HAVING: {}", r2);
+    let r3 = parse_and_exec("SELECT g FROM t GROUP BY g HAVING g != 'b'", &mut db).unwrap();
+    assert!(r3.contains("a") && !r3.contains("b"), "col HAVING: {}", r3);
+}

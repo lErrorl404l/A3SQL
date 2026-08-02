@@ -232,12 +232,11 @@ pub(crate) fn projection_expr_name(expr: &Expr) -> String {
 }
 
 /// Evaluate a projection expression (handles aggregates vs regular expressions).
-fn eval_projection_expr(
+pub(crate) fn eval_projection_expr(
     expr: &Expr,
     rows: &[&[DbValue]],
     col_map: &HashMap<String, usize>,
 ) -> Result<(String, DbValue), EngineError> {
-    // DBG
     match expr {
         Expr::Function(f) => {
             let name = f.name.to_string().to_lowercase();
@@ -346,6 +345,28 @@ fn eval_projection_expr(
                 rows[0][*idx].clone()
             };
             Ok((ident.value.to_lowercase(), val))
+        }
+        // Composite expressions: recurse so aggregate functions resolve over the
+        // whole group, then apply the operator (HAVING needs COUNT(*) > 1, etc.)
+        Expr::BinaryOp { left, op, right } => {
+            let l = eval_projection_expr(left, rows, col_map)?.1;
+            let r = eval_projection_expr(right, rows, col_map)?.1;
+            let val = super::super::functions::eval::ops::apply_binary_op(&l, op, &r)?;
+            Ok(("expr".to_string(), val))
+        }
+        Expr::UnaryOp { op, expr } => {
+            let v = eval_projection_expr(expr, rows, col_map)?.1;
+            let val = super::super::functions::eval::ops::apply_unary_op(op, &v)?;
+            Ok(("expr".to_string(), val))
+        }
+        Expr::Nested(inner) => eval_projection_expr(inner, rows, col_map),
+        Expr::IsNull(expr) => {
+            let v = eval_projection_expr(expr, rows, col_map)?.1;
+            Ok(("expr".to_string(), DbValue::Bool(matches!(v, DbValue::Null))))
+        }
+        Expr::IsNotNull(expr) => {
+            let v = eval_projection_expr(expr, rows, col_map)?.1;
+            Ok(("expr".to_string(), DbValue::Bool(!matches!(v, DbValue::Null))))
         }
         _ => {
             let val = eval_expr_on_group(expr, rows, col_map)?;

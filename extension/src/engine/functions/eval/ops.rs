@@ -151,7 +151,7 @@ fn values_equal_builtin(a: &DbValue, b: &DbValue) -> bool {
 
 // ── Unary operators ────────────────────────────────────────────────────
 
-pub(super) fn apply_unary_op(op: &UnaryOperator, val: &DbValue) -> Result<DbValue, EngineError> {
+pub(crate) fn apply_unary_op(op: &UnaryOperator, val: &DbValue) -> Result<DbValue, EngineError> {
     match op {
         UnaryOperator::Not => Ok(DbValue::Bool(!is_truthy(val))),
         UnaryOperator::Plus => Ok(val.clone()),
