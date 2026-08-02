@@ -33,10 +33,6 @@ uuid = { version = "1.16", features = ["v4", "serde"] }
 # Ordered HashMap for column ordering in queries
 indexmap = "2.7"
 
-# O_NOFOLLOW for TOCTOU-safe save writes (already in the lockfile)
-[target.'cfg(unix)'.dependencies]
-libc = "0.2"
-
 # Decimal type for DECIMAL(p,s) columns
 rust_decimal = { version = "1.36", features = ["serde"] }
 
@@ -102,3 +98,8 @@ opt-level = "z"
 lto = true
 codegen-units = 1
 strip = true
+
+# O_NOFOLLOW for TOCTOU-safe save writes (libc already in the lockfile).
+# Placed AFTER all [dependencies] tables so it can't truncate them.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
