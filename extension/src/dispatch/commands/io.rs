@@ -163,6 +163,29 @@ pub(crate) fn handle_dump_sql(db: &engine::Database) -> String {
     ok_response(&encoded)
 }
 
+/// Write `bytes` to `path` with O_NOFOLLOW on Unix: the final component must
+/// be a regular file (or newly created), never a symlink — closing the
+/// TOCTOU window between `ensure_within_data_dir` and the write (a local
+/// attacker could plant `a3sql.bin.tmp -> /home/user/.ssh/authorized_keys`
+/// in between). On non-Unix, falls back to std::fs::write.
+#[cfg(unix)]
+fn write_no_follow(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut f = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)?;
+    f.write_all(bytes)
+}
+
+#[cfg(not(unix))]
+fn write_no_follow(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    std::fs::write(path, bytes)
+}
+
 pub(crate) fn handle_save(db: &engine::Database, args: &[&str]) -> String {
     let filename = args.first().copied().unwrap_or("a3sql.bin");
     if filename.is_empty() {
@@ -184,7 +207,7 @@ pub(crate) fn handle_save(db: &engine::Database, args: &[&str]) -> String {
     if let Err(e) = ensure_within_data_dir(&tmp_path, CONFIG.data_dir()) {
         return e;
     }
-    if let Err(e) = std::fs::write(&tmp_path, &bytes) {
+    if let Err(e) = write_no_follow(&tmp_path, &bytes) {
         return error_response(ErrorCode::Io, &format!("Save failed: {}", e));
     }
     // Keep the previous good save as .bak before replacing it.
@@ -748,6 +771,39 @@ mod tests {
         let r = handle_load(&mut db, &["no_such_file_xyz.bin"]);
         assert!(!r.contains("\"OK\""), "missing-file load must fail: {}", r);
         assert_eq!(row_count(&db), 3, "missing-file load must not destroy in-memory data");
+        cleanup(tag);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)] // fs blocked by miri isolation
+    #[cfg(unix)]
+    fn save_refuses_symlinked_tmp_no_follow() {
+        // TOCTOU regression: a symlink planted at the .tmp path must NOT be
+        // followed by the save write (write_no_follow uses O_NOFOLLOW).
+        let tag = "no_follow";
+        cleanup(tag);
+        let filename = unique_file(tag);
+        let dir = CONFIG.data_dir().to_path_buf();
+        let tmp = dir.join(format!("{filename}.tmp"));
+        let victim = dir.join(format!("{filename}.victim"));
+
+        // Plant the symlink where handle_save will write .tmp.
+        std::fs::write(&victim, b"sentinel").unwrap();
+        std::fs::remove_file(&tmp).ok();
+        std::os::unix::fs::symlink(&victim, &tmp).unwrap();
+
+        // Save must fail cleanly (O_NOFOLLOW) and must NOT overwrite victim.
+        let r = handle_save(&make_db(false), &[filename.as_str()]);
+        assert!(
+            !r.contains("\"OK\""),
+            "save through a symlinked .tmp must fail, got: {}",
+            r
+        );
+        assert_eq!(
+            std::fs::read(&victim).unwrap(),
+            b"sentinel",
+            "victim must not be overwritten through the symlink"
+        );
         cleanup(tag);
     }
 }
