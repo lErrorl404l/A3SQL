@@ -144,6 +144,34 @@ check(
     "window ROWS frame",
     "SELECT id, AVG(barrelLength) OVER (ORDER BY name ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) FROM w",
 )
+check(
+    "window LAG",
+    "SELECT id, LAG(name) OVER (ORDER BY name) FROM w",
+)
+check(
+    "window LEAD",
+    "SELECT id, LEAD(name) OVER (ORDER BY name) FROM w",
+)
+check(
+    "window LAG offset default",
+    "SELECT id, LAG(name, 2, 'none') OVER (ORDER BY name) FROM w",
+)
+check(
+    "window FIRST_VALUE",
+    "SELECT id, FIRST_VALUE(name) OVER (PARTITION BY caliber ORDER BY name) FROM w",
+)
+check(
+    "window LAST_VALUE",
+    "SELECT id, LAST_VALUE(name) OVER (PARTITION BY caliber ORDER BY name) FROM w",
+)
+check(
+    "window running sum",
+    "SELECT id, SUM(barrelLength) OVER (ORDER BY name) FROM w",
+)
+check(
+    "window over()",
+    "SELECT id, COUNT(*) OVER () FROM w",
+)
 check("EXPLAIN", "EXPLAIN SELECT * FROM w")
 
 # ── Functions ────────────────────────────────────────────────────────
