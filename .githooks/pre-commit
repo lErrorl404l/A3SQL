@@ -8,6 +8,9 @@ FAILED=0
 echo "→ cargo fmt --check"
 cargo fmt --manifest-path "$ROOT/extension/Cargo.toml" --check || FAILED=1
 
+echo "→ docs static-metric guard (no test counts / versions / MSRV in markdown)"
+python3 "$ROOT/tools/check_docs_static.py" >/dev/null 2>&1 || FAILED=1
+
 echo "→ cargo clippy --all-targets"
 cargo clippy --manifest-path "$ROOT/extension/Cargo.toml" --all-targets 2>&1 | grep -qE "(warning|error)" && FAILED=1 || true
 

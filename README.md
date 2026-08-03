@@ -5,46 +5,46 @@
 [![Downloads](https://img.shields.io/github/downloads/lErrorl404l/a3sql/total.svg?style=flat-square&label=Downloads)](https://github.com/lErrorl404l/a3sql/releases)
 [![License](https://img.shields.io/badge/License-APL--SA-red.svg?style=flat-square)](LICENSE)
 
-**A3SQL** is a live database engine for Arma 3. It stores and processes mission data at runtime — managing loadouts, tracking player stats, patching in-game values, logging events — all through a persistent SQL database embedded in your server.
+**A3SQL** is a live SQL database engine for Arma 3. It runs inside your server and lets your mission store, query, and update data with plain SQL: player stats that survive restarts, faction loadouts, event logs, admin commands, and mid-mission value patching. No external database, no PBO repacking.
 
 Requires the latest version of [CBA A3](https://github.com/CBATeam/CBA_A3/releases).
 
 ---
 
-## Features
+## What you get
 
-### Dynamic live patching
-Modify weapon stats, vehicle properties, textures, and any runtime-settable value mid-mission. Rules are stored in SQL and applied automatically. No PBO repacking or mission restart.
-
-### Player loadout management
-Store faction/role-based loadout templates in SQL. Apply them on spawn with a single function call.
-
-### Persistence & progression
-Track player rank, score, kills, and playtime across sessions using Arma's built-in rank system. Save player loadouts and positions on disconnect, restore on JIP reconnect.
-
-### Analytics & logging
-Log server performance (FPS, entity counts), kill events (weapon, distance, headshot), and player connections to SQL. Export as CSV for after-action review.
-
-### Remote administration
-Manage your server from outside the game — kick/ban players, change missions, execute admin commands over TCP. Forward notifications to Discord via webhooks.
+- **Player stats and progression.** Rank, score, kills, and playtime across sessions. Saved on disconnect, restored on JIP reconnect.
+- **Loadout management.** Faction and role loadout templates in SQL, applied on spawn with a single call.
+- **Dynamic live patching.** Change weapon stats, vehicle properties, and other runtime values mid-mission from SQL rules. No mission restart.
+- **Analytics and logging.** Performance snapshots, kill events, and player connections logged to SQL, exportable as CSV for after-action review.
+- **Remote administration.** Manage the server from outside the game over the TCP listener: kick/ban players, change missions, run admin commands. Forward notifications to Discord via webhooks.
 
 ## Installation
 
-Download the [latest release](https://github.com/lErrorl404l/a3sql/releases/latest) and unpack `@a3sql` into your Arma 3 directory.
+Install from the Steam Workshop, or download the [latest release](https://github.com/lErrorl404l/a3sql/releases/latest) and unpack `@a3sql` into your Arma 3 directory.
 
-Launch with:
+Launch the game or server with:
+
 ```
 -mod=@cba_a3;@a3sql
 ```
 
 Configure via **CBA Settings** → **A3SQL** categories.
 
-## Documentation
+## Quick start
 
-- [Wiki Home](https://github.com/lErrorl404l/a3sql/wiki)
-- [Patch Framework](https://github.com/lErrorl404l/a3sql/wiki/Patch-Framework)
-- [Module Integration Guide](https://github.com/lErrorl404l/a3sql/wiki/Module-Guide)
-- [Admin Commands](https://github.com/lErrorl404l/a3sql/wiki/Admin-Commands)
+```sqf
+// Server-side, once, at mission start:
+["CREATE TABLE IF NOT EXISTS stats (uid STRING PRIMARY KEY, name STRING, score INT)"] call a3sql_fnc_execute;
+
+// Record a result:
+["INSERT INTO stats VALUES ('76561198000000001', 'Scarface', 1500)"] call a3sql_fnc_execute;
+
+// Query the top scores:
+_result = ["SELECT name, score FROM stats ORDER BY score DESC LIMIT 10"] call a3sql_fnc_execute;
+```
+
+Every command returns `[returnCode, status, data]`, and user input should go through parameterized queries (`$1`, `$2`). The full SQF API, SQL dialect, and server-admin guide live in [docs/README.md](docs/README.md).
 
 ## Modules
 
@@ -53,15 +53,26 @@ A3SQL is modular. Remove any PBO you don't need:
 | Addon | Purpose |
 |-------|---------|
 | `a3sql_main` | Core mod definition (required) |
-| `a3sql_database` | SQL engine and query execution |
+| `a3sql_database` | SQL engine and query API |
 | `a3sql_patch_core` | Dynamic patching engine |
-| `a3sql_patch_editor` | In-game rule editor dialog |
+| `a3sql_patch_editor` | In-game rule editor |
 | `a3sql_patch_operators` | Value transformation operators |
 | `a3sql_admin` | Player tracking and admin commands |
 | `a3sql_analytics` | Performance monitoring and event logging |
 | `a3sql_loadouts` | Faction/role loadout templates |
 | `a3sql_persistence` | Player state save/restore |
 | `a3sql_progression` | Rank/score tracking |
+
+## Documentation
+
+- [docs/README.md](docs/README.md): quick start, SQF API, SQL dialect, admin guide
+- [Getting Started](docs/wiki/Getting-Started.md)
+- [SQL Dialect](docs/wiki/SQL-Dialect.md)
+- [Patch Framework](docs/wiki/Patch-Framework.md)
+- [Module Guide](docs/wiki/Module-Guide.md)
+- [CBA Settings](docs/wiki/CBA-Settings.md)
+- [Security](docs/wiki/Security.md)
+- [TCP Connector](docs/wiki/TCP-Connector.md)
 
 ## For modders
 
@@ -81,7 +92,7 @@ Python CLI tools (stdlib only):
 
 ```bash
 python tools/a3sql-patch.py list
-python tools/a3sql-patch.py rcon kick 76561198000000001
+python tools/a3sql-patch.py rcon kick 76561198000000001 --reason "Team killing"
 python tools/a3sql-webhook.py --webhook-url "https://discord.com/api/webhooks/..."
 ```
 
@@ -99,4 +110,4 @@ Pull requests welcome. For bugs and feature requests, open an [issue](https://gi
 
 ## License
 
-[Arma Public License Share Alike (APL-SA)](LICENSE)
+Licensed under the [Arma Public License Share Alike (APL-SA)](LICENSE), Copyright 2026 ABE Team.

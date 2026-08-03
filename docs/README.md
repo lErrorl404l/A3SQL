@@ -1,129 +1,186 @@
-# A3SQL — Arma 3 Database Engine
+# A3SQL: Arma 3 Database Engine
 
-> **Canonical documentation lives in the [wiki](wiki/) (`docs/wiki/`)** —
+> **Canonical documentation lives in the [wiki](wiki/) (`docs/wiki/`)**:
 > Module Guide, Patch Framework, SQL Dialect, TCP Connector, Security,
 > and the Production Readiness checklist. This page is the quick-start
 > summary; the wiki pages are the authoritative reference.
 
-An embeddable SQL database engine for Arma 3 mods. Like **SQLite for Arma** — a
-Rust `callExtension` that lets modders write SQL directly in SQF.
+## What is A3SQL
+
+A3SQL is a live SQL database engine for Arma 3. It runs inside your server process, and your mission talks to it with plain SQL: create tables, insert rows, run queries, all from SQF. No external database to install, no files to parse by hand.
+
+For a mission maker or server admin that means:
+
+- Player stats, scores, and loadouts that survive mission restarts
+- Kill, connection, and performance logs you can query with SQL
+- Live patching of weapon and vehicle values from SQL rules
+- A TCP listener so external tools can read and write the same data
+
+A3SQL requires [CBA A3](https://github.com/CBATeam/CBA_A3/releases) (the latest release).
+
+The quickest possible start:
 
 ```sqf
-["CREATE TABLE weapons (id STRING PRIMARY KEY, name STRING)"] call a3sql_fnc_execute;
-["INSERT INTO weapons VALUES ('m4a1', 'M4A1')"] call a3sql_fnc_execute;
-_result = ["SELECT * FROM weapons WHERE name %% 'm4'"] call a3sql_fnc_execute;
+["CREATE TABLE players (uid STRING PRIMARY KEY, name STRING, score INT)"] call a3sql_fnc_execute;
+["INSERT INTO players VALUES ('76561198000000001', 'Scarface', 1500)"] call a3sql_fnc_execute;
+_result = ["SELECT name, score FROM players WHERE score > 1000 ORDER BY score DESC"] call a3sql_fnc_execute;
+// _result = [0, "OK", [["name","score"],["Scarface",1500]]]
 ```
 
-## Features
+## Installation
 
-| Category | Features |
-|---|---|
-| **SQL** | CREATE/DROP TABLE/INDEX, INSERT, SELECT, UPDATE, DELETE, REPLACE INTO, TRUNCATE, RENAME |
-| **Advanced SQL** | JOINs (CROSS/INNER/LEFT), GROUP BY/HAVING, ORDER BY/LIMIT/OFFSET, UNION/UNION ALL, CTE (WITH), subqueries |
-| **Expressions** | `%%` fuzzy match, LIKE, BETWEEN, IN, IS NULL, CASE WHEN, EXISTS, CAST |
-| **Functions** | UPPER/LOWER, LENGTH, SUBSTR, TRIM, CONCAT, COALESCE/IFNULL, ROUND, ABS, NOW()/CURRENT_TIMESTAMP |
-| **Window** | ROW_NUMBER, RANK, DENSE_RANK with OVER/PARTITION BY/ORDER BY |
-| **Constraints** | PRIMARY KEY, NOT NULL, DEFAULT, CHECK, FOREIGN KEY, AUTO_INCREMENT |
-| **Types** | INT (BIGINT/SMALLINT/TINYINT), FLOAT (DECIMAL/NUMERIC/DOUBLE), STRING (VARCHAR/CHAR/TEXT), BOOL, DATE/TIMESTAMP, STRINGS[]/FLOATS[] |
-| **Indices** | BTREE (exact/range), TRIGRAM (fuzzy GIN-style candidate filter) |
-| **Transactions** | BEGIN/COMMIT/ROLLBACK, SAVEPOINT/RELEASE |
-| **Persistence** | SAVE/LOAD (binary), export/import JSON/CSV/SQL, export_to_file |
-| **Security** | Parameterized queries (`$1`,`$2`), TCP LOGIN auth, CBA credential settings |
-| **Network** | TCP listener (auto-start at game boot), external queries via Python/CLI |
-| **Multi-statement** | Run `;`-separated SQL batches |
-| **Multi-dialect** | Accepts PostgreSQL, MySQL/MariaDB, SQLite, DataFusion-style SQL |
+Install the mod from the Steam Workshop, or download the [latest release](https://github.com/lErrorl404l/a3sql/releases/latest) and unpack `@a3sql` into your Arma 3 directory. Launch the game or server with:
 
-## Quick Start
+```
+-mod=@cba_a3;@a3sql
+```
 
-### 1. Add a3sql as a dependency
+The mod is modular: `a3sql_main` is the only required PBO. You can remove the addon PBOs for features you don't use (analytics, loadouts, persistence, progression, patching, admin); the modules table in the [root README](../README.md) lists what each one does.
+
+## Using A3SQL in your mod
+
+### Add the dependency
 
 In your mod's CfgPatches:
 
 ```cpp
-requiredAddons[] = {"cba_main", "a3sql_main", "a3sql_sql"};
+requiredAddons[] = {"cba_main", "a3sql_main", "a3sql_database"};
 ```
 
-### 2. Call from SQF
+### The SQF API
+
+The `a3sql_database` addon compiles one function per file under `addons/database/functions/`. The five most used also get short `a3sql_fnc_*` aliases; everything else uses the full `a3sql_database_fnc_*` name:
+
+| Function | Description |
+|---|---|
+| `a3sql_fnc_execute` | Execute SQL, returns `[returnCode, status, data]`. Alias of `a3sql_database_fnc_execute`. |
+| `a3sql_fnc_selectMap` | Run a query, returns an array of hashmaps keyed by column name |
+| `a3sql_fnc_selectArray` | Run a query, returns rows only (header row skipped) |
+| `a3sql_fnc_selectAll` | Run a query with automatic cursor pagination for large results |
+| `a3sql_fnc_exportCSV` | Export a table as CSV |
+| `a3sql_database_fnc_exportJSON` | Export a table as JSON |
+| `a3sql_database_fnc_exportSQL` | Export the whole database as SQL statements |
+| `a3sql_database_fnc_dumpSQL` | Same as `exportSQL` (command `dump_sql`) |
+| `a3sql_database_fnc_loadJSON` | Import JSON (or a JSON file path) into a table |
+| `a3sql_database_fnc_save` | Save the database to a binary file |
+| `a3sql_database_fnc_load` | Restore the database from a binary file |
+| `a3sql_database_fnc_prepare` | Prepare a statement with `$1..$N` placeholders |
+| `a3sql_database_fnc_executePrepared` | Run a prepared statement with arguments |
+| `a3sql_database_fnc_executeTimed` | Execute and log any query slower than 10 ms |
+| `a3sql_database_fnc_sqlEscape` | Escape a string for safe inline use in SQL |
+| `a3sql_database_fnc_init` | Check the version, push credentials, start the listener if needed |
+
+Example:
 
 ```sqf
-// Create
-["CREATE TABLE players (uid STRING PRIMARY KEY, name STRING, score INT)"] call a3sql_fnc_execute;
+// Create and fill a table
+["CREATE TABLE IF NOT EXISTS stats (uid STRING, name STRING, score INT)"] call a3sql_fnc_execute;
+["INSERT INTO stats VALUES ('76561198000000001', 'Scarface', 1500)"] call a3sql_fnc_execute;
 
-// Insert
-["INSERT INTO players VALUES ('76561198000000001', 'Scarface', 1500)"] call a3sql_fnc_execute;
+// Persist to disk, restore later
+["stats.bin"] call a3sql_database_fnc_save;
+["stats.bin"] call a3sql_database_fnc_load;
 
-// Query
-_result = ["SELECT name, score FROM players WHERE score > 1000 ORDER BY score DESC"] call a3sql_fnc_execute;
-// Returns: [0, "OK", [["name","score"],["Scarface",1500]]]
-```
-
-### 3. CBA Wrapper Functions
-
-```sqf
-// Fuzzy search
-_result = ["SELECT name FROM weapons WHERE name %% 'm4'"] call a3sql_fnc_execute;
-
-// Transactions
-["BEGIN"] call a3sql_fnc_execute;
-["INSERT INTO log (action) VALUES ('mission_start')"] call a3sql_fnc_execute;
-["COMMIT"] call a3sql_fnc_execute;
-
-// Save/load persistence
-["data.bin"] call a3sql_fnc_save;
-["data.bin"] call a3sql_fnc_load;
+// Query into an array of hashmaps
+private _top = ["SELECT name, score FROM stats ORDER BY score DESC LIMIT 10"] call a3sql_fnc_selectMap;
 
 // Export
-_table_data = ["players"] call a3sql_fnc_exportJSON;
-_sql_backup = [] call a3sql_fnc_exportSQL;
-
-// External TCP query (from Python)
-// ["listen"] call a3sql_fnc_execute;  // auto-starts at game boot
+private _csv = ["players"] call a3sql_fnc_exportCSV;
+private _sqlBackup = [] call a3sql_database_fnc_exportSQL;
 ```
 
-### 4. CBA Addon Settings
+### Prepared statements
+
+Parameterized queries keep user input out of your SQL. Prepare once, then execute with arguments:
+
+```sqf
+["find_player", "SELECT * FROM players WHERE uid = $1"] call a3sql_database_fnc_prepare;
+_result = ["find_player", ["76561198000000001"]] call a3sql_database_fnc_executePrepared;
+```
+
+### Control commands
+
+Beyond SQL, the extension accepts control commands. The SQF wrappers cover the common ones; you can also call the extension directly:
+
+| Command | Purpose |
+|---|---|
+| `version` | Return the current version string |
+| `ping` / `reset` | Health check / wipe the database |
+| `save <path>` / `load <path>` | Binary persistence (atomic, `.bak` fallback, FNV-1a checksum) |
+| `dump_sql` / `export_sql` | Full database as SQL statements |
+| `export <fmt> <table>` | Export a table as json/csv/binary |
+| `export_to_file <fmt> [table] <path>` | Write an export to a file |
+| `import <fmt> <table>` | Import json/csv/sql data (data passed as argument) |
+| `listen [port]` / `stop` | Start/stop the TCP listener |
+| `set_credentials <user> <pass>` | Set TCP login credentials |
+| `prepare <name> <sql>` / `execute_prepared <name> [args...]` | Prepared statements |
+| `cursor create <name> <query>` / `cursor fetch <name> [limit]` / `cursor drop <name>` | Paged queries |
+| `plugins` / `register_function <name> <argc> <body>` / `plugin_dir <dir>` | Plugin management |
+| `describe <table>` / `show create table <table>` | Schema inspection |
+| `connect <host> <port>` / `disconnect` | Talk to a remote A3SQL server |
+| `live_patch list` / `live_patch query <sql>` / `live_patch <target> <property> <value>` | Patch rules |
+
+### Response format
+
+Every command returns `[returnCode, status, data]`:
+
+```
+Success: [0,"OK",result_data]
+Error:   [-1,"ERR_CODE","error message"]
+
+Error codes:
+  ERR_PARSE    SQL parse error
+  ERR_EXEC     Execution error
+  ERR_TABLE    Table not found
+  ERR_TYPE     Type mismatch
+  ERR_PK       Primary key violation
+  ERR_IO       File I/O error
+  ERR_INTERNAL Internal error
+  ERR_AUTH     Authentication failure (TCP LOGIN, signed queries)
+```
+
+`result_data` for `SELECT` is a JSON array of column names plus rows:
+
+```json
+[["id","name","caliber","barrelLength"],["rhs_m4a1","M4A1","5.56x45mm",368.3]]
+```
+
+For JOINs with prefixed column names:
+
+```json
+[["weapons.id","weapons.name","attachments.name"],["rhs_m4a1","M4A1","M68 CCO"]]
+```
+
+### Raw callExtension
+
+You can skip the wrappers and call the extension directly. The version command reports the current version:
+
+```sqf
+private _version = "a3sql" callExtension "version";
+// → [0,"OK","a3sql <current version>"]
+```
+
+## Server admins
+
+### CBA settings
 
 Options → Addon Configuration → A3SQL:
 
 | Setting | Type | Default | Purpose |
 |---|---|---|---|
-| Enable TCP Listener | CHECKBOX | true | Auto-start on game boot |
-| Listener Port | EDIT | 33306 | TCP port |
-| Listener Bind Address | EDIT | 127.0.0.1 | Bind IP |
-| Listener Username | EDIT | (empty) | TCP login (empty credentials are refused — fail-closed) |
-| Listener Password | EDIT | (empty) | TCP login |
-| Auto-Save | CHECKBOX | false | Save on mission end |
-| Auto-Load | CHECKBOX | false | Load on mission start |
-| Auto-Save Path | EDIT | a3sql_autosave.bin | File path |
-| Log Level | LIST | INFO | RPT verbosity |
-- **Auto-Save**: Save database when mission ends
-- **Auto-Save File**: File path for auto-save
+| `a3sql_listener_enabled` | CHECKBOX | true | Start the TCP listener on mission start |
+| `a3sql_database_listener_port` | EDITBOX | 33306 | TCP port |
+| `a3sql_database_listener_bind` | EDITBOX | 127.0.0.1 | Bind address |
+| `a3sql_database_listener_user` | EDITBOX | (empty) | TCP login user; empty credentials are refused |
+| `a3sql_database_listener_password` | EDITBOX | (empty) | TCP login password |
+| `a3sql_auto_save` | CHECKBOX | false | Save the database when the mission ends |
+| `a3sql_auto_load` | CHECKBOX | false | Load the database when a mission starts |
+| `a3sql_database_auto_save_path` | EDITBOX | a3sql_autosave.bin | File path used by auto-save/auto-load |
+| `a3sql_log_level` | LIST | INFO | RPT verbosity (ERROR/WARN/INFO/DEBUG) |
 
-### 5. Full example
+### TCP listener
 
-```sqf
-if (isServer) then {
-    // Create tables on mission start
-    ["CREATE TABLE IF NOT EXISTS stats (uid STRING, name STRING, score INT)"] call a3sql_fnc_execute;
-
-    // Restore from previous session
-    ["stats_data.bin"] call a3sql_fnc_load;
-
-    // Auto-save on mission end
-    addMissionEventHandler ["Ended", {
-        ["stats_data.bin"] call a3sql_fnc_save;
-    }];
-};
-
-// Record event
-["INSERT INTO stats VALUES ('76561198000000001', 'Scarface', 1500)"] call a3sql_fnc_execute;
-
-// Query top scores
-_result = ["SELECT name, score FROM stats ORDER BY score DESC LIMIT 10"] call a3sql_fnc_execute;
-```
-
-### 6. External query (TCP)
-
-Enable the TCP listener in CBA settings, set a username/password, then connect from any tool (`LOGIN` is required by default):
+With the listener enabled, external tools connect over TCP and must `LOGIN` first. Authentication is fail-closed: with no credentials configured, LOGIN can never succeed, and without a successful LOGIN every query is rejected with `ERR_AUTH`. Credential comparison is constant-time, so timing side channels can't leak the password.
 
 ```python
 import socket
@@ -136,14 +193,55 @@ print(s.recv(65536).decode())
 s.close()
 ```
 
-## SQL Dialect
+Control the listener from SQF:
+
+```sqf
+// Set credentials, then start the listener on port 33306
+["a3sql", "set_credentials", ["admin", "mypassword"]] callExtension;
+["a3sql", "listen", ["33306"]] callExtension;
+["a3sql", "stop"] callExtension;
+```
+
+### SQL injection safety
+
+Pass user input as separate arguments with `$1`, `$2` placeholders instead of interpolating strings:
+
+```sqf
+// UNSAFE: string interpolation (SQL injection possible)
+private _sql = format ["SELECT * FROM users WHERE name = '%1'", _userInput];
+["a3sql", _sql] callExtension;
+
+// SAFE: parameterized query (injection prevented)
+["a3sql", "SELECT * FROM users WHERE name = $1", [_userInput]] callExtension;
+```
+
+## SQL dialect
+
+### Feature summary
+
+| Category | Features |
+|---|---|
+| **SQL** | CREATE/DROP TABLE/INDEX/VIEW, INSERT, SELECT, UPDATE, DELETE, REPLACE INTO, TRUNCATE, RENAME, ALTER TABLE (ADD/DROP/RENAME COLUMN, RENAME), EXPLAIN (JSON query plan), VACUUM, REINDEX |
+| **Advanced SQL** | JOINs (CROSS/INNER/LEFT/FULL OUTER/NATURAL/USING), JOINs with subqueries in ON, GROUP BY/HAVING, ORDER BY/LIMIT/OFFSET, UNION/UNION ALL/EXCEPT/INTERSECT, CTE incl. WITH RECURSIVE, subqueries (scalar/IN/EXISTS), derived tables in FROM |
+| **Window** | ROW_NUMBER, RANK, DENSE_RANK, LAG, LEAD, FIRST_VALUE, LAST_VALUE with OVER (PARTITION BY/ORDER BY), ROWS/RANGE frames |
+| **Constraints** | PRIMARY KEY (incl. composite), NOT NULL, DEFAULT (incl. expression defaults), CHECK, FOREIGN KEY (enforced, with cascade), AUTO_INCREMENT, UNIQUE |
+| **Types** | INT (BIGINT/SMALLINT/TINYINT), FLOAT (DECIMAL/NUMERIC/DOUBLE), STRING (VARCHAR/CHAR/TEXT), BOOL/BOOLEAN, DATE/TIMESTAMP, STRINGS[]/FLOATS[] |
+| **Indices** | BTREE (exact + range), TRIGRAM (fuzzy, GIN-style), covering LIKE 'prefix%' and %mid% containment |
+| **Functions** | UPPER/LOWER/LENGTH/SUBSTR/TRIM/CONCAT/COALESCE/IFNULL/ROUND/ABS, NOW()/CURRENT_TIMESTAMP, datetime()/strftime()/date()/time(), CAST, %% fuzzy match, LIKE, BETWEEN, IN, IS NULL, CASE WHEN, EXISTS |
+| **Triggers** | CREATE/DROP TRIGGER, BEFORE/AFTER INSERT/UPDATE/DELETE, firing verified |
+| **SQF Eval** | `SQF_EVAL(expr)` evaluates in-line SQF expressions |
+| **Transactions** | BEGIN/COMMIT/ROLLBACK, SAVEPOINT/RELEASE, savepoint rollback |
+| **Prepared statements** | `prepare <name> <sql with $1..$N>` + `execute_prepared <name> [args...]` |
+| **Cursors** | `cursor create <name> <query>` + `cursor fetch <name> [limit]` + `cursor drop <name>` |
+| **Persistence** | SAVE/LOAD (binary, atomic with .bak fallback + FNV-1a checksum), export/import JSON/CSV/SQL, export_to_file, auto-save/auto-load via CBA settings |
+| **Security** | Parameterized queries, TCP LOGIN required by default (fail-closed), constant-time credential compare, 30KB output cap (fail-loud with cursor hint) |
+
+### Examples
 
 ```sql
--- Tables
+-- Tables and views
 CREATE TABLE weapons (id STRING PRIMARY KEY, name STRING, caliber STRING, barrelLength FLOAT);
-CREATE TABLE attachments (id STRING PRIMARY KEY, weaponId STRING, name STRING, mass FLOAT);
-
--- Types: STRING, INT, FLOAT, BOOL, STRINGS[], FLOATS[]
+CREATE VIEW heavy AS SELECT * FROM weapons WHERE barrelLength > 400.0;
 
 -- CRUD
 INSERT INTO weapons VALUES ('rhs_m4a1', 'M4A1', '5.56x45mm', 368.3);
@@ -153,28 +251,35 @@ UPDATE weapons SET caliber = '7.62x39mm' WHERE id = 'ak74';
 DELETE FROM weapons WHERE barrelLength IS NULL;
 DROP TABLE weapons;
 
--- Fuzzy match (trigram similarity)
+-- Fuzzy match (trigram)
 SELECT * FROM weapons WHERE id %% 'rhs_m4';
 -- matches rhs_m4a1, rhs_m4a1_carryhandle, etc.
 
--- JOINS
+-- JOINs
 SELECT w.name, a.name FROM weapons w INNER JOIN attachments a ON w.id = a.weaponId;
 SELECT * FROM weapons w LEFT JOIN attachments a ON w.id = a.weaponId;
+SELECT * FROM weapons w FULL OUTER JOIN attachments a ON w.id = a.weaponId;
+SELECT * FROM weapons NATURAL JOIN attachments;
+SELECT * FROM weapons JOIN attachments USING (id);
+
+-- Set operations
+SELECT name FROM weapons UNION SELECT name FROM legacy_weapons;
+SELECT name FROM weapons UNION ALL SELECT name FROM legacy_weapons;
+SELECT name FROM weapons EXCEPT SELECT name FROM retired_weapons;
+SELECT name FROM weapons INTERSECT SELECT name FROM scoped_weapons;
 
 -- Aggregates
 SELECT COUNT(*) FROM weapons;
 SELECT AVG(barrelLength) FROM weapons;
-SELECT caliber, COUNT(*) AS cnt FROM weapons GROUP BY caliber;
+SELECT caliber, COUNT(*) AS cnt FROM weapons GROUP BY caliber HAVING COUNT(*) > 2;
 
--- Ordering & limits
+-- Ordering and limits
 SELECT * FROM weapons ORDER BY name ASC LIMIT 10 OFFSET 5;
 
--- Transactions
+-- Transactions and savepoints
 BEGIN;
 INSERT INTO weapons VALUES ('test', 'Test', '9x19mm', 200.0);
 ROLLBACK;  -- or COMMIT
-
--- Savepoints
 SAVEPOINT sp1;
 INSERT INTO weapons VALUES ('tmp', 'Temp', '5.56x45mm', 300.0);
 ROLLBACK TO sp1;
@@ -184,8 +289,53 @@ RELEASE SAVEPOINT sp1;
 CREATE INDEX idx_caliber ON weapons (caliber) USING BTREE;
 CREATE INDEX idx_name_fuzzy ON weapons (name) USING TRIGRAM;
 
--- REPLACE / UPSERT
-REPLACE INTO weapons VALUES ('m4a1', 'M4A1', '5.56x45mm', 368.3);
+-- Constraints
+CREATE TABLE guilds (id STRING PRIMARY KEY, name STRING NOT NULL);
+CREATE TABLE users (
+    id INT PRIMARY KEY,
+    name STRING NOT NULL,
+    score INT DEFAULT 0 CHECK (score >= 0),
+    guild STRING REFERENCES guilds(id) ON DELETE CASCADE,
+    tags STRINGS[]
+);
+
+-- Triggers (body is plain SQL)
+CREATE TABLE audit (action STRING);
+CREATE TRIGGER log_weapon_insert AFTER INSERT ON weapons
+BEGIN
+    INSERT INTO audit VALUES ('weapon_inserted');
+END;
+
+-- Subqueries
+SELECT * FROM weapons WHERE id IN (SELECT weaponId FROM attachments);
+SELECT * FROM weapons WHERE EXISTS (SELECT 1 FROM attachments WHERE weaponId = weapons.id);
+SELECT * FROM (SELECT * FROM weapons WHERE caliber = '5.56x45mm') d;
+
+-- CTE, including recursive
+WITH top AS (SELECT * FROM weapons ORDER BY name LIMIT 5) SELECT * FROM top;
+
+-- Window functions
+SELECT id, name, ROW_NUMBER() OVER (ORDER BY name) AS rn FROM weapons;
+SELECT id, name, RANK() OVER (PARTITION BY caliber ORDER BY name) FROM weapons;
+SELECT id, LAG(name) OVER (ORDER BY id) FROM weapons;
+SELECT id, FIRST_VALUE(name) OVER (PARTITION BY caliber ORDER BY id) FROM weapons;
+SELECT id, SUM(barrelLength) OVER (ORDER BY id ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM weapons;
+
+-- Functions
+SELECT NOW(), CURRENT_TIMESTAMP, datetime(), strftime('%Y-%m-%d', 'now'), date(), time();
+SELECT COALESCE(barrelLength, 0.0) FROM weapons;
+SELECT UPPER(name), LOWER(name), LENGTH(name), SUBSTR(name, 1, 3), TRIM(name) FROM weapons;
+SELECT CONCAT(name, ' (', caliber, ')') AS combined FROM weapons;
+SELECT CAST(barrelLength AS INT) FROM weapons;
+SELECT CASE WHEN barrelLength > 400.0 THEN 'heavy' ELSE 'light' END FROM weapons;
+
+-- SQF evaluated inline
+SELECT SQF_EVAL('1 + 1');
+
+-- Query plan and maintenance
+EXPLAIN SELECT * FROM weapons WHERE caliber = '5.56x45mm';
+VACUUM;
+REINDEX;
 
 -- ALTER TABLE
 ALTER TABLE weapons ADD COLUMN mass FLOAT;
@@ -193,298 +343,86 @@ ALTER TABLE weapons DROP COLUMN barrelLength;
 ALTER TABLE weapons RENAME COLUMN name TO displayName;
 ALTER TABLE weapons RENAME TO armory;
 
--- TRUNCATE
+-- TRUNCATE / REPLACE
 TRUNCATE TABLE weapons;
-
--- Window functions
-SELECT id, name, ROW_NUMBER() OVER (ORDER BY name) AS rn FROM weapons;
-SELECT id, name, RANK() OVER (PARTITION BY caliber ORDER BY name) FROM weapons;
-
--- Subqueries
-SELECT * FROM weapons WHERE id IN (SELECT weaponId FROM attachments);
-SELECT * FROM weapons WHERE EXISTS (SELECT 1 FROM attachments WHERE weaponId = weapons.id);
-
--- CTE
-WITH top AS (SELECT * FROM weapons ORDER BY name LIMIT 5) SELECT * FROM top;
-
--- CAST
-SELECT CAST(barrelLength AS INT) FROM weapons;
-SELECT name || ' (' || caliber || ')' AS combined FROM weapons;
-
--- Functions
-SELECT NOW(), CURRENT_TIMESTAMP;
-SELECT COALESCE(barrelLength, 0.0) FROM weapons;
-SELECT UPPER(name), LOWER(name), LENGTH(name), SUBSTR(name, 1, 3) FROM weapons;
+REPLACE INTO weapons VALUES ('m4a1', 'M4A1', '5.56x45mm', 368.3);
 ```
 
-## SQF API
+## Large data and pagination
 
-### Initialization
+### The 30KB response cap
+
+Arma's `callExtension` hands the extension a fixed output buffer (30KB in current game builds). A SELECT whose result would overflow that buffer is not silently truncated: it returns a clear error telling you how to page instead:
+
+```
+[-1,"ERR_INTERNAL","Result exceeds output buffer (30KB) — use 'cursor create <name> <query>' + 'cursor fetch <name> [limit]' to page large results"]
+```
+
+### Cursors
+
+Cursor commands page through a large result set in slices:
 
 ```sqf
-// In init.sqf or CfgFunctions init:
-private _version = "a3sql" callExtension "version";
-diag_log text format ["[A3SQL] Loading: %1", _version];
+["a3sql", "cursor create", ["events_cursor", "SELECT * FROM events ORDER BY ts"]] callExtension;
+_first = ["a3sql", "cursor fetch", ["events_cursor", "500"]] callExtension;
+_next  = ["a3sql", "cursor fetch", ["events_cursor", "500"]] callExtension;
+["a3sql", "cursor drop", ["events_cursor"]] callExtension;
 ```
 
-### SQL Execution
+In SQF you usually don't need cursors directly: `a3sql_fnc_selectAll` detects the oversized response and pages through it automatically.
 
-```sqf
-// Single SQL statement (STRING callExtension STRING):
-private _result = "a3sql" callExtension "SELECT * FROM weapons";
+### Data-volume envelope
 
-// SQL with args (STRING callExtension ARRAY):
-private _result = ["a3sql", "INSERT INTO weapons VALUES ('m4a1', 'M4A1', '5.56x45mm', 368.3)"] callExtension;
+A3SQL is an in-memory engine. All data lives in RAM, and each save rewrites the whole database:
 
-// Multi-statement (separate with semicolons):
-private _result = "a3sql" callExtension "CREATE TABLE t (id STRING); INSERT INTO t VALUES ('a'); SELECT * FROM t";
-```
-
-### Response Format
-
-```
-[returnCode, status, data]
-
-Success: [0,"OK",result_data]
-Error:   [-1,"ERR_CODE","error message"]
-
-Error codes:
-  ERR_PARSE    SQL parse error
-  ERR_EXEC     Execution error
-  ERR_TABLE    Table not found
-  ERR_TYPE     Type mismatch
-  ERR_PK       Primary key violation
-  ERR_IO       File I/O error
-  ERR_INTERNAL Internal error
-```
-
-`result_data` for `SELECT` is a JSON array of column names + rows:
-```json
-[["id","name","caliber","barrelLength"],["rhs_m4a1","M4A1","5.56x45mm",368.3]]
-```
-
-For JOINs with prefixed column names:
-```json
-[["weapons.id","weapons.name","attachments.name"],["rhs_m4a1","M4A1","M68 CCO"]]
-```
-
-### Commands
-
-```sqf
-// Version
-private _version = "a3sql" callExtension "version";
-// → [0,"OK","a3sql 0.1.0"]
-
-// SQL dump
-private _dump = "a3sql" callExtension "dump_sql";
-// → [0,"OK","CREATE TABLE weapons (...);..."]
-
-// Query with parameterized args (SQL injection safe)
-private _result = ["a3sql", "SELECT * FROM weapons WHERE id = $1", ["m4a1"]] callExtension;
-
-// TCP listener (auto-starts on game boot). Manual control:
-private _result = ["a3sql", "listen", ["33306"]] callExtension;
-private _result = ["a3sql", "stop"] callExtension;
-```
-
-### CBA Functions
-
-When using CBA (recommended), the addon registers these functions via `CfgFunctions`:
-
-| Function | Description |
+| Rows | Verdict |
 |---|---|
-| `a3sql_fnc_init` | Initialize extension, returns version string |
-| `a3sql_fnc_execute` | Execute SQL, returns parsed result |
-| `a3sql_fnc_loadJSON` | Import JSON data into a table |
-| `a3sql_fnc_dumpSQL` | Export full database as SQL dump |
-| `a3sql_fnc_exportJSON` | Export table as JSON |
-| `a3sql_fnc_exportCSV` | Export table as CSV |
-| `a3sql_fnc_exportSQL` | Export full database as SQL statements |
-| `a3sql_fnc_save` | Persist database to binary file |
-| `a3sql_fnc_load` | Restore database from binary file |
-| `a3sql_fnc_init` | Initialize extension |
-| `a3sql_fnc_settings` | Register CBA settings (auto-called via PreInit) |
-| `a3sql_fnc_postInit` | Post-mission init (auto-save/load hooks) |
+| < 10k | Trivial; saves are sub-millisecond |
+| 10k-100k | Fine; roughly 1 MB RAM per 100k simple rows |
+| 100k-500k | With care; watch save size and autosave frequency |
+| > 500k | Not this engine; memory grows unbounded and every save rewrites the DB |
 
-## Security
+Keep tables below ~100k rows. During an autosave the engine briefly holds its write lock, so a very large save can stall new queries for a moment.
 
-### Parameterized Queries
+## For developers
 
-Prevent SQL injection by passing user input as separate args with `$1`, `$2` placeholders:
+### Build
 
-```sqf
-// UNSAFE — string interpolation (SQL injection possible)
-private _sql = format ["SELECT * FROM users WHERE name = '%1'", _userInput];
-["a3sql", _sql] callExtension;
-
-// SAFE — parameterized query (injection prevented)
-["a3sql", "SELECT * FROM users WHERE name = $1", [_userInput]] callExtension;
-```
-
-### TCP Authentication
-
-Set a username and password in CBA Settings (Options → Addon Configuration → A3SQL).
-`LOGIN` is required on every connection by default (fail-closed). With credentials
-configured, clients must `LOGIN` before querying:
-
-```python
-import socket
-s = socket.socket()
-s.connect(("127.0.0.1", 33306))
-s.sendall(b"LOGIN admin mypassword\n")
-print(s.recv(65536).decode())  # [0,"OK","Authenticated"]
-s.sendall(b"SELECT * FROM weapons\n")
-print(s.recv(65536).decode())
-s.close()
-```
-
-## Building
-
-### Prerequisites
-
-- [Rust](https://rustup.rs/) 1.80+ (for `std::sync::LazyLock`)
-- [HEMTT](https://hemtt.dev/) 1.20+ — Arma 3 addon build tool
-- C++ build tools (for Rust cross-compilation to Windows)
-- MinGW-w64 (for Windows cross-compilation on Linux):
-  ```bash
-  sudo apt-get install mingw-w64 gcc-multilib
-  ```
-
-### Build the extension
+- Rust stable, at or above the `rust-version` declared in `extension/Cargo.toml`
+- [HEMTT](https://hemtt.dev/) for the addon PBOs
+- MinGW-w64 for Windows cross-compilation on Linux
 
 ```bash
-# Build for Linux x86_64
+# Build the extension for Linux x86_64
 cargo build --release --manifest-path extension/Cargo.toml
 
-# Build for Windows (cross-compile from Linux)
+# Cross-compile for Windows
 cargo build --release --target x86_64-pc-windows-gnu --manifest-path extension/Cargo.toml
 cargo build --release --target i686-pc-windows-gnu --manifest-path extension/Cargo.toml
-```
 
-### Build the addon
-
-```bash
+# Build the addon PBOs (output in .hemttout/build/)
 hemtt build
 ```
 
-Output goes to `.hemttout/build/`.
-
-### Run tests
+### Test
 
 ```bash
-# All 524 tests
+# Full test suite
 cargo test --manifest-path extension/Cargo.toml
-```
 
-### Linting & validation
+# Dialect sweep: covers every feature documented in SQL-Dialect.md
+python3 tools/sql_dialect_sweep.py
 
-```bash
-# Rust
-cargo fmt --check
-cargo clippy --manifest-path extension/Cargo.toml --all-targets -- -D warnings
-
-# SQF + config
-python3 tools/sqf_validator.py addons/
-python3 tools/config_style_checker.py
-
-# Arma addon structure
-hemtt check -p -e
-
-# SQL smoke test — runs the mod's production SQL through the real extension
-# binary (the same C ABI Arma uses). Fails on any misbehaving statement:
+# SQL smoke test: runs the mod's production SQL through the real extension binary
 python3 tools/sql_smoke_test.py tools/smoke_test.sql
 ```
 
-## CI/CD
+Lint with `cargo fmt --check`, `cargo clippy --manifest-path extension/Cargo.toml --all-targets -- -D warnings`, and `hemtt check -p -e`.
 
-The project includes a GitHub Actions workflow (`.github/workflows/ci.yml`) that:
+### Integrate
 
-1. Runs `cargo test`
-2. Builds for 4 targets: `x86_64-linux`, `i686-linux`, `x86_64-windows`, `i686-windows`
-3. Runs the SQL smoke test against the real release binary
-4. Runs `hemtt build` to produce the addon PBOs
-5. On release: creates a `a3sql-<tag>.zip` with the complete mod
+The extension exposes the standard Arma C ABI (`RVExtension`), so it loads as a plain `callExtension` library. The `a3sql_database` addon wraps it for SQF; a [standalone server binary](wiki/Standalone-Server.md) exists for running without Arma.
 
-Test locally with [ACT](https://github.com/nektos/act):
+### License
 
-```bash
-act -j test          # Run test job
-act --list           # List all jobs
-```
-
-## Project Structure
-
-```
-a3sql/
-├── extension/                  # Rust extension workspace (cdylib + rlib)
-│   ├── Cargo.toml
-│   ├── .cargo/config.toml      # Cross-compilation linkers
-│   └── src/
-│       ├── lib.rs              # Library root + FFI module layout
-│       ├── ffi/                # C ABI (RVExtension, RVExtensionArgs, RVExtensionVersion,
-│       │                       #   RVExtensionRegisterCallback)
-│       ├── dispatch/           # Command routing (SQL + control commands: save/load,
-│       │   │                   #   cursor*, prepare, listen, set_credentials, exports)
-│       │   ├── commands.rs     # Control-command handlers
-│       │   └── sql.rs          # SQL splitting + $1/$n parameter substitution
-│       ├── parser/             # SQL parser (sqlparser-rs + custom A3sqlDialect)
-│       ├── engine/             # In-memory database engine
-│       │   ├── database.rs     # Table storage + transaction snapshots
-│       │   ├── table/          # Row/column storage, PK/UNIQUE sets, triggers
-│       │   ├── stmts/          # DDL/DML statement execution
-│       │   ├── functions/      # Scalar + aggregate functions, expression evaluator
-│       │   ├── serialize/      # JSON, CSV, SQL dump, Binary formats
-│       │   ├── execute.rs      # Statement executor + JOINs
-│       │   ├── index.rs        # BTreeIndex + TrigramIndex (GIN-style)
-│       │   ├── error.rs        # Structured error codes (ERR_*)
-│       │   └── value.rs        # ColumnType, Column, DbValue enums
-│       ├── server.rs           # TCP listener (loopback, LOGIN auth, panic barrier)
-│       ├── config.rs           # Config (A3SQL_CONFIG env / a3sql.toml)
-│       └── bin/                # Standalone a3sql-server binary
-├── addons/
-│   ├── main/                   # Main addon (CBA macro includes + CfgPatches)
-│   ├── database/               # SQL API (fnc_execute, fnc_save/load, exports, prepared)
-│   ├── admin/                  # Admin command execution (ban/kick/whitelist)
-│   ├── analytics/              # Kills/fired-event analytics snapshots
-│   ├── loadouts/               # Loadout templates persistence
-│   ├── persistence/            # Player persistence
-│   ├── progression/            # Progression tracking
-│   ├── patch_core/             # Dynamic live-patching rule engine
-│   ├── patch_editor/           # In-game rule/preset editor
-│   └── patch_operators/        # Patch operator definitions
-├── include/
-│   └── x/cba/addons/           # CBA header stubs for build-time resolution
-├── .hemtt/
-│   └── project.toml            # HEMTT v1 build config
-├── .github/workflows/ci.yml    # GitHub Actions CI/CD
-├── mod.cpp                     # Mod definition (name, logo, etc.)
-├── meta.cpp                    # Steam Workshop metadata (publishedid)
-├── tools/                      # Development utility scripts
-│   ├── sql_smoke_test.py       # Production SQL gate (runs against real binary)
-│   ├── smoke_test.sql          # The mod's own SQL as regression suite
-│   ├── build_current_addon.py
-│   ├── config_style_checker.py
-│   ├── getExtensionHash.py
-│   ├── search_privates.py
-│   ├── search_unused_privates.py
-│   └── sqfvmChecker.py
-└── README.md
-```
-
-## Development
-
-Built following the same conventions as ACE3 and CBA_A3:
-
-| Aspect | Convention |
-|---|---|
-| **Prefix** | `prefix = "a3sql"`, `mainprefix = "z"` |
-| **PBO path** | `z\a3sql\addons\{addon_name}` |
-| **Include path** | `\z\a3sql\addons\main\script_mod.hpp` |
-| **CBA dependency** | CBA_A3 required (`cba_main`, `cba_xeh`) |
-| **Build system** | HEMTT v1 (`.hemtt/project.toml`) |
-| **Rust workspace** | `extension/` (own `Cargo.toml`; target under `extension/target/`) |
-| **Release profile** | `opt-level = "z"`, `lto = true`, `strip = true` |
-
-## License
-
-MIT — use freely in your Arma 3 mods.
+The mod is licensed under the [Arma Public License Share Alike (APL-SA)](../LICENSE), Copyright 2026 ABE Team. Note: the Rust crate's `Cargo.toml` declares `MIT OR Apache-2.0`; that is a license convention for the source code only, and does not change the mod's license. Anything you build with A3SQL is covered by APL-SA.
