@@ -298,13 +298,16 @@ pub(crate) fn dispatch_inner(db: &mut engine::Database, input: &str, args: &[&st
     // ── Multi-statement SQL execution ─────────────────────────────────
     let response = sql::exec_sql_statements(db, &sql::split_sql(trimmed), args);
 
-    // Guard: Arma 3 v2.20's callExtension ceiling is ~30KB. If the response
-    // exceeds it, the engine would silently truncate. Return an error instead
-    // so the caller knows to use LIMIT/OFFSET for pagination.
-    if response.len() > (crate::ffi::OUTPUT_BUF_SIZE.saturating_sub(64)) as usize {
+    // Pre-flight guard for the FFI path's caller-supplied buffer (Arma 3
+    // v2.20's callExtension ceiling is 30KB). Responses that cannot possibly
+    // fit are rejected here with a clear error; the FFI write (write_output)
+    // is the precise fail-loud backstop using the actual output_size. The
+    // guard intentionally uses >= (no margin): anything < the full buffer
+    // passes through and let write_output decide with the real size.
+    if response.len() >= crate::ffi::OUTPUT_BUF_SIZE as usize {
         return error_response(
             ErrorCode::Internal,
-            "Result exceeds output buffer (30KB). Use LIMIT/OFFSET to paginate.",
+            "Result exceeds output buffer (30KB) — use 'cursor create <name> <query>' + 'cursor fetch <name> [limit]' to page large results",
         );
     }
 
