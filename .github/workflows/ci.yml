@@ -85,7 +85,7 @@ jobs:
       - name: Install HEMTT
         uses: arma-actions/hemtt@a0570ddd80d2b7be9c0f052494c0f700b42668dd # v1
       - name: Cache HEMTT
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.hemtt/cache
           key: hemtt-${{ hashFiles('.hemtt/**/*') }}
