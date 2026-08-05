@@ -26,8 +26,20 @@ __pycache__/
 *.swo
 Thumbs.db
 
-# OpenCode session state
+# AI tooling (config, session state, scratch)
+.opencode/
 .omo/
+.codex/
+.gemini/
+.gemini-cli/
+.claude/
+.cursor/
+.windsurf/
+.continue/
+.aider*
+.agent/
+.roo/
+.cline/
 
 # Extension binary symlinks (created for hemtt launch)
 a3sql_x64.dll
