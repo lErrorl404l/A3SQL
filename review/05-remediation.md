@@ -1,9 +1,9 @@
-# Remediation Record v1.3: Rules-Compliance Review of a3db/a3sql
+# Remediation Record v1.4: Rules-Compliance Review of a3db/a3sql
 
 ## Document control
 
 - Report: remediation loop for the rules-compliance review of the a3db/a3sql repository
-- Version: v1.3
+- Version: v1.4
 - Date: 2026-08-08
 - Classification: OFFICIAL
 - Review owner: lead
@@ -66,21 +66,25 @@ failing test reproduced the defect before the fix and passed after the fix.
 
 ### F-03 MED — no SBOM, empty keys/
 
-- Action: WAIVED (tooling not available; org action recorded)
-- Evidence: `cargo cyclonedx --version` fails (`no such command`).
-  `cargo-cyclonedx` is not installed. `keys/` is empty (0 files). `git tag -l`
-  = 0. Installing cargo-cyclonedx requires a network fetch and a long
-  compile; that is out of scope for this review loop.
-- Justification: SBOM tooling is unavailable in this environment. The
-  reproducibility half of the finding is served by F-04: the tracked
-  Cargo.lock pins the dependency graph, so the build input set is
-  reproducible and verifiable. Generating an SPDX SBOM at each tag and
-  shipping the .bikey are release-time actions that need the org toolchain.
-- Organisational follow-up: install cargo-cyclonedx, add an SBOM-at-tag CI
-  step in .github/workflows, and ship the .bikey at release (hemtt sign with
-  a release key).
-- Commit: none.
-- Status: OPEN to WAIVED, 2026-08-08
+- Action: FIXED (SBOM job added; .bikey still org-pending)
+- Test-first evidence: no runtime test applies to a CI pipeline. The
+  acceptance commands are the gates.
+- Before: `grep -ril 'cyclonedx|spdx|sbom' .github/workflows tools/` = 0
+  hits. `keys/` empty. No workflow produced an SBOM at any tag.
+- After: .github/workflows/sbom.yml generates a CycloneDX SBOM on every
+  tag push and on manual dispatch. Local validation with the pinned tool
+  (cargo-cyclonedx 0.5.9) produces a valid CycloneDX 1.3 JSON SBOM for
+  a3sql 0.2.0 with 196 components, built from the tracked Cargo.lock.
+- Fix: add .github/workflows/sbom.yml. Checkout and the Rust toolchain are
+  pinned by SHA like the other workflows, cargo-cyclonedx is pinned to
+  0.5.9, and the SBOM is uploaded as an artifact named a3sql-sbom-<tag>,
+  never committed. The F-04 tracked lockfile makes the dependency graph
+  reproducible.
+- Organisational follow-up (remains open, org action): ship the .bikey at
+  release (hemtt sign with a release key). keys/ stays empty; the signing
+  key is a separate org-held asset.
+- Commit: ab43bbe (`ci: generate SBOM at release tags via cargo-cyclonedx (F-03)`)
+- Status: OPEN to WAIVED to FIXED, 2026-08-08
 
 ### F-04 MED — Cargo.lock untracked
 
@@ -305,28 +309,30 @@ organization-level CSM, and the audit of the org reusable workflow behind
 ci.yml:20. Each requires server-side or organization-level access that a
 checkout does not have.
 
-## Status accounting (jsp-945), v1.3
+## Status accounting (jsp-945), v1.4
 
 All transitions re-verified against baseline 585a460, dated 2026-08-08.
 The v1.2 round closed the last OPEN finding: F-11 moved OPEN to FIXED.
-The v1.3 round resolved F-06: WAIVED to FIXED — the dormant auth feature
+The v1.3 round resolved F-06: WAIVED to FIXED. The dormant auth feature
 was removed per maintainer decision instead of being enabled.
+The v1.4 round resolved F-03: WAIVED to FIXED — an SBOM-at-tag workflow
+now runs in CI. The .bikey remainder stays an org action.
 
 | Finding | Status | Owner | Date | Version |
 |---------|--------|-------|------|---------|
-| F-01 | FIXED | lead | 2026-08-08 | v1.3 |
-| F-02 | FIXED | lead | 2026-08-08 | v1.3 |
-| F-03 | WAIVED | auditor | 2026-08-08 | v1.3 |
-| F-04 | FIXED | auditor | 2026-08-08 | v1.3 |
-| F-05 | WAIVED | lead | 2026-08-08 | v1.3 |
-| F-06 | FIXED | lead | 2026-08-08 | v1.3 |
-| F-07 | FIXED | lead | 2026-08-08 | v1.3 |
-| F-08 | WAIVED | auditor | 2026-08-08 | v1.3 |
-| F-09 | FIXED | lead | 2026-08-08 | v1.3 |
-| F-10 | FIXED | lead | 2026-08-08 | v1.3 |
-| F-11 | FIXED | lead | 2026-08-08 | v1.3 |
-| F-12 | FIXED | lead | 2026-08-08 | v1.3 |
-| F-13 | FIXED | clerk | 2026-08-08 | v1.3 |
-| F-14 | no-action | clerk | 2026-08-08 | v1.3 |
+| F-01 | FIXED | lead | 2026-08-08 | v1.4 |
+| F-02 | FIXED | lead | 2026-08-08 | v1.4 |
+| F-03 | FIXED | lead | 2026-08-08 | v1.4 |
+| F-04 | FIXED | auditor | 2026-08-08 | v1.4 |
+| F-05 | WAIVED | lead | 2026-08-08 | v1.4 |
+| F-06 | FIXED | lead | 2026-08-08 | v1.4 |
+| F-07 | FIXED | lead | 2026-08-08 | v1.4 |
+| F-08 | WAIVED | auditor | 2026-08-08 | v1.4 |
+| F-09 | FIXED | lead | 2026-08-08 | v1.4 |
+| F-10 | FIXED | lead | 2026-08-08 | v1.4 |
+| F-11 | FIXED | lead | 2026-08-08 | v1.4 |
+| F-12 | FIXED | lead | 2026-08-08 | v1.4 |
+| F-13 | FIXED | clerk | 2026-08-08 | v1.4 |
+| F-14 | no-action | clerk | 2026-08-08 | v1.4 |
 
-Summary: 10 FIXED, 3 WAIVED, 1 no-action, zero findings remain OPEN.
+Summary: 11 FIXED, 2 WAIVED, 1 no-action, zero findings remain OPEN.
