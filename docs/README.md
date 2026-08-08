@@ -35,7 +35,7 @@ Install the mod from the Steam Workshop, or download the [latest release](https:
 -mod=@cba_a3;@a3sql
 ```
 
-The mod is modular: `a3sql_main` is the only required PBO. You can remove the addon PBOs for features you don't use (analytics, loadouts, persistence, progression, patching, admin); the modules table in the [root README](../README.md) lists what each one does.
+The mod is modular: `a3sql_main` is the only required PBO. You can remove the addon PBOs for features you do not use (analytics, loadouts, persistence, progression, patching, admin); the modules table in the [root README](../README.md) lists what each one does.
 
 ## Using A3SQL in your mod
 
@@ -180,7 +180,7 @@ Options → Addon Configuration → A3SQL:
 
 ### TCP listener
 
-With the listener enabled, external tools connect over TCP and must `LOGIN` first. Authentication is fail-closed: with no credentials configured, LOGIN can never succeed, and without a successful LOGIN every query is rejected with `ERR_AUTH`. Credential comparison is constant-time, so timing side channels can't leak the password.
+With the listener enabled, external tools connect over TCP and must `LOGIN` first. Authentication is fail-closed: with no credentials configured, LOGIN can never succeed, and without a successful LOGIN every query is rejected with `ERR_AUTH`. Credential comparison is constant-time, so timing side channels cannot leak the password.
 
 ```python
 import socket
@@ -369,7 +369,7 @@ _next  = ["a3sql", "cursor fetch", ["events_cursor", "500"]] callExtension;
 ["a3sql", "cursor drop", ["events_cursor"]] callExtension;
 ```
 
-In SQF you usually don't need cursors directly: `a3sql_fnc_selectAll` detects the oversized response and pages through it automatically.
+In SQF you usually do not need cursors directly: `a3sql_fnc_selectAll` detects the oversized response and pages through it automatically.
 
 ### Data-volume envelope
 

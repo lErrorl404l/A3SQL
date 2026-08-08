@@ -48,7 +48,7 @@ Every command returns `[returnCode, status, data]`, and user input should go thr
 
 ## Modules
 
-A3SQL is modular. Remove any PBO you don't need:
+A3SQL is modular. Remove any PBO you do not need:
 
 | Addon | Purpose |
 |-------|---------|
