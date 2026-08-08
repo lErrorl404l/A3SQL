@@ -18,6 +18,10 @@
 //   4. Weird-but-valid inputs (empty string, NUL bytes, unicode, control
 //      chars, very long strings, whitespace, comments, unterminated quotes,
 //      backticks, reserved keywords as identifiers) never crash.
+//   5. Custom commands with pure in-memory handlers never panic and return
+//      well-formed envelopes. Side-effecting commands (connect, listen, stop,
+//      save, load, export_to_file, plugin_dir) are never generated — they open
+//      TCP, spawn threads, write files, or dlopen libraries.
 
 #![cfg(test)]
 
@@ -205,7 +209,9 @@ const KEYWORDS: &[&str] = &[
 
 /// Custom commands handled by dispatch BEFORE SQL parsing. Fuzzed inputs that
 /// accidentally match these would trigger side effects (TCP listener threads,
-/// network connects, file I/O) — skip them so the fuzzer stays on the SQL path.
+/// network connects, file I/O) — skip them so the SQL-path fuzzer stays on the
+/// SQL path. The pure in-memory command subset is covered deliberately by
+/// `custom_command()` and the `custom_commands_*` tests below.
 fn is_custom_command(input: &str) -> bool {
     let t = input.trim().to_lowercase();
     t.starts_with("ping")
@@ -382,6 +388,62 @@ fn fuzz_input() -> impl Strategy<Value = String> {
     ]
 }
 
+/// Safe custom-command inputs: only the pure in-memory dispatch handlers.
+///
+/// Side-effecting commands are deliberately NOT generated here: `connect`,
+/// `listen`, `stop`, `save`, `load`, `export_to_file`, and `plugin_dir` open
+/// TCP sockets, spawn listener threads, write files, or dlopen libraries. The
+/// fuzz harness must never trigger those, and the `is_custom_command` skip
+/// keeps random token soup away from them too.
+///
+/// The fuzz driver passes an empty arg list, so each command exercises the
+/// trimmed-input parse path. `register_function` writes to the in-memory
+/// plugin registry with an empty body (never a SQF callback) and
+/// `set_credentials` writes to the in-memory credential slot (never read
+/// without the `auth` feature), so both stay free of external effects.
+fn custom_command() -> impl Strategy<Value = String> {
+    let simple_sql = prop_oneof![
+        Just("SELECT 1".to_string()),
+        Just("SELECT COUNT(*) FROM fz_items".to_string()),
+    ];
+    prop_oneof![
+        4 => prop_oneof![
+            Just("ping".to_string()),
+            Just("version".to_string()),
+            Just("reset".to_string()),
+            Just("plugins".to_string()),
+            Just("dump_sql".to_string()),
+            Just("disconnect".to_string()),
+            Just("reindex".to_string()),
+            Just("describe".to_string()),
+            Just("live_patch".to_string()),
+            Just("import json t".to_string()),
+        ],
+        3 => prop_oneof![
+            Just("export".to_string()),
+            Just("export json".to_string()),
+            Just("export binary".to_string()),
+            Just("export csv t".to_string()),
+            Just("live_patch list".to_string()),
+            Just("live_patch query SELECT 1".to_string()),
+        ],
+        2 => prop_oneof![
+            fz_ident().prop_map(|t| format!("describe {t}")),
+            fz_ident().prop_map(|t| format!("show create table {t}")),
+            fz_ident().prop_map(|n| format!("cursor drop {n}")),
+            fz_ident().prop_map(|n| format!("cursor fetch {n}")),
+            fz_ident().prop_map(|n| format!("execute_prepared {n}")),
+            fz_ident().prop_map(|n| format!("register_function {n}")),
+            fz_ident().prop_map(|n| format!("set_credentials {n}")),
+        ],
+        2 => prop_oneof![
+            (fz_ident(), simple_sql.clone())
+                .prop_map(|(n, s)| format!("cursor create {n} {s}")),
+            (fz_ident(), simple_sql).prop_map(|(n, s)| format!("prepare {n} {s}")),
+        ],
+    ]
+}
+
 // ── Fuzz driver ─────────────────────────────────────────────────────────────
 
 /// Run a sequence of statements against ONE fresh Database (isolation:
@@ -472,6 +534,17 @@ proptest! {
         let got = data.get(1).and_then(|row| row.get(0)).and_then(|v| v.as_i64());
         prop_assert_eq!(got, Some(expected as i64), "COUNT mismatch: {} -> {}", count, count_resp);
     }
+
+    /// Invariant 5: pure custom commands never panic and return well-formed envelopes.
+    #[test]
+    fn custom_commands_never_panic(input in custom_command()) {
+        match run_dispatch(&input) {
+            Ok(resp) => check_envelope(&input, &resp)?,
+            Err(panic_msg) => {
+                panic!("ENGINE PANICKED on custom command {:?}\npanic payload: {}", input, panic_msg)
+            }
+        }
+    }
 }
 
 /// Invariant 4: the fixed weird-input list never panics and always returns an envelope.
@@ -510,6 +583,59 @@ fn corpus_runs_clean() {
             }
             Err(panic_msg) => {
                 panic!("ENGINE PANICKED on corpus seed {:?}\npanic payload: {}", sql, panic_msg)
+            }
+        }
+    }
+}
+
+/// Invariant 5 fixed list: every safe custom command shape returns an
+/// envelope. Mirrors the `custom_command()` strategy without the random
+/// generation so a deterministic regression set always runs.
+#[test]
+fn custom_commands_never_crash() {
+    let inputs = [
+        "ping",
+        "version",
+        "reset",
+        "plugins",
+        "dump_sql",
+        "disconnect",
+        "reindex",
+        "describe",
+        "describe fz_users",
+        "show create table fz_users",
+        "export",
+        "export json",
+        "export binary",
+        "export csv fz_users",
+        "import json fz_users",
+        "live_patch",
+        "live_patch list",
+        "live_patch query SELECT 1",
+        "cursor create fz_cur SELECT 1",
+        "cursor fetch fz_cur",
+        "cursor drop fz_cur",
+        "prepare fz_p SELECT 1",
+        "execute_prepared fz_p",
+        "register_function fz_fn",
+        "set_credentials fz_user",
+    ];
+    for input in inputs {
+        match run_dispatch(input) {
+            Ok(resp) => {
+                assert!(!resp.is_empty(), "empty response for custom command: {:?}", input);
+                assert!(
+                    resp.starts_with('['),
+                    "bad envelope for custom command {:?}: {:?}",
+                    input,
+                    resp
+                );
+            }
+            Err(panic_msg) => {
+                panic!(
+                    "ENGINE PANICKED on custom command {:?}\npanic payload: {}",
+                    input, panic_msg
+                )
             }
         }
     }
