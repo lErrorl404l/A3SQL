@@ -1,7 +1,7 @@
 // a3sql config — version validation, startup options from a3sql.toml
 //
-// Reads `$A3SQL_CONFIG` or `./a3sql.toml` for an optional game_version override,
-// public_key for Ed25519 query signing, and auth_required flag.
+// Reads `$A3SQL_CONFIG` or `./a3sql.toml` for an optional game_version
+// override and the TCP listener auth flag.
 // If the wiki data version differs from the configured game version, the engine
 // logs a drift warning at startup so users know their command database might
 // not match their installed Arma 3 version.
@@ -10,7 +10,6 @@ use std::path::Path;
 use std::sync::LazyLock;
 
 /// Cached application config, loaded once on first access.
-#[allow(dead_code, reason = "phased auth implementation")]
 pub(crate) static CONFIG: LazyLock<Config> = LazyLock::new(Config::load);
 
 /// Parsed application config.
@@ -19,16 +18,6 @@ pub(crate) struct Config {
     /// Expected Arma 3 game version (e.g. "2.20"). When set, the engine compares
     /// it to the arma3-wiki data version and logs a warning on mismatch.
     pub game_version: Option<String>,
-
-    /// Hex‑encoded Ed25519 public key (64 hex chars). Required when
-    /// `auth_required` is `true` and the `auth` feature is enabled.
-    #[allow(dead_code, reason = "phased auth implementation")]
-    pub public_key: Option<String>,
-
-    /// Require every query to carry a `SIGNED <sig> <query>` prefix with a
-    /// valid Ed25519 signature. Default: `false`.
-    #[allow(dead_code, reason = "phased auth implementation")]
-    pub auth_required: Option<bool>,
 
     /// When `true`, the TCP listener rejects anonymous connections — a
     /// `LOGIN <user> <pass>` is mandatory even if CBA credentials are empty.
@@ -49,32 +38,6 @@ impl Config {
     /// true, or when credentials are configured (non-empty creds force LOGIN).
     pub(crate) fn listener_auth_required(&self) -> bool {
         self.listener_require_auth.unwrap_or(true)
-    }
-
-    /// Whether auth verification is required.
-    #[allow(dead_code, reason = "phased auth implementation")]
-    pub(crate) fn auth_enabled(&self) -> bool {
-        #[cfg(feature = "auth")]
-        {
-            self.auth_required.unwrap_or(false)
-        }
-        #[cfg(not(feature = "auth"))]
-        {
-            false
-        }
-    }
-
-    /// The configured Ed25519 public key bytes, if any.
-    #[allow(dead_code, reason = "phased auth implementation")]
-    pub(crate) fn public_key_bytes(&self) -> Option<[u8; 32]> {
-        #[cfg(feature = "auth")]
-        {
-            self.public_key.as_ref().and_then(|hex| crate::auth::hex_to_pubkey(hex))
-        }
-        #[cfg(not(feature = "auth"))]
-        {
-            None
-        }
     }
 
     /// The directory for file I/O (SAVE, LOAD, export_to_file).

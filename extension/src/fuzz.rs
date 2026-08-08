@@ -399,8 +399,8 @@ fn fuzz_input() -> impl Strategy<Value = String> {
 /// The fuzz driver passes an empty arg list, so each command exercises the
 /// trimmed-input parse path. `register_function` writes to the in-memory
 /// plugin registry with an empty body (never a SQF callback) and
-/// `set_credentials` writes to the in-memory credential slot (never read
-/// without the `auth` feature), so both stay free of external effects.
+/// `set_credentials` writes to the in-memory credential slot (read only by
+/// the TCP LOGIN handshake), so both stay free of external effects.
 fn custom_command() -> impl Strategy<Value = String> {
     let simple_sql = prop_oneof![
         Just("SELECT 1".to_string()),

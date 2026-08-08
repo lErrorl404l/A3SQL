@@ -9,9 +9,7 @@
 
 #![allow(non_snake_case)]
 #![deny(unsafe_op_in_unsafe_fn)]
-// ponytail: unused items kept for phased implementation
 
-pub(crate) mod auth;
 pub(crate) mod config;
 pub(crate) mod dispatch;
 #[path = "engine/dir.rs"]

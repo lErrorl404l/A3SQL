@@ -19,11 +19,11 @@ use crate::ffi::{CREDENTIALS, REMOTE};
 //
 // `handle_cursor_fetch` and `handle_execute_prepared` each call back into
 // `dispatch_inner` to run the read-back query.  Without a guard the
-// auth‑check preamble, custom‑command matching, and plugin initialisation
-// would re‑run on the nested call, which is wasteful but harmless for the
-// current command set.  The guard exists as a correctness foundation for
-// any future preamble step that must not re‑fire (e.g. a rate‑limiter, an
-// audit‑log writer, or a side‑effect‑sensitive hook).
+// custom-command matching and plugin initialisation would re-run on the
+// nested call, which is wasteful but harmless for the current command set.
+// The guard exists as a correctness foundation for any future preamble step
+// that must not re-fire (e.g. a rate-limiter, an audit-log writer, or a
+// side-effect-sensitive hook).
 thread_local! {
     static REENTRANT_DEPTH: Cell<u32> = const { Cell::new(0) };
 }
@@ -46,9 +46,6 @@ pub fn dispatch(input: &str, args: &[&str]) -> String {
 ///   - Multi-statement SQL (statements separated by `;`)
 ///   - Each parsed statement executed against the engine
 ///
-/// When the `auth` feature is enabled and configured, every query must carry a
-/// `SIGNED <hex_sig> <payload>` prefix. Unsigned queries are rejected with
-/// `ERR_AUTH`.
 /// Drop guard that decrements the re‑entrancy counter on any exit path.
 struct DepthGuard;
 impl Drop for DepthGuard {
@@ -61,7 +58,7 @@ pub(crate) fn dispatch_inner(db: &mut engine::Database, input: &str, args: &[&st
     // ── Re‑entrancy guard ──────────────────────────────────────────────
     // cursor_fetch and execute_prepared call back into dispatch_inner to
     // run the read‑back query.  On re‑entrant calls skip the full preamble
-    // (plugin init, auth, command matching) and go straight to SQL exec.
+    // (plugin init, command matching) and go straight to SQL exec.
     REENTRANT_DEPTH.with(|d| d.set(d.get() + 1));
     let _guard = DepthGuard;
     let reentrant = REENTRANT_DEPTH.with(|d| d.get() > 1);
@@ -76,14 +73,6 @@ pub(crate) fn dispatch_inner(db: &mut engine::Database, input: &str, args: &[&st
     });
 
     let trimmed = input.trim();
-
-    // ── Auth verification (if enabled) ─────────────────────────────────
-    // Returns the verified payload (without `SIGNED <sig>`) when auth
-    // passes, or the original input when non-auth / not configured.
-    let trimmed = match verify_auth(trimmed) {
-        Ok(t) => t,
-        Err(e) => return e,
-    };
 
     // ── Custom commands (handled before SQL parsing) ──────────────────
     // Normalise to lowercase for case-insensitive command matching
@@ -312,36 +301,4 @@ pub(crate) fn dispatch_inner(db: &mut engine::Database, input: &str, args: &[&st
     }
 
     response
-}
-
-// ── Auth verification ──────────────────────────────────────────────────
-
-/// If the `auth` feature is enabled and configured, verify the Ed25519
-/// signature prefix on the input. Returns the unsigned payload on success
-/// or an error response string on failure.
-///
-/// When auth is disabled (feature off or `auth_required = false` in config),
-/// returns the original input unchanged.
-#[cfg(feature = "auth")]
-fn verify_auth(input: &str) -> Result<&str, String> {
-    use crate::engine::error::{ErrorCode, error_response};
-
-    if !crate::config::CONFIG.auth_enabled() {
-        return Ok(input);
-    }
-    let pubkey = crate::config::CONFIG
-        .public_key_bytes()
-        .ok_or_else(|| error_response(ErrorCode::Auth, "No public key configured in a3sql.toml"))?;
-    let (sig_hex, payload) = crate::auth::parse_signed_input(input)
-        .ok_or_else(|| error_response(ErrorCode::Auth, "Missing signature. Format: SIGNED <hex_sig> <query>"))?;
-    if !crate::auth::verify_signature(&pubkey, payload, sig_hex) {
-        return Err(error_response(ErrorCode::Auth, "Signature verification failed"));
-    }
-    Ok(payload)
-}
-
-/// No‑op when auth feature is disabled — passes everything through.
-#[cfg(not(feature = "auth"))]
-fn verify_auth(input: &str) -> Result<&str, String> {
-    Ok(input)
 }
