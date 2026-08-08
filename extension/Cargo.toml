@@ -54,9 +54,6 @@ arma3-wiki = "0.5"
 # TOML config for version pinning and startup options
 toml = "1.1"
 
-# Vendored OpenSSL for reliable cross-compilation (i686, Windows)
-openssl-sys = { version = "0.9", features = ["vendored"] }
-
 # SQF preprocessor — macro expansion (#define, #include, #ifdef) for the
 # slow-path SQF expression evaluator. Optional — falls back to direct lexing
 # when disabled (no macros needed).
@@ -84,7 +81,6 @@ harness = false
 ignored = [
     "hemtt-tokens",
     "indexmap",
-    "openssl-sys",
     "regex",
     "rkyv",
     "rust_decimal",
