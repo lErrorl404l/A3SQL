@@ -206,9 +206,71 @@ g2_adjudication() {
     pass "adjudication: all finding records pass the 7-field template; final list valid"
 }
 
+g3_findings_report() {
+    # G3 closure: findings report issued as the jsp-945 configuration item.
+    # (a) report exists, version line == v1.0; (b) CM baseline SHA pinned;
+    # (c) OFFICIAL classification note present; (d) every findings-table row
+    # has status in {OPEN, FIXED, WAIVED} + owner + date; (e) exactly 14
+    # findings rows; (f) zero duplicate F-IDs; (g) F-01 present and HIGH.
+    local file="review/04-findings-report.md"
+    [ -f "$file" ] || fail "findings report $file missing"
+
+    grep -qE '^Version: v1\.0|^- Version: v1\.0' "$file" \
+        || fail "report version line is not v1.0"
+    pass "report version v1.0"
+
+    grep -q "baseline: $PINNED_SHA" "$file" \
+        || fail "report does not pin CM baseline $PINNED_SHA"
+    pass "report pins CM baseline $PINNED_SHA"
+
+    grep -q 'OFFICIAL' "$file" \
+        || fail "report carries no OFFICIAL classification note"
+    pass "report marked OFFICIAL"
+
+    # Parse only the findings table (## 2. Findings table), delimited by its
+    # '| ID |' header; later tables keep their own headers so do not match.
+    local out
+    out=$(awk -F'|' '
+    function bad(id, reason) { print "VIOLATION " id ": " reason; rc = 1 }
+    BEGIN { rc = 0; in_table = 0; n = 0; f01high = 0 }
+    /^##[[:space:]]/ { in_table = 0 }
+    /^\| ID \|/ { in_table = 1; next }
+    in_table && /^\| F-[0-9]+ \|/ {
+        id=$2; sev=$3; cls=$7; st=$8; ver=$9
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", id)
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", sev)
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", cls)
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", st)
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", ver)
+        if (id !~ /^F-[0-9]+$/) { bad(id, "bad finding id"); next }
+        if (sev !~ /^(HIGH|MED|LOW|LOW-MED)$/) { bad(id, "severity not HIGH/MED/LOW/LOW-MED: '" sev "'"); next }
+        if (cls !~ /^brief-clause/ && cls !~ /^gap-rider/) { bad(id, "classification must be brief-clause or gap-rider"); next }
+        if (st !~ /^(OPEN|FIXED|WAIVED)/) { bad(id, "status not OPEN/FIXED/WAIVED: '" st "'"); next }
+        if (st !~ /(lead|auditor|clerk|architect|researcher)/) { bad(id, "owner missing"); next }
+        if (st !~ /20[0-9]{2}-[0-9]{2}-[0-9]{2}/) { bad(id, "date missing"); next }
+        if (ver != "v1.0") { bad(id, "version not v1.0: '" ver "'"); next }
+        if (seen[id]++) { bad(id, "duplicate F-ID") }
+        n++
+        if (id == "F-01" && sev == "HIGH") f01high = 1
+    }
+    END {
+        if (n != 14) { print "VIOLATION findings table has " n " rows, expected 14"; rc = 1 }
+        if (!f01high) { print "VIOLATION F-01 must be present and HIGH"; rc = 1 }
+        print "G3 SUMMARY: " n " findings, F-01 HIGH: " (f01high ? "yes" : "no")
+        exit rc
+    }' "$file")
+    printf '%s\n' "$out" | grep '^G3 SUMMARY' || true
+    if printf '%s\n' "$out" | grep -q '^VIOLATION'; then
+        printf '%s\n' "$out" >&2
+        fail "G3: findings-table violations (above)"
+    fi
+    pass "findings report: 14 findings, no duplicate IDs, F-01 HIGH, statuses valid"
+}
+
 case "${1:-}" in
     G0) g0_snapshot ;;
     G1) g1_triage ;;
     G2) g2_adjudication ;;
-    *)  echo "usage: $0 G0|G1|G2" >&2; exit 2 ;;
+    G3) g3_findings_report ;;
+    *)  echo "usage: $0 G0|G1|G2|G3" >&2; exit 2 ;;
 esac
