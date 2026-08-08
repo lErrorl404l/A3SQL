@@ -210,6 +210,15 @@ pub(crate) fn load_plugin_dir(path: &str) -> Vec<String> {
         if ext != "so" && ext != "dll" {
             continue;
         }
+        // F-07 integrity gate: only regular files are dlopened. Symlinks and
+        // special files are rejected so a writable plugin directory cannot be
+        // poisoned with a link to an arbitrary library elsewhere on disk.
+        // `DirEntry::file_type` does not follow symlinks. A full signature
+        // gate remains required before plugin_dir becomes user-writable.
+        match entry.file_type() {
+            Ok(ft) if ft.is_file() => {}
+            _ => continue,
+        }
         // ponytail: libloading handles both .so and .dll transparently
         match load_plugin_file(p.to_string_lossy().as_ref()) {
             Ok(name) => loaded.push(name),
@@ -224,6 +233,12 @@ pub(crate) fn load_plugin_dir(path: &str) -> Vec<String> {
 }
 
 fn load_plugin_file(path: &str) -> Result<String, EngineError> {
+    // F-07 trust boundary: a plugin is native code with the full privileges
+    // of the game-server process. The regular-file gate in `load_plugin_dir`
+    // runs first, but there is no signature check — a plugin .so is trusted
+    // the same as the mission that ships it. `plugin_dir` must therefore
+    // stay admin/mission-author-only; a hash or signature gate is required
+    // before plugin_dir can be pointed at user-writable directories.
     // Safety: libloading is safe — the plugin is a shared lib we control.
     // The plugin C ABI must match a3sql_plugin.h.
     unsafe {
