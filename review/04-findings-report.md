@@ -27,7 +27,7 @@ Document version history.
 | Version | Date | Change |
 |---------|------|--------|
 | v1.0 | 2026-08-08 | Baseline issue. Fixes the v1.0-draft label used during evidence collection to the baseline version at issuance (jsp-945). |
-| v1.2 | 2026-08-08 | Remediation close-out. Every OPEN finding resolved: eight FIXED (test-first), five WAIVED with justification, one no-action (verified PASS), one held OPEN with partial scope (F-11) and scheduled follow-ups. Status column and status accounting updated per review/05-remediation.md. Findings, severities, and IDs unchanged. Gate G3 expected version evolved from v1.0 to v1.1 (recorded in review/06-improvement.md, section 2). |
+| v1.2 | 2026-08-08 | Remediation close-out. Every OPEN finding resolved except F-11, held OPEN with partial scope and scheduled follow-ups: eight FIXED, four WAIVED with justification, one no-action (verified PASS). Status column and status accounting updated per review/05-remediation.md. Findings, severities, and IDs unchanged. Gate G3 expected version evolved from v1.0 to v1.1 (recorded in review/06-improvement.md, section 2). |
 | v1.4 | 2026-08-08 | F-03 remediation. A dedicated SBOM workflow (.github/workflows/sbom.yml) generates a CycloneDX SBOM at every release tag via cargo-cyclonedx pinned to 0.5.9, uploaded as an artifact and built from the tracked Cargo.lock. F-03 moved WAIVED to FIXED in the findings table and status accounting per review/05-remediation.md; shipping the .bikey remains an org action. Findings, severities, and IDs unchanged. Gate G3 expected version evolved to v1.4. |
 | v1.3 | 2026-08-08 | F-06 remediation. The dormant auth feature was removed rather than enabled (maintainer decision): the `auth` cargo feature, `ed25519-dalek` dependency, auth.rs module, and `cfg(feature = "auth")` gating are gone; the shipped TCP LOGIN path is untouched. F-06 moved WAIVED to FIXED in the findings table and status accounting per review/05-remediation.md. Findings, severities, and IDs unchanged. Gate G3 expected version evolved to v1.3. |
 | v1.2 | 2026-08-08 | F-11 remediation. The a3sql_plugin_init entry point contract is aligned across the header, the loader, and the test fixture, and the fuzz harness now covers the safe custom-command surface. The F-11 row moves to FIXED. Findings, severities, and IDs unchanged. Gate G3 expected version evolved from v1.1 to v1.2. |
@@ -74,8 +74,8 @@ All artifacts resolve at the pinned configuration management baseline
 
 | ID | Severity | Artifact (pin 585a460) | Harm | Fix | Classification | Status (owner, date) | Version |
 |----|----------|------------------------|------|-----|----------------|----------------------|---------|
-| F-01 | HIGH | extension/src/ffi/dir.rs:164/241/277/342 (blob 646e59c); catch_unwind only at server.rs:110 and a3sql-server.rs:159; eval.rs 72 unwrap lines | SQF-triggered panic unwinds across an extern C frame with no catch_unwind barrier; aborts the host game process (availability) | Wrap all 4 ABI entries in catch_unwind(AssertUnwindSafe); deny(clippy::unwrap_used) on FFI-reachable modules | gap-rider (corpus gap 1) | FIXED, lead, 2026-08-08 | v1.4 |
-| F-02 | MED | extension/Cargo.toml:8 vs LICENSE:1-3, README.md:6/113, deny.toml:9-19 | SPDX field MIT OR Apache-2.0 does not match the distributed APL-SA; a publish would inherit wrong licence metadata | Align Cargo.toml SPDX with LICENSE (license-file or documented split plus NOTICE); verify publish status | brief-clause (uk-code-licensing) | FIXED, lead, 2026-08-08 | v1.4 |
+| F-01 | HIGH | extension/src/ffi/dir.rs:164/241/277/342 (blob 646e59c); catch_unwind only at server.rs:110 and a3sql-server.rs:159; eval.rs 72 unwrap lines (grep -c unwrap at 585a460 over extension/src/engine/sqf/eval.rs) | SQF-triggered panic unwinds across an extern C frame with no catch_unwind barrier; aborts the host game process (availability) | Wrap all 4 ABI entries in catch_unwind(AssertUnwindSafe); deny(clippy::unwrap_used) on FFI-reachable modules | gap-rider (corpus gap 1) | FIXED, lead, 2026-08-08 | v1.4 |
+| F-02 | MED | extension/Cargo.toml:8 vs LICENSE:1-3, README.md:6/113, deny.toml:9-19 (grep -in license over the four files at 585a460 = 38 hits) | SPDX field MIT OR Apache-2.0 does not match the distributed APL-SA; a publish would inherit wrong licence metadata | Align Cargo.toml SPDX with LICENSE (license-file or documented split plus NOTICE); verify publish status | brief-clause (uk-code-licensing) | FIXED, lead, 2026-08-08 | v1.4 |
 | F-03 | MED | SBOM and SPDX grep over workflows and tools: 0 hits; keys/ empty; git tag -l = 0 | Signed-release integrity unverifiable; release zips carry no provenance | Generate an SBOM at each tag, ship the .bikey, track the lockfile | brief-clause (uk-code-licensing, defence-git-practices) | FIXED, lead, 2026-08-08 | v1.4 |
 | F-04 | MED | .gitignore:3-4; lint.yml:27 hashFiles(extension/Cargo.lock); git ls-files = 0 | CI SCA unpinned, dependabot lockfile-blind, reproducibility unproven | Track extension/Cargo.lock | brief-clause (defence-git-practices) | FIXED, auditor, 2026-08-08 | v1.4 |
 | F-05 | MED | .github/workflows/ci.yml:20 uses the org workflow at main (blob 0f0f499) | A movable ref into an opaque private org repo silently governs the build pipeline | Pin the org workflow to a full commit SHA; audit once | brief-clause (ncsc-secure-development P6) | WAIVED, lead, 2026-08-08 | v1.4 |
@@ -84,9 +84,9 @@ All artifacts resolve at the pinned configuration management baseline
 | F-08 | MED | git log --format=%G?: 219 N, 74 G, 3 E of 296 commits | Non-repudiation partial; signing enforcement unverifiable locally | Enforce commit.gpgsign and signed release tags | brief-clause (defence-git-practices) | WAIVED, auditor, 2026-08-08 | v1.4 |
 | F-12 | LOW-MED | SECURITY.md:9 contact "see git log", :10 private advisory | Disclosure path works; the contact line is not actionable for non-developers | Add a direct contact address; document the triage SLA | brief-clause (ncsc-vulnerability-management) | FIXED, lead, 2026-08-08 | v1.4 |
 | F-11 | LOW-MED | include/a3sql_plugin.h (blob 6d5acdf) versus exports; fuzz.rs:207-233; DLL panic test unrun | C ABI contract unverified mechanically; fuzz skips FFI, auth, and plugin surfaces; behavioural test unexecuted | Header-exports diff check; fuzz the custom-command path; run the DLL panic test on Arma CI | gap-rider (corpus gap 1) | FIXED, lead, 2026-08-08 | v1.4 |
-| F-09 | LOW | .github/CODEOWNERS absent | Governance gap; low impact for a solo-maintainer repo | Add CODEOWNERS | brief-clause (defence-git-practices) | FIXED, lead, 2026-08-08 | v1.4 |
+| F-09 | LOW | .github/CODEOWNERS absent (git ls-files .github/CODEOWNERS at 585a460 = 0) | Governance gap; low impact for a solo-maintainer repo | Add CODEOWNERS | brief-clause (defence-git-practices) | FIXED, lead, 2026-08-08 | v1.4 |
 | F-10 | LOW | extension/Cargo.toml:58 plus :87, machete-ignored openssl-sys | Dead vendored C dependency shipped into all targets; machete suppression hides the signal | Remove openssl-sys; drop it from the ignored list | brief-clause (ncsc-secure-development) | FIXED, lead, 2026-08-08 | v1.4 |
-| F-13 | LOW | README.md:51, docs/README.md:38/183/372, 7 wiki files at 69118c4 (18 lines, 9 files) | Style drift in docs; informational; binds this report at issuance | This report meets writers-handbook (no contractions, -ize, short sentences) | brief-clause (writers-handbook) | FIXED, clerk, 2026-08-08 | v1.4 |
+| F-13 | LOW | README.md:51, docs/README.md:38/183/372, 7 wiki files at 69118c4 (18 lines, 9 files) | Style drift in docs; informational; binds this report at issuance | This report meets writers-handbook (no contractions, -ize spellings, short sentences) | brief-clause (writers-handbook) | FIXED, clerk, 2026-08-08 | v1.4 |
 | F-14 | LOW | Classification grep: 13 lines, 6 files, all false positives | Zero classifiable content; OFFICIAL floor correct | None; this report defaults to OFFICIAL | brief-clause (security-classifications) | no-action, clerk, 2026-08-08 | v1.4 |
 
 ## 3. Per-brief compliance result
@@ -102,7 +102,7 @@ All artifacts resolve at the pinned configuration management baseline
 | uk-software-security-code-of-practice | FAIL | F-01: boundary validation and panic profile at the FFI barrier. |
 | ncsc-supply-chain-security | FAIL | F-07: third-party plugin code loaded without verification. |
 | jsp-940 | PASS | Review-process assurance: named reviewer, acceptance criteria, falsifiable gates, remediation loop. |
-| jsp-945 | PASS | This report is the configuration item, versioned v1.0, with owner and status accounting. |
+| jsp-945 | PASS | This report is the configuration item, versioned v1.4, with owner and status accounting. |
 | ncsc-vulnerability-management | PARTIAL | F-12: disclosure path works; direct contact missing. |
 | security-classifications | PASS | F-14 records the scan; the repo sits at the OFFICIAL floor. |
 | gds-service-standard | PASS | Point 12 (open source) PASS; point 13 (open standards) PASS with note (GDS 13). Non-findings, recorded in evidence E3. |
@@ -147,7 +147,7 @@ not applicable: this deliverable is Markdown, with no PDF or UI artifact.
 | G0 | Snapshot: pin is an ancestor of HEAD; snapshot pins the SHA | PASS |
 | G1 | Triage: 34 of 34 briefs covered, 11 APPLIES / 23 N/A, rows valid | PASS |
 | G2 | Adjudication: 14 findings, F-01 HIGH, gap-riders present, zero duplicates | PASS |
-| G3 | Closure: report versioned v1.0, CM baseline pinned, OFFICIAL note, 14 findings, all statuses valid | PASS |
+| G3 | Closure: report versioned v1.4, CM baseline pinned, OFFICIAL note, 14 findings, all statuses valid | PASS |
 
 ## 5. Status accounting (jsp-945)
 

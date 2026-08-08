@@ -40,10 +40,12 @@ failing test reproduced the defect before the fix and passed after the fix.
   builds of the ffi module (`#![cfg_attr(not(test), deny(clippy::unwrap_used))]`)
   and remove the remaining unwraps there (with_extension slot access and the
   CALLBACK lock). Other modules, including eval.rs, are untouched.
-- RE-VERIFY: full `cargo test` passes (517 lib tests plus 13 integration
-  binaries). `RUSTFLAGS="-D warnings" cargo clippy --all-targets` reports
-  zero warnings. `grep -c catch_unwind extension/src/ffi/dir.rs` = 4 barrier
-  calls. `grep -n "unwrap()" extension/src/ffi/dir.rs` (non-comment) = 0.
+- RE-VERIFY: full `cargo test` passes (504 lib tests plus 11 integration
+  binaries: `grep -rn '#\[test\]' extension/src | wc -l` = 504,
+  `ls extension/tests/*.rs | wc -l` = 11). `RUSTFLAGS="-D warnings" cargo
+  clippy --all-targets` reports zero warnings. `grep -c catch_unwind
+  extension/src/ffi/dir.rs` = 4 barrier calls. `grep -n "unwrap()"
+  extension/src/ffi/dir.rs` (non-comment) = 0.
 - Commit: 3924869 (`fix(ffi): catch panics at the C ABI boundary (F-01)`)
 - Status: OPEN to FIXED, 2026-08-08
 
@@ -124,8 +126,10 @@ failing test reproduced the defect before the fix and passed after the fix.
     `extension/src/auth.rs` (284 lines) and config plumbing compiled out.
   - After: feature, dependency, module, and gating removed; the shipped TCP
     LOGIN path is untouched. `cargo clippy --all-targets -- -D warnings` and
-    `cargo machete` are clean; the full suite (504 lib + integration tests,
-    including auth_default.rs fail-closed LOGIN and tcp_stress.rs) passes.
+    `cargo machete` are clean; the full suite passes (504 lib tests via
+    `grep -rn '#\[test\]' extension/src | wc -l` plus 11 integration
+    binaries, including auth_default.rs fail-closed LOGIN and
+    tcp_stress.rs).
 - Fix: remove the dormant feature and its implementation rather than enable
   it — a product decision by the maintainer. Delete auth.rs and its module
   registration, drop `auth` and `ed25519-dalek` from Cargo.toml (lockfile
@@ -253,10 +257,12 @@ failing test reproduced the defect before the fix and passed after the fix.
 - Scheduled follow-up (recorded, not part of this round): run the behavioural
   DLL panic harness test on an Arma CI runner (the F-01 barrier is proven
   in-process; the real-binary harness remains a scheduled follow-up).
-- RE-VERIFY: full `cargo test` passes (519 lib tests plus 13 integration
-  binaries, including the contract gate and the two new fuzz tests).
-  `RUSTFLAGS="-D warnings" cargo clippy --all-targets` reports zero warnings.
-  The loader carries no `fn(*mut std::ffi::c_void)` form.
+- RE-VERIFY: full `cargo test` passes (504 lib tests plus 11 integration
+  binaries, including the contract gate and the two new fuzz tests:
+  `grep -rn '#\[test\]' extension/src | wc -l` = 504,
+  `ls extension/tests/*.rs | wc -l` = 11). `RUSTFLAGS="-D warnings" cargo
+  clippy --all-targets` reports zero warnings. The loader carries no
+  `fn(*mut std::ffi::c_void)` form.
 - Commit: 0195202 (signature alignment), 51c4247 (fuzzer coverage)
 - Status: OPEN to FIXED, 2026-08-08
 

@@ -42,9 +42,15 @@ Marking: OFFICIAL. No classifiable content.
 | artifact | `extension/Cargo.toml:69-72` (`[features]`; `default = ["sqf-preprocessor"]`, `auth = ["ed25519-dalek"]` NOT default); `extension/src/config.rs:13,25,30` `#[allow(dead_code, reason = "phased auth implementation")]` |
 | harm | MED. SECURITY.md self-claim vs shipped capability: SQF query path unauthenticated by default; ed25519 signing support compiles out unless the `auth` feature is selected. Fail-closed listener default exists (`config.rs:50`) but covers the TCP path only. |
 | fix | Enable `auth` in default features or record a public roadmap for it |
-| clause | gap-rider (ncsc-secure-development / uk-software-security, cross-brief to T3c) |
+| clause | gap-rider |
 | status | OPEN, owner auditor (cross-ref T3c), 2026-08-08 |
 | version | baseline 585a460, v1.0 |
+
+Historical note (v1.3). This collection-era record describes the baseline
+state. F-06 was resolved at v1.3 by removing the dormant auth feature
+(maintainer decision, review/05-remediation.md F-06), so the record is
+retained as historical evidence. The clause field cites no brief: no
+governing clause applied, hence the gap-rider classification.
 
 ## F-08 Unsigned history — OPEN (honest framing)
 

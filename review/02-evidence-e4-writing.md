@@ -45,9 +45,13 @@ Pass items:
   Example: "Install the mod from the Steam Workshop, or download the
   latest release and unpack `@a3sql` into your Arma 3 directory."
   (docs/README.md:32)
-- Spelling. Zero -ise forms across all prose surfaces and all 20 commit
-  messages. Example: "ROLLBACK is no-op when no transaction is active
-  (matches PostgreSQL)." (CHANGELOG.md:28)
+- Spelling. The -ize convention holds throughout: zero '-ise' variant
+  spellings (organise, recognise and similar) across all prose surfaces
+  and all 20 commit messages, counted 0 at collection and 0 at the
+  close-out re-scan (variant-stem grep over README.md, CHANGELOG.md,
+  docs/, and docs/wiki at the pin and at HEAD). Example of the convention
+  in the repo: "user input should go through parameterized queries"
+  (README.md:47)
 
 Fail items:
 - Contractions. 18 prose lines across 9 files. Examples:
@@ -63,7 +67,7 @@ Fail items:
   audience.
 
 Commit messages pass. All 20 use conventional-commit prefixes, an
-imperative verb, no contractions, and no -ise forms.
+imperative verb, no contractions, and no '-ise' variant spellings.
 
 ## F-13 | security-classifications scan
 

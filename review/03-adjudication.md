@@ -57,7 +57,7 @@ All 14 finding records ACCEPT. Re-run evidence (exit codes or read results):
 | E1 F-10 | F-10 | ACCEPT | a) Cargo.toml:58 `openssl-sys = { version = "0.9", features = ["vendored"] }`; :87 in machete `ignored` list (:83-94); zero openssl refs in src/tests (grep = 0); b) in bounds; c) non-empty; d) brief-clause; e) filled |
 | E1 F-11 | F-11 | ACCEPT | a) fuzz.rs:207-233 `is_custom_command` skips ping/reset/save/load/listen/connect/plugin_dir/register_function/set_credentials before dispatch (verified, function body 209-233); include/a3sql_plugin.h = 1807 B, blob 6d5acdf (verified); behavioural DLL panic test unrun (OBJ-unrun, recorded as scheduled follow-up — honest); b) in bounds; c) non-empty; d) gap-rider; e) filled |
 | E2 F-12 (advisory) | F-12 | ACCEPT | a) SECURITY.md:9 contact "see git log for contact", :10 private-advisory link; 48h/7d commitment at :11-12; scope list 14-24; b) in bounds; c) non-empty; d) brief-clause (ncsc-vulnerability-management); e) filled |
-| E4 F-12 (style) | F-13 | ACCEPT | a) contraction lines read at pin: README.md:51 "don't"; docs/README.md:38/183/372; wiki at 69118c4: Getting-Started.md:3/84/105/121/157, Module-Guide.md:90/238/274, Development-Setup.md:6, Plugins.md:31, SQL-Dialect.md:554, TCP-Connector.md:93/152, Home.md:21 — 18 lines across 9 files confirmed (2 repo + 7 wiki); zero -ise forms (grep exit 1); 20 commit messages clean (grep 0 hits); b) in bounds; c) non-empty; d) brief-clause (writers-handbook); e) OPEN/clerk/2026-08-08 |
+| E4 F-12 (style) | F-13 | ACCEPT | a) contraction lines read at pin: README.md:51 "don't"; docs/README.md:38/183/372; wiki at 69118c4: Getting-Started.md:3/84/105/121/157, Module-Guide.md:90/238/274, Development-Setup.md:6, Plugins.md:31, SQL-Dialect.md:554, TCP-Connector.md:93/152, Home.md:21 — 18 lines across 9 files confirmed (2 repo + 7 wiki); zero '-ise' variant spellings (grep exit 1); 20 commit messages clean (grep 0 hits); b) in bounds; c) non-empty; d) brief-clause (writers-handbook); e) OPEN/clerk/2026-08-08 |
 | E4 F-13 (classification) | F-14 | ACCEPT | a) classification grep at pin: 13 lines across 6 files confirmed — workflow refs ci.yml:227/229/245/246/249 + wiki.yml:26 + release-drafter.yml:22 (all `secrets.*` GitHub Actions syntax, no values) and wiki demo creds Security.md:52, Standalone-Server.md:82, TCP-Connector.md:32/80/132/140 ("secret123" placeholder); zero classifiable content — OFFICIAL floor correct; b) in bounds; c) non-empty; d) brief-clause (security-classifications); e) OPEN/clerk/2026-08-08 |
 
 GDS 12/13 records (E3): ACCEPTED as compliance records, not findings. GDS 12
@@ -132,8 +132,12 @@ Ordered by harm, not by numeric ID. 14 findings, all OPEN.
 | F-13 | LOW | README.md:51, docs/README.md:38/183/372, 7 wiki files at 69118c4 (18 lines/9 files) | Style drift in docs; informational, binds report prose at issuance | T5 report must meet writers-handbook (no contractions, -ize, short sentences) | brief-clause | OPEN, clerk, 2026-08-08 |
 | F-14 | LOW | classification grep: 13 lines/6 files, all false positives | Zero classifiable content; OFFICIAL floor correct | None; T5 report defaults OFFICIAL | brief-clause | OPEN, clerk, 2026-08-08 |
 
-All records carry baseline 585a460, version v1.0 (report baseline; v1.0-draft
-in E4 fixed to v1.0 at G3 issuance per jsp-945).
+All records carry baseline 585a460. Collection-era evidence keeps its
+draft labels: E2 and E3 record version v1.0, E4 records v1.0-draft. The
+report fixes the draft label to the baseline version at G3 issuance
+(report document control, v1.0 row, per jsp-945); the evidence records
+are retained unrewritten as collection artefacts, so the labels are
+reconciled by the report, not by editing the evidence.
 
 ## Gate result
 

@@ -1,9 +1,9 @@
-# Improvement Record v1.1: Review-Process Feedback (jsp-940)
+# Improvement Record v1.2: Review-Process Feedback (jsp-940)
 
 ## Document control
 
 - Report: improvement loop for the rules-compliance review of a3db/a3sql
-- Version: v1.1
+- Version: v1.2
 - Date: 2026-08-08
 - Classification: OFFICIAL
 - Owner: lead
@@ -11,7 +11,8 @@
 
 This record closes the jsp-940 improvement loop: what the remediation round
 learned about the review process itself. Each item names the lesson, the
-evidence, and the change for the next round.
+evidence, and the change for the next round. Version v1.2 adds section 7,
+the Momus QA close-out.
 
 ## 1. Evidence numbering collision
 
@@ -110,4 +111,44 @@ Vacuous assertions are false coverage.
 Five lessons for the next review round: renumber evidence to final IDs at
 adjudication, parameterize gate versions and widen the status vocabulary,
 flag submodule boundaries in findings, re-run scans post-remediation, and
-distinguish behavioural from gate-command TDD.
+distinguish behavioural from gate-command TDD. Section 7 adds two for the
+QA round: gate the re-verification at closure, and scope the addons/ SQF
+layer explicitly.
+
+## 7. Momus QA close-out
+
+An independent read-only QA pass over the v1.4 review package surfaced ten
+findings, QA-1..QA-10. Each is closed below with its disposition: FIXED
+(change landed), corrected (prose fixed in place), or recorded-as-scheduled
+(deferred with an owner and a trigger). No finding changed the report's
+findings, severities, IDs, or artifacts; the report version stays v1.4.
+
+| QA | Severity | Defect | Disposition | Evidence |
+|----|----------|--------|-------------|----------|
+| QA-1 | MED | Self-attested RE-VERIFY with no re-verification gate | FIXED | G4 gate added to review/gates.sh and run; PASS at HEAD (output below) |
+| QA-2 | MED | Unverifiable test counts in review/05-remediation.md ("517 lib tests plus 13 integration binaries", "519 lib tests plus 13 integration binaries") | FIXED | Counts corrected to measured values with producing commands: `grep -rn '#\[test\]' extension/src | wc -l` = 504; `ls extension/tests/*.rs | wc -l` = 11 |
+| QA-3 | MED | addons/ SQF layer (203 tracked files, 53% of the pinned tracked set) never examined | recorded-as-scheduled | SQF-layer examination (hemtt lint, sqfvm, config style checker over addons/) scheduled for the next review round; no examination is asserted here |
+| QA-4 | MED | Description lost in the close-out brief; not reproducible from the surviving detail | recorded | No defect action possible; adjacent hygiene covered by QA-2, QA-5, QA-6, QA-7, QA-8, QA-9 |
+| QA-5 | MED | Stale claims: F-11 status history, v1.0 strings in the v1.4 report, draft reconciliation | corrected | F-11 verified FIXED since v1.2; version-history row fixed (four WAIVED, not five, and F-11 the held exception); stale v1.0 strings in the per-brief and gate-transcript sections bumped to v1.4; the adjudication reconciliation note now reconciles the E4 v1.0-draft labels |
+| QA-6 | LOW-MED | F-06 evidence record names briefs under a gap-rider clause | corrected | review/02-evidence-e2-provenance.md F-06 clause field corrected to plain gap-rider; record marked historical (feature removed at v1.3) |
+| QA-7 | LOW | -ise/-ize word-swap in review prose; -ize counts unstated | corrected | '-ise' tokens quoted as variant literals in E4 and 03; counts stated, 0 before and 0 after, with the scan command |
+| QA-8 | LOW | -ise citation backwards: E4 example contains no -ize word; 04 F-13 cell is a fragment | corrected | E4 example replaced with "parameterized queries" (README.md:47); 04 F-13 cell completed to "-ize spellings" |
+| QA-9 | LOW | Unquantified counts in the F-01, F-02, F-09 rows | corrected | Producing commands appended to the findings-table rows: 72 unwrap lines, 38 licence hits, 0 tracked CODEOWNERS, all at the pin |
+| QA-10 | LOW | Version-bump logic duplicated across the gates | recorded-as-scheduled | Parameterization recorded in section 2; deferred so the G3 v1.4 expectation does not shift mid-close-out |
+
+G4 gate (QA-1). The gate re-verifies the self-attested RE-VERIFY
+dispositions: every finding must sit at version v1.4 with a closed status
+(FIXED, WAIVED, or no-action) in both review/04-findings-report.md and
+review/05-remediation.md, and the two documents must agree finding by
+finding. Output at HEAD:
+
+```
+$ bash review/gates.sh G4
+G4 SUMMARY: 14 findings, all at v1.4, dispositions agree
+GATE PASS: re-verification: all 14 findings at v1.4, none OPEN, report and remediation record agree
+```
+
+Change for next round. Add a re-verification gate to the gate suite at
+closure, not after a QA pass finds it missing. Scope the addons/ SQF layer
+explicitly in the next snapshot, and parameterize the report version so a
+bump is one edit.
