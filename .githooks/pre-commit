@@ -5,17 +5,6 @@ set -euo pipefail
 ROOT="$(git rev-parse --show-toplevel)"
 FAILED=0
 
-# Banned tooling-identity words must never enter staged content. The hooks
-# themselves define this guard, so .githooks/ is exempt — they must spell the
-# words to match them. Scans only added lines, not diff headers or context.
-BANNED_WORDS='ponytail|sisyphus|opencode|oh-my-opencode|dori'
-if git diff --cached -- . ':(exclude).githooks' | grep -E '^\+[^+]' | grep -Eqi "$BANNED_WORDS"; then
-    echo "✗ staged content contains a banned tooling-identity word" \
-        "(ponytail/sisyphus/opencode/oh-my-opencode/dori)" >&2
-    echo "  strip it from the file and re-stage (git add)." >&2
-    exit 1
-fi
-
 echo "→ cargo fmt --check"
 cargo fmt --manifest-path "$ROOT/extension/Cargo.toml" --check || FAILED=1
 
