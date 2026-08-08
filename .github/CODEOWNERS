@@ -1,0 +1,12 @@
+# Code ownership (F-09): sensitive paths are owned by the sole maintainer,
+# Matthew Barker (@lErrorl404l). Solo-maintainer repository; this file exists
+# so GitHub surfaces the review requirement on the paths that matter.
+
+# FFI boundary — panics here abort the host game process
+/extension/src/ffi/ @lErrorl404l
+
+# CI/CD and release pipeline
+/.github/workflows/ @lErrorl404l
+
+# Security disclosure policy
+/SECURITY.md @lErrorl404l
