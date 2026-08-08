@@ -1,9 +1,9 @@
-# Remediation Record v1.1: Rules-Compliance Review of a3db/a3sql
+# Remediation Record v1.2: Rules-Compliance Review of a3db/a3sql
 
 ## Document control
 
 - Report: remediation loop for the rules-compliance review of the a3db/a3sql repository
-- Version: v1.1
+- Version: v1.2
 - Date: 2026-08-08
 - Classification: OFFICIAL
 - Review owner: lead
@@ -185,9 +185,29 @@ failing test reproduced the defect before the fix and passed after the fix.
 
 ### F-11 LOW-MED — FFI coverage gap
 
-- Action: PARTIAL (finding-note recorded; code unchanged)
-- Header-versus-exports diff, include/a3sql_plugin.h against the no_mangle
-  exports at extension/src/ffi/dir.rs:181/263/315/401 and
+- Action: FIXED
+- Test-first evidence:
+  - Contract gate: `loader_init_matches_header_signature` in
+    extension/tests/plugins.rs. Before: the loader resolved the entry point
+    as `fn(*mut c_void) -> *const c_char` and called it with a null context
+    argument, while the header declared `const char* (*)(void)`. The gate is
+    a mechanical source-level check because the violation is runtime-benign
+    on the supported ABIs (the callee ignores the extra argument); it failed
+    against the pre-fix loader and passes now that the loader resolves
+    `fn() -> *const c_char`.
+  - Loader round-trip: the F-07 cdylib fixture in extension/tests/plugins.rs
+    now declares the exact published header signature
+    `a3sql_plugin_init(void)` and loads through plugin_dir. Before: the
+    fixture declared the drifted `fn(*mut c_void)` form. After: the
+    header-consistent plugin loads exactly once through the real loader.
+  - Fuzzer: `custom_commands_never_panic` (proptest) and
+    `custom_commands_never_crash` (fixed regression list) in
+    extension/src/fuzz.rs. Before: fuzz.rs:207-233 skipped the entire
+    custom-command surface. After: the pure in-memory command handlers run
+    through the dispatch path, and the fixed list covers every safe command
+    shape deterministically.
+- Before: header-versus-exports diff, include/a3sql_plugin.h against the
+  no_mangle exports at extension/src/ffi/dir.rs:181/263/315/401 and
   extension/src/engine/plugin.rs:275:
   - `a3sql_plugin_register_function`: signature matches. Header declares
     `int32_t (const char*, const char*, int32_t, int32_t)`; the export is
@@ -195,25 +215,33 @@ failing test reproduced the defect before the fix and passed after the fix.
     convention matches (C default, cdecl on 32-bit Windows). Param name
     differs cosmetically (function_name versus func_name).
   - `a3sql_plugin_init`: signature mismatch. The header declares
-    `const char* (*)(void)` (no arguments); the loader resolves
-    `fn(*mut c_void) -> *const c_char` and calls it with one null context
+    `const char* (*)(void)` (no arguments); the loader resolved
+    `fn(*mut c_void) -> *const c_char` and called it with one null context
     argument. This is benign on the supported ABIs (the callee ignores the
     extra argument) but it is a contract violation against the header that
     plugin authors compile against.
-  - Doc drift: the header says plugins are "loaded at startup"; no startup
+  - Doc drift: the header said plugins are "loaded at startup"; no startup
     directory scan exists, loading happens through the plugin_dir command
-    only. The header says function names are "prefixed with fn_"; the C ABI
-    registrar stores the name verbatim.
+    only. The header said function names are "prefixed with fn_"; the C ABI
+    registrar stores the name verbatim and the fn_ prefix is applied at the
+    SQL call surface.
   - No repr(C) structs cross the boundary; the two function signatures are
     the entire contract, so repr(C) is not in play.
-- Scheduled follow-ups (recorded, not part of this round):
-  - Extend the fuzz harness to custom commands (fuzz.rs:207-233 currently
-    skips the FFI, auth, and plugin surfaces).
-  - Run the behavioural DLL panic harness test on an Arma CI runner (the
-    F-01 barrier is proven in-process; the real-binary harness remains a
-    scheduled follow-up).
-- Commit: none.
-- Status: OPEN (held; partial scope complete), 2026-08-08
+- After: the header, the loader, and the test fixture all declare the
+  no-argument entry point; the header documents the plugin_dir load path and
+  the fn_ call surface accurately; the fuzzer covers the safe custom-command
+  surface. Side-effecting commands (connect, listen, stop, save, load,
+  export_to_file, plugin_dir) remain excluded from the fuzzer by design
+  because they open TCP, spawn threads, write files, or dlopen libraries.
+- Scheduled follow-up (recorded, not part of this round): run the behavioural
+  DLL panic harness test on an Arma CI runner (the F-01 barrier is proven
+  in-process; the real-binary harness remains a scheduled follow-up).
+- RE-VERIFY: full `cargo test` passes (519 lib tests plus 13 integration
+  binaries, including the contract gate and the two new fuzz tests).
+  `RUSTFLAGS="-D warnings" cargo clippy --all-targets` reports zero warnings.
+  The loader carries no `fn(*mut std::ffi::c_void)` form.
+- Commit: 0195202 (signature alignment), 51c4247 (fuzzer coverage)
+- Status: OPEN to FIXED, 2026-08-08
 
 ### F-12 LOW-MED — non-actionable advisory contact
 
@@ -264,26 +292,26 @@ organization-level CSM, and the audit of the org reusable workflow behind
 ci.yml:20. Each requires server-side or organization-level access that a
 checkout does not have.
 
-## Status accounting (jsp-945), v1.1
+## Status accounting (jsp-945), v1.2
 
 All transitions re-verified against baseline 585a460, dated 2026-08-08.
+The v1.2 round closed the last OPEN finding: F-11 moved OPEN to FIXED.
 
 | Finding | Status | Owner | Date | Version |
 |---------|--------|-------|------|---------|
-| F-01 | FIXED | lead | 2026-08-08 | v1.1 |
-| F-02 | FIXED | lead | 2026-08-08 | v1.1 |
-| F-03 | WAIVED | auditor | 2026-08-08 | v1.1 |
-| F-04 | FIXED | auditor | 2026-08-08 | v1.1 |
-| F-05 | WAIVED | lead | 2026-08-08 | v1.1 |
-| F-06 | WAIVED | auditor | 2026-08-08 | v1.1 |
-| F-07 | FIXED | lead | 2026-08-08 | v1.1 |
-| F-08 | WAIVED | auditor | 2026-08-08 | v1.1 |
-| F-09 | FIXED | lead | 2026-08-08 | v1.1 |
-| F-10 | FIXED | lead | 2026-08-08 | v1.1 |
-| F-11 | OPEN (PARTIAL) | lead | 2026-08-08 | v1.1 |
-| F-12 | FIXED | lead | 2026-08-08 | v1.1 |
-| F-13 | FIXED | clerk | 2026-08-08 | v1.1 |
-| F-14 | no-action | clerk | 2026-08-08 | v1.1 |
+| F-01 | FIXED | lead | 2026-08-08 | v1.2 |
+| F-02 | FIXED | lead | 2026-08-08 | v1.2 |
+| F-03 | WAIVED | auditor | 2026-08-08 | v1.2 |
+| F-04 | FIXED | auditor | 2026-08-08 | v1.2 |
+| F-05 | WAIVED | lead | 2026-08-08 | v1.2 |
+| F-06 | WAIVED | auditor | 2026-08-08 | v1.2 |
+| F-07 | FIXED | lead | 2026-08-08 | v1.2 |
+| F-08 | WAIVED | auditor | 2026-08-08 | v1.2 |
+| F-09 | FIXED | lead | 2026-08-08 | v1.2 |
+| F-10 | FIXED | lead | 2026-08-08 | v1.2 |
+| F-11 | FIXED | lead | 2026-08-08 | v1.2 |
+| F-12 | FIXED | lead | 2026-08-08 | v1.2 |
+| F-13 | FIXED | clerk | 2026-08-08 | v1.2 |
+| F-14 | no-action | clerk | 2026-08-08 | v1.2 |
 
-Summary: 8 FIXED, 5 WAIVED, 1 no-action, 1 held OPEN with partial scope
-complete and follow-ups scheduled.
+Summary: 9 FIXED, 4 WAIVED, 1 no-action, zero findings remain OPEN.

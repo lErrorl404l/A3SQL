@@ -208,16 +208,16 @@ g2_adjudication() {
 
 g3_findings_report() {
     # G3 closure: findings report issued as the jsp-945 configuration item.
-    # (a) report exists, version line == v1.1; (b) CM baseline SHA pinned;
+    # (a) report exists, version line == v1.2; (b) CM baseline SHA pinned;
     # (c) OFFICIAL classification note present; (d) every findings-table row
     # has status in {OPEN, FIXED, WAIVED} + owner + date; (e) exactly 14
     # findings rows; (f) zero duplicate F-IDs; (g) F-01 present and HIGH.
     local file="review/04-findings-report.md"
     [ -f "$file" ] || fail "findings report $file missing"
 
-    grep -qE '^Version: v1\.1|^- Version: v1\.1' "$file" \
-        || fail "report version line is not v1.1"
-    pass "report version v1.1"
+    grep -qE '^Version: v1\.2|^- Version: v1\.2' "$file" \
+        || fail "report version line is not v1.2"
+    pass "report version v1.2"
 
     grep -q "baseline: $PINNED_SHA" "$file" \
         || fail "report does not pin CM baseline $PINNED_SHA"
@@ -248,7 +248,7 @@ g3_findings_report() {
         if (st !~ /^(OPEN|FIXED|WAIVED|no-action)/) { bad(id, "status not OPEN/FIXED/WAIVED/no-action: '" st "'"); next }
         if (st !~ /(lead|auditor|clerk|architect|researcher)/) { bad(id, "owner missing"); next }
         if (st !~ /20[0-9]{2}-[0-9]{2}-[0-9]{2}/) { bad(id, "date missing"); next }
-        if (ver != "v1.1") { bad(id, "version not v1.1: '" ver "'"); next }
+        if (ver != "v1.2") { bad(id, "version not v1.2: '" ver "'"); next }
         if (seen[id]++) { bad(id, "duplicate F-ID") }
         n++
         if (id == "F-01" && sev == "HIGH") f01high = 1
