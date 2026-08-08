@@ -5,7 +5,10 @@ name = "a3sql"
 version = "0.2.0"
 edition = "2024"
 rust-version = "1.88"
-license = "MIT OR Apache-2.0"
+# Arma Public License Share Alike (APL-SA) — see LICENSE. APL-SA has no SPDX
+# identifier, so this field carries a LicenseRef tag instead of a bare SPDX
+# id; crates.io publishes the LICENSE file alongside the crate metadata.
+license = "LicenseRef-Arma-Public-License-Share-Alike"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
