@@ -269,10 +269,78 @@ g3_findings_report() {
     pass "findings report: 14 findings, no duplicate IDs, F-01 HIGH, statuses valid"
 }
 
+g4_verify() {
+    # G4 re-verification: every finding must sit at its expected version
+    # (v1.4) with a closed disposition (FIXED, WAIVED, no-action) in BOTH
+    # review/04-findings-report.md and review/05-remediation.md, and the
+    # two documents must agree finding by finding. This is the machine
+    # check on the self-attested RE-VERIFY claims: no finding remains
+    # OPEN, every row is at v1.4, and the report and remediation record
+    # tell the same story.
+    local report="review/04-findings-report.md"
+    local remed="review/05-remediation.md"
+    [ -f "$report" ] || fail "findings report $report missing"
+    [ -f "$remed" ] || fail "remediation record $remed missing"
+
+    # One awk pass over both files: the report findings table (9 columns,
+    # | ID | header) and the status-accounting tables (6 columns,
+    # | Finding | header) in both documents. Report rows carry merged
+    # status+owner+date in column 8; remediation rows split them across
+    # columns 3 and 5. The cross-check at END asserts both documents give
+    # the same disposition for every finding.
+    local out
+    out=$(awk -F'|' '
+    function bad(src, id, reason) { print "VIOLATION " src " " id ": " reason; rc = 1 }
+    BEGIN { rc = 0; in_table = 0; n = 0 }
+    {
+        if (/^##[[:space:]]/) { in_table = 0; next }
+        if (FILENAME != prev) { in_table = 0; prev = FILENAME }
+        if (/^\| ID \|/) { in_table = 1; src = "report"; next }
+        if (/^\| Finding \|/) { in_table = 1; src = "remediation"; next }
+        if (!in_table || $0 !~ /^\| F-[0-9]+ \|/) next
+        id = $2
+        ver = (src == "report") ? $9 : $6
+        st = (src == "report") ? $8 : $3
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", id)
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", st)
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", ver)
+        if (ver != "v1.4") { bad(src, id, "version '" ver "' != expected v1.4") }
+        if (st !~ /^(FIXED|WAIVED|no-action)/) { bad(src, id, "status not closed: '" st "'") }
+        if (src == "report") {
+            if (st !~ /20[0-9]{2}-[0-9]{2}-[0-9]{2}/) { bad(src, id, "date missing") }
+        } else {
+            d = $5; gsub(/^[[:space:]]+|[[:space:]]+$/, "", d)
+            if (d !~ /20[0-9]{2}-[0-9]{2}-[0-9]{2}/) { bad(src, id, "date missing") }
+        }
+        split(st, a, ",")
+        gsub(/^[[:space:]]+|[[:space:]]+$/, "", a[1])
+        disp[src, id] = a[1]
+        if (src == "report") { n++; order[n] = id }
+    }
+    END {
+        for (i = 1; i <= n; i++) {
+            id = order[i]
+            if (disp["report", id] != disp["remediation", id]) {
+                bad("cross", id, "report '" disp["report", id] "' != remediation '" disp["remediation", id] "'")
+            }
+        }
+        if (n != 14) { print "VIOLATION findings table has " n " rows, expected 14"; rc = 1 }
+        print "G4 SUMMARY: " n " findings, all at v1.4, dispositions agree"
+        exit rc
+    }' "$report" "$remed")
+    printf '%s\n' "$out" | grep '^G4 SUMMARY' || true
+    if printf '%s\n' "$out" | grep -q '^VIOLATION'; then
+        printf '%s\n' "$out" >&2
+        fail "G4: version or disposition violations (above)"
+    fi
+    pass "re-verification: all 14 findings at v1.4, none OPEN, report and remediation record agree"
+}
+
 case "${1:-}" in
     G0) g0_snapshot ;;
     G1) g1_triage ;;
     G2) g2_adjudication ;;
     G3) g3_findings_report ;;
-    *)  echo "usage: $0 G0|G1|G2|G3" >&2; exit 2 ;;
+    G4) g4_verify ;;
+    *)  echo "usage: $0 G0|G1|G2|G3|G4" >&2; exit 2 ;;
 esac
