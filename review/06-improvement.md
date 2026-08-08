@@ -42,9 +42,12 @@ variable at the top of the script would make the bump one edit, not two.
 
 Second, G3 restricts the status vocabulary to OPEN, FIXED, and WAIVED. The
 remediation of F-11 is partial by design (a finding-note recorded, two
-follow-ups scheduled), which has no gate-valid status. The record had to
-carry "OPEN (PARTIAL)" inside the OPEN form, which loses the partial
-signal in machine-readable terms.
+follow-ups scheduled), which has no gate-valid status; it is carried as
+"OPEN (PARTIAL)". The remediation of F-14 closed as a verified PASS with no
+action, which the baseline vocabulary also could not express. This round
+extended the vocabulary with `no-action` in the gate (recorded with the
+report bump). The PARTIAL state remains unrepresentable; "OPEN (PARTIAL)"
+carries the signal inside the OPEN form.
 
 Third, the version change is itself a gate evolution. G3 was the gate that
 verified v1.0 closure, and it now verifies v1.1. That is legitimate
