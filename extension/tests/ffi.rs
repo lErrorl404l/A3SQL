@@ -413,6 +413,42 @@ fn ffi_args_sql_null_argv_zero_argc_returns_minus_one() {
     assert_eq!(rc, -1);
 }
 
+// ── Panic barrier: panics must not unwind across the extern "C" frame ─────
+//
+// F-01 (HIGH): a SQF-triggered panic used to unwind through the unbarriered
+// extern "C" entry points and abort the host game process. SQF_EVAL('1/0')
+// is a reproducible panic source: the SQF fast-path divides integers with
+// `a / b`, so 1/0 panics ("attempt to divide by zero"). If a later fix
+// removes that panic, switch the trigger to another panicking input; the
+// barrier contract asserted here stays the same.
+
+#[test]
+fn ffi_string_panic_returns_error_envelope_not_abort() {
+    let _g = setup();
+    // Must return a fixed envelope, not abort the test process.
+    let (out, _) = string_call("SELECT SQF_EVAL('1/0')", 4096);
+    assert!(
+        out.starts_with("[-1,"),
+        "panic must map to an error envelope, not abort the process: {out}"
+    );
+    assert!(
+        out.contains("ERR_INTERNAL"),
+        "fixed envelope must not leak the panic message: {out}"
+    );
+}
+
+#[test]
+fn ffi_args_panic_returns_minus_one_and_envelope() {
+    let _g = setup();
+    let (rc, out) = args_call("SELECT SQF_EVAL('1/0')", &[], 4096);
+    assert_eq!(rc, -1, "ABI entry must signal the failure with -1: {out}");
+    assert!(
+        out.starts_with("[-1,"),
+        "panic must map to an error envelope, not abort the process: {out}"
+    );
+    assert!(out.contains("ERR_INTERNAL"), "{out}");
+}
+
 // ── RVExtensionRegisterCallback ────────────────────────────────────────────
 
 extern "system" fn probe_callback(_name: *const c_char, _args: *const c_char, _ctx: *const c_char) -> c_int {

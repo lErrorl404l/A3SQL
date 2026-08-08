@@ -19,6 +19,16 @@
 //! These are the interface between the Arma 3 engine and a3sql.
 //!
 //! Command routing and testing infrastructure provided by [`arma_rs`].
+//!
+//! # Panic barrier (F-01)
+//! Every extern "C" entry wraps its body in `catch_unwind`: a SQF-triggered
+//! panic must not unwind across the ABI frame and abort the host game
+//! process. Panics convert to a fixed `ERR_INTERNAL` envelope.
+//!
+//! `clippy::unwrap_used` is denied in non-test builds of this module: a
+//! panicking unwrap here is exactly the F-01 defect class. Test code keeps
+//! its `unwrap`s (test harness owns its panics).
+#![cfg_attr(not(test), deny(clippy::unwrap_used))]
 
 use std::borrow::Cow;
 use std::ffi::CStr;
@@ -112,8 +122,16 @@ where
         unsafe { RV_EXTENSION = Some(build_extension()) }
     });
     // SAFETY: After `INIT.call_once`, `RV_EXTENSION` is `Some` and never mutated.
-    // `addr_of!` avoids the `static_mut_refs` lint.
-    let ext = unsafe { std::ptr::addr_of!(RV_EXTENSION).as_ref().unwrap().as_ref().unwrap() };
+    // `addr_of!` avoids the `static_mut_refs` lint. Unwrap-free by design
+    // (F-01): the branch below is unreachable because `call_once` just filled
+    // the slot; abort() is the loud backstop if the invariant ever breaks —
+    // never a panic across the ABI.
+    let ext = unsafe {
+        match std::ptr::addr_of!(RV_EXTENSION).as_ref() {
+            Some(Some(ext)) => ext,
+            _ => std::process::abort(),
+        }
+    };
     f(ext)
 }
 
@@ -162,21 +180,26 @@ fn sql_handler(payload: Vec<String>) -> String {
 /// `output` must be a valid, writable buffer of at least `output_size` bytes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RVExtensionVersion(output: *mut c_char, output_size: u32) {
-    with_extension(|_| {}); // ensure extension + plugins are initialised
-    if output.is_null() || output_size == 0 {
-        return;
-    }
-    let version = version_bytes();
-    // Bound to `output_size - 1` and always null-terminate: a caller with an
-    // undersized buffer must still receive a valid C string, not a truncated
-    // one without its terminator.
-    let len = (output_size as usize - 1).min(version.len());
-    // SAFETY: `output` is non-null, `output_size > 0`, and `len <= output_size - 1`
-    // keeps the null terminator at `output.add(len)` inside the buffer.
-    unsafe {
-        std::ptr::copy_nonoverlapping(version.as_ptr(), output as *mut u8, len);
-        *output.add(len) = 0;
-    }
+    // Panic barrier (F-01): extension initialisation (plugin loading) must
+    // not unwind across the extern "C" frame. On panic the version is simply
+    // not written; Arma tolerates an empty version string.
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        with_extension(|_| {}); // ensure extension + plugins are initialised
+        if output.is_null() || output_size == 0 {
+            return;
+        }
+        let version = version_bytes();
+        // Bound to `output_size - 1` and always null-terminate: a caller with an
+        // undersized buffer must still receive a valid C string, not a truncated
+        // one without its terminator.
+        let len = (output_size as usize - 1).min(version.len());
+        // SAFETY: `output` is non-null, `output_size > 0`, and `len <= output_size - 1`
+        // keeps the null terminator at `output.add(len)` inside the buffer.
+        unsafe {
+            std::ptr::copy_nonoverlapping(version.as_ptr(), output as *mut u8, len);
+            *output.add(len) = 0;
+        }
+    }));
 }
 
 /// Write a response string into an Arma engine output buffer, bounded by
@@ -239,15 +262,31 @@ unsafe fn write_response(output: *mut c_char, output_size: u32, resp: &str) {
 /// `output` must be a valid, writable buffer of at least `output_size` bytes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RVExtension(output: *mut c_char, output_size: u32, function: *const c_char) {
-    let input = if function.is_null() {
-        Cow::Borrowed("")
-    } else {
-        // SAFETY: `function` is a null-terminated string from the Arma engine contract.
-        unsafe { CStr::from_ptr(function) }.to_string_lossy()
-    };
-    let resp = dispatch::dispatch(&input, &[]);
-    // SAFETY: `output`/`output_size` are the engine buffer contract.
-    unsafe { write_response(output, output_size, &resp) };
+    // Panic barrier (F-01): a SQF-triggered panic inside dispatch must not
+    // unwind across the extern "C" frame and abort the host game process.
+    // The fixed envelope leaks no panic message or backtrace.
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let input = if function.is_null() {
+            Cow::Borrowed("")
+        } else {
+            // SAFETY: `function` is a null-terminated string from the Arma engine contract.
+            unsafe { CStr::from_ptr(function) }.to_string_lossy()
+        };
+        let resp = dispatch::dispatch(&input, &[]);
+        // SAFETY: `output`/`output_size` are the engine buffer contract.
+        unsafe { write_response(output, output_size, &resp) };
+    }));
+    if outcome.is_err() {
+        // SAFETY: `output`/`output_size` are the engine buffer contract;
+        // write_response tolerates a null output (no-op).
+        unsafe {
+            write_response(
+                output,
+                output_size,
+                &error_response(ErrorCode::Internal, "Command failed"),
+            );
+        }
+    }
 }
 
 /// STRING callExtension ARRAY — main entry point.
@@ -284,49 +323,70 @@ pub unsafe extern "C" fn RVExtensionArgs(
     if output.is_null() || function.is_null() {
         return -1;
     }
-    let function_str = unsafe { CStr::from_ptr(function) }.to_string_lossy();
+    // Panic barrier (F-01): a SQF-triggered panic inside dispatch or the
+    // arma-rs handler must not unwind across the extern "C" frame and abort
+    // the host game process. On panic, return -1 and write the fixed
+    // envelope — the same contract the null-pointer checks use.
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let function_str = unsafe { CStr::from_ptr(function) }.to_string_lossy();
 
-    // arma-rs path: only the "sql" command (SQF-encoded payload array).
-    if function_str == "sql" {
-        if argv.is_null() {
-            // arma-rs's command macro `unwrap()`s the argv pointer whenever
-            // argc matches the handler's arity (1 for `sql`), so a null argv
-            // would panic across the FFI boundary instead of returning a code.
-            return -1;
-        }
-        return with_extension(|ext| {
-            // SAFETY: All pointer arguments are guaranteed valid, non-null by the Arma engine contract.
-            unsafe {
-                ext.handle_call(
-                    function as *mut c_char,
-                    output,
-                    output_size as usize,
-                    Some(argv as *mut *mut i8),
-                    Some(argc as i32),
-                    true,
-                )
+        // arma-rs path: only the "sql" command (SQF-encoded payload array).
+        if function_str == "sql" {
+            if argv.is_null() {
+                // arma-rs's command macro `unwrap()`s the argv pointer whenever
+                // argc matches the handler's arity (1 for `sql`), so a null argv
+                // would panic across the FFI boundary instead of returning a code.
+                return -1;
             }
-        });
-    }
+            return with_extension(|ext| {
+                // SAFETY: All pointer arguments are guaranteed valid, non-null by the Arma engine contract.
+                unsafe {
+                    ext.handle_call(
+                        function as *mut c_char,
+                        output,
+                        output_size as usize,
+                        Some(argv as *mut *mut i8),
+                        Some(argc as i32),
+                        true,
+                    )
+                }
+            });
+        }
 
-    // Vanilla Arma convention: function is the command name or SQL statement,
-    // argv carries the args (bind params for SQL, operands for commands).
-    let mut args: Vec<&str> = Vec::with_capacity(argc as usize);
-    if !argv.is_null() {
-        for i in 0..argc as usize {
-            let p = unsafe { *argv.add(i) };
-            if !p.is_null() {
-                // SAFETY: `p` is a null-terminated string from the Arma engine contract.
-                if let Ok(s) = unsafe { CStr::from_ptr(p) }.to_str() {
-                    args.push(s);
+        // Vanilla Arma convention: function is the command name or SQL statement,
+        // argv carries the args (bind params for SQL, operands for commands).
+        let mut args: Vec<&str> = Vec::with_capacity(argc as usize);
+        if !argv.is_null() {
+            for i in 0..argc as usize {
+                let p = unsafe { *argv.add(i) };
+                if !p.is_null() {
+                    // SAFETY: `p` is a null-terminated string from the Arma engine contract.
+                    if let Ok(s) = unsafe { CStr::from_ptr(p) }.to_str() {
+                        args.push(s);
+                    }
                 }
             }
         }
+        let resp = dispatch::dispatch(&function_str, &args);
+        // SAFETY: `output`/`output_size` are the engine buffer contract.
+        unsafe { write_response(output, output_size, &resp) };
+        0
+    }));
+    match outcome {
+        Ok(rc) => rc,
+        Err(_) => {
+            // SAFETY: `output` is non-null (checked above) and `output_size`
+            // is the engine buffer contract.
+            unsafe {
+                write_response(
+                    output,
+                    output_size,
+                    &error_response(ErrorCode::Internal, "Command failed"),
+                );
+            }
+            -1
+        }
     }
-    let resp = dispatch::dispatch(&function_str, &args);
-    // SAFETY: `output`/`output_size` are the engine buffer contract.
-    unsafe { write_response(output, output_size, &resp) };
-    0
 }
 
 // ── Callback registration ──────────────────────────────────────────────────
@@ -340,8 +400,12 @@ pub unsafe extern "C" fn RVExtensionArgs(
 /// `callbackProc` must be a valid function pointer provided by the Arma engine.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn RVExtensionRegisterCallback(callbackProc: Option<Callback>) {
-    let mut cb = CALLBACK.lock().unwrap();
-    *cb = callbackProc;
+    // Panic barrier (F-01): a poisoned lock must not unwind across the
+    // extern "C" frame; recover the value instead.
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let mut cb = CALLBACK.lock().unwrap_or_else(|e| e.into_inner());
+        *cb = callbackProc;
+    }));
 }
 
 // ── Tests ──────────────────────────────────────────────────────────────────
