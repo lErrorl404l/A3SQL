@@ -1,9 +1,9 @@
-# Remediation Record v1.2: Rules-Compliance Review of a3db/a3sql
+# Remediation Record v1.3: Rules-Compliance Review of a3db/a3sql
 
 ## Document control
 
 - Report: remediation loop for the rules-compliance review of the a3db/a3sql repository
-- Version: v1.2
+- Version: v1.3
 - Date: 2026-08-08
 - Classification: OFFICIAL
 - Review owner: lead
@@ -110,16 +110,29 @@ failing test reproduced the defect before the fix and passed after the fix.
 
 ### F-06 MED — auth feature dormant
 
-- Action: WAIVED
-- Evidence: extension/Cargo.toml:69-72 — `default = ["sqf-preprocessor"]`,
-  `auth = ["ed25519-dalek"]` is optional and not in default features.
-- Justification: enabling ed25519 auth by default is a product decision
-  ("phased implementation" per the roadmap), not a defect the review should
-  force. The SECURITY.md scope claim is noted against the shipped
-  capability. The feature is not force-enabled.
-- Owner: product owner / maintainer.
-- Commit: none.
-- Status: OPEN to WAIVED, 2026-08-08
+- Action: FIXED (dead code removed, per maintainer decision)
+- Test-first evidence:
+  - The feature was optional (`auth = ["ed25519-dalek"]` NOT in
+    `default = ["sqf-preprocessor"]`) and its implementation carried
+    `#[allow(dead_code, reason = "phased auth implementation")]` markers,
+    so the code compiled out of every shipped build.
+  - Before: `auth` feature + `ed25519-dalek` dependency present;
+    `extension/src/auth.rs` (284 lines) and config plumbing compiled out.
+  - After: feature, dependency, module, and gating removed; the shipped TCP
+    LOGIN path is untouched. `cargo clippy --all-targets -- -D warnings` and
+    `cargo machete` are clean; the full suite (504 lib + integration tests,
+    including auth_default.rs fail-closed LOGIN and tcp_stress.rs) passes.
+- Fix: remove the dormant feature and its implementation rather than enable
+  it — a product decision by the maintainer. Delete auth.rs and its module
+  registration, drop `auth` and `ed25519-dalek` from Cargo.toml (lockfile
+  regenerated), strip the auth fields and `auth_enabled()`/`public_key_bytes()`
+  from config.rs, and remove the `cfg(feature = "auth")` verify_auth branch
+  and call-site preamble from dispatch.rs. The shipped LOGIN auth (ct_eq
+  constant-time compare in server.rs) and `listener_require_auth` fail-closed
+  default are unaffected.
+- RE-VERIFY: full `cargo test` passes; clippy -D warnings clean.
+- Commit: cd88878 (`build: remove dormant auth feature and ed25519 dependency (F-06)`)
+- Status: WAIVED to FIXED, 2026-08-08
 
 ### F-07 MED — plugin dlopen no integrity check
 
@@ -292,26 +305,28 @@ organization-level CSM, and the audit of the org reusable workflow behind
 ci.yml:20. Each requires server-side or organization-level access that a
 checkout does not have.
 
-## Status accounting (jsp-945), v1.2
+## Status accounting (jsp-945), v1.3
 
 All transitions re-verified against baseline 585a460, dated 2026-08-08.
 The v1.2 round closed the last OPEN finding: F-11 moved OPEN to FIXED.
+The v1.3 round resolved F-06: WAIVED to FIXED — the dormant auth feature
+was removed per maintainer decision instead of being enabled.
 
 | Finding | Status | Owner | Date | Version |
 |---------|--------|-------|------|---------|
-| F-01 | FIXED | lead | 2026-08-08 | v1.2 |
-| F-02 | FIXED | lead | 2026-08-08 | v1.2 |
-| F-03 | WAIVED | auditor | 2026-08-08 | v1.2 |
-| F-04 | FIXED | auditor | 2026-08-08 | v1.2 |
-| F-05 | WAIVED | lead | 2026-08-08 | v1.2 |
-| F-06 | WAIVED | auditor | 2026-08-08 | v1.2 |
-| F-07 | FIXED | lead | 2026-08-08 | v1.2 |
-| F-08 | WAIVED | auditor | 2026-08-08 | v1.2 |
-| F-09 | FIXED | lead | 2026-08-08 | v1.2 |
-| F-10 | FIXED | lead | 2026-08-08 | v1.2 |
-| F-11 | FIXED | lead | 2026-08-08 | v1.2 |
-| F-12 | FIXED | lead | 2026-08-08 | v1.2 |
-| F-13 | FIXED | clerk | 2026-08-08 | v1.2 |
-| F-14 | no-action | clerk | 2026-08-08 | v1.2 |
+| F-01 | FIXED | lead | 2026-08-08 | v1.3 |
+| F-02 | FIXED | lead | 2026-08-08 | v1.3 |
+| F-03 | WAIVED | auditor | 2026-08-08 | v1.3 |
+| F-04 | FIXED | auditor | 2026-08-08 | v1.3 |
+| F-05 | WAIVED | lead | 2026-08-08 | v1.3 |
+| F-06 | FIXED | lead | 2026-08-08 | v1.3 |
+| F-07 | FIXED | lead | 2026-08-08 | v1.3 |
+| F-08 | WAIVED | auditor | 2026-08-08 | v1.3 |
+| F-09 | FIXED | lead | 2026-08-08 | v1.3 |
+| F-10 | FIXED | lead | 2026-08-08 | v1.3 |
+| F-11 | FIXED | lead | 2026-08-08 | v1.3 |
+| F-12 | FIXED | lead | 2026-08-08 | v1.3 |
+| F-13 | FIXED | clerk | 2026-08-08 | v1.3 |
+| F-14 | no-action | clerk | 2026-08-08 | v1.3 |
 
-Summary: 9 FIXED, 4 WAIVED, 1 no-action, zero findings remain OPEN.
+Summary: 10 FIXED, 3 WAIVED, 1 no-action, zero findings remain OPEN.
