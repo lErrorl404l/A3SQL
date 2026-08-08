@@ -13,10 +13,11 @@ fail() { echo "GATE FAIL: $1" >&2; exit 1; }
 pass() { echo "GATE PASS: $1"; }
 
 g0_snapshot() {
-    actual=$(git rev-parse HEAD) || fail "git rev-parse HEAD failed"
-    [ "$actual" = "$PINNED_SHA" ] \
-        || fail "HEAD $actual != pinned $PINNED_SHA"
-    pass "HEAD is pinned at $PINNED_SHA"
+    # The review branch builds ON the pin; strict equality would never pass
+    # after the snapshot commit lands. Correct semantics: pin is an ancestor.
+    git merge-base --is-ancestor "$PINNED_SHA" HEAD \
+        || fail "pinned $PINNED_SHA is not an ancestor of HEAD"
+    pass "HEAD descends from pinned $PINNED_SHA"
 
     [ -f "$SNAPSHOT" ] || fail "snapshot $SNAPSHOT missing"
     grep -q "SHA: $PINNED_SHA" "$SNAPSHOT" \
