@@ -5,7 +5,8 @@
 // Build (example):
 //   gcc -shared -o my_plugin.so my_plugin.c -fPIC
 //
-// Drop into @a3sql/plugins/ — loaded at startup.
+// Drop into a directory and load it at runtime from Arma with the
+// `plugin_dir <dir>` command.
 //
 // For full docs: https://github.com/lErrorl404l/a3sql/wiki/Plugins
 
@@ -21,16 +22,17 @@ extern "C" {
 // ── Plugin entry point ─────────────────────────────────────────────────
 
 // Every plugin MUST export this function.
-// Returns the plugin name (static string, not freed).
-// Called once at startup.
+// Takes no arguments. Returns the plugin name (static string, not freed).
+// Called once per plugin load.
 typedef const char* (*a3sql_plugin_init_t)(void);
 #define A3SQL_PLUGIN_INIT __attribute__((visibility("default"))) const char* a3sql_plugin_init
 
 // ── Registration callbacks (call from init) ────────────────────────────
 
-// Register a SQL function callable as fn_<name>(args).
+// Register a SQL function callable from SQL as fn_<name>(args).
 // min_args/max_args: argument count constraints (-1 = unlimited).
-// The function name is prefixed with fn_ automatically.
+// The name is stored verbatim; SQL calls must use the fn_ prefix
+// (register `echo`, then call `fn_echo`).
 int32_t a3sql_plugin_register_function(
     const char* plugin_name,
     const char* function_name,

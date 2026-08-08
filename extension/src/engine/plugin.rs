@@ -244,21 +244,20 @@ fn load_plugin_file(path: &str) -> Result<String, EngineError> {
     unsafe {
         let lib = libloading::Library::new(path).map_err(|e| EngineError::Exec(format!("dlopen: {}", e)))?;
 
-        let init: libloading::Symbol<unsafe extern "C" fn(*mut std::ffi::c_void) -> *const std::ffi::c_char> = lib
+        // The entry point is `const char* a3sql_plugin_init(void)` per
+        // a3sql_plugin.h. It takes no context argument; registration flows
+        // through the plugin calling back into the exported
+        // `a3sql_plugin_register_function` symbol.
+        let init: libloading::Symbol<unsafe extern "C" fn() -> *const std::ffi::c_char> = lib
             .get(b"a3sql_plugin_init")
             .map_err(|_| EngineError::Exec("no a3sql_plugin_init symbol".into()))?;
 
-        let registry_ptr: *mut std::ffi::c_void = std::ptr::null_mut();
-        let name_ptr = init(registry_ptr);
+        let name_ptr = init();
         if name_ptr.is_null() {
             return Err(EngineError::Exec("plugin init returned null".into()));
         }
         let name = std::ffi::CStr::from_ptr(name_ptr).to_string_lossy().into_owned();
 
-        // Register functions from the plugin using the C ABI callback.
-        // The plugin calls back into a3sql to register each function.
-        // We pass a function pointer for the plugin to call.
-        // For now, plugins register via the init() call.
         // The library handle is leaked intentionally — plugins live for the process lifetime.
         std::mem::forget(lib);
 

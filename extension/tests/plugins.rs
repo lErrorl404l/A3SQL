@@ -33,12 +33,13 @@ fn gap_c_abi_plugin() {
 // only) before dlopen.
 
 /// Minimal valid plugin fixture: single-file cdylib exporting
-/// `a3sql_plugin_init`, compiled by the rustc already on PATH (the repo is a
-/// cargo project). The self-declared plugin name is `gate_test_plugin`.
+/// `a3sql_plugin_init` with the exact published header signature
+/// `const char* a3sql_plugin_init(void)` (include/a3sql_plugin.h), compiled
+/// by the rustc already on PATH (the repo is a cargo project). The
+/// self-declared plugin name is `gate_test_plugin`.
 const PLUGIN_SRC: &str = r#"
-use std::ffi::c_void;
 #[unsafe(no_mangle)]
-pub extern "C" fn a3sql_plugin_init(_ctx: *mut c_void) -> *const std::ffi::c_char {
+pub extern "C" fn a3sql_plugin_init() -> *const std::ffi::c_char {
     b"gate_test_plugin\0".as_ptr() as *const std::ffi::c_char
 }
 "#;
@@ -79,4 +80,28 @@ fn plugin_dir_rejects_symlinks_before_dlopen() {
     assert_eq!(loads, 1, "regular file must load and the symlink must be rejected: {r}");
 
     std::fs::remove_dir_all(&dir).ok();
+}
+
+// ── F-11: the loader must resolve a3sql_plugin_init as a no-argument fn ────
+//
+// The header (include/a3sql_plugin.h) declares the entry point as
+// `const char* (*)(void)`. The loader previously resolved it as
+// `fn(*mut c_void) -> *const c_char` and called it with a null context
+// argument. That violation is runtime-benign on the supported ABIs (the
+// callee ignores the extra argument), so no behavioral test can observe it.
+// This mechanical source gate pins the loader to the header contract so the
+// drift cannot return.
+
+#[test]
+fn loader_init_matches_header_signature() {
+    let loader = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/engine/plugin.rs"))
+        .expect("loader source must exist");
+    assert!(
+        loader.contains("fn() -> *const std::ffi::c_char"),
+        "loader must resolve a3sql_plugin_init as fn() -> *const c_char"
+    );
+    assert!(
+        !loader.contains("fn(*mut std::ffi::c_void)"),
+        "loader must not pass a context argument to a3sql_plugin_init"
+    );
 }
