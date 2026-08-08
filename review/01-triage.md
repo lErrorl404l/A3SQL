@@ -1,7 +1,7 @@
 # Clause-Level Applicability Triage — a3db/a3sql
 
 Triage of the 34-brief defence corpus (`briefs-index.md`, 7 Aug 2026; briefs
-in `~/.config/opencode/rules/briefs/`) against the pinned snapshot
+in the rules config directory) against the pinned snapshot
 (`review/00-snapshot.md` @ 585a460). Zero PARTIAL: every brief is APPLIES or
 N/A. APPLIES rows receive evidence collection in T3a–T3d; N/A rows are
 excluded. Owners and checks for APPLIES rows preserved verbatim from the

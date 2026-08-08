@@ -16,14 +16,14 @@ use super::super::value::DbValue;
 
 use crate::engine::error::EngineError;
 
-// ponytail: thread-local DB snapshot for subquery evaluation (avoids deadlock
+// thread-local DB snapshot for subquery evaluation (avoids deadlock
 // when exec_subquery is called inside eval_expr while DB lock is held).
 thread_local! {
     pub(crate) static SUBQ_DB: std::cell::RefCell<Option<Database>> =
         const { std::cell::RefCell::new(None) };
 }
 
-// ponytail: per-statement subquery result cache. exec_subquery clones the
+// per-statement subquery result cache. exec_subquery clones the
 // whole DB snapshot per call — without this, `WHERE n=(SELECT 1)` re-clones
 // O(rows) for EVERY row → O(n²). Keyed on the (correlation-rewritten) query
 // string: uncorrelated subqueries rewrite identically each row → 1 eval then
@@ -38,7 +38,7 @@ pub(crate) fn clear_subq_cache() {
     SUBQ_CACHE.with(|c| c.borrow_mut().clear());
 }
 
-// ponytail: global tracking for last_insert_rowid / changes (no db ref in eval path)
+// global tracking for last_insert_rowid / changes (no db ref in eval path)
 thread_local! {
     pub(crate) static LAST_INSERT_ROWID: std::cell::RefCell<Option<String>> =
         const { std::cell::RefCell::new(None) };
@@ -46,7 +46,7 @@ thread_local! {
         const { std::cell::RefCell::new(0) };
 }
 
-// ponytail: thread-local buffer for COPY FROM stdin data
+// thread-local buffer for COPY FROM stdin data
 thread_local! {
     pub(crate) static COPY_STDIN: std::cell::RefCell<Option<String>> =
         const { std::cell::RefCell::new(None) };

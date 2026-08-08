@@ -27,11 +27,13 @@ g0_snapshot() {
 
 g1_triage() {
     # Clause-level triage (review/01-triage.md) vs the briefs corpus.
-    # Corpus = briefs/*.md in the rules config dir (briefs-index.md, 7 Aug 2026).
+    # Corpus = briefs/*.md in the briefs corpus directory (REVIEW_BRIEFS_DIR;
+    # briefs-index.md, 7 Aug 2026).
     local file="review/01-triage.md"
     [ -f "$file" ] || fail "triage $file missing"
 
-    local briefs_dir="$HOME/.config/opencode/rules/briefs"
+    local briefs_dir="${REVIEW_BRIEFS_DIR:-}"
+    [ -n "$briefs_dir" ] || fail "set REVIEW_BRIEFS_DIR to the briefs corpus directory"
     [ -d "$briefs_dir" ] || fail "briefs corpus dir missing: $briefs_dir"
 
     # 1) corpus inventory: every *.md in briefs/ is a brief

@@ -54,7 +54,7 @@ fn bulk_insert_500() {
     ];
     let t = Table::new("bulk".into(), cols).unwrap();
     db.create_table("bulk", t).unwrap();
-    // ponytail: miri interprets every instruction; a small batch exercises the
+    // miri interprets every instruction; a small batch exercises the
     // same code path while keeping the miri CI job fast. Native runs full size.
     let n = if cfg!(miri) { 50 } else { 500 };
     for i in 0..n {
@@ -341,7 +341,7 @@ fn select_by_pk_uses_fast_path_and_subqueries_still_work() {
     // contains a subquery — verify both paths work.
     let mut db = Database::new();
     parse_and_exec("CREATE TABLE b (id TEXT PRIMARY KEY, val INT)", &mut db).unwrap();
-    // ponytail: miri interprets every instruction; a small batch exercises the
+    // miri interprets every instruction; a small batch exercises the
     // same code path while keeping the miri CI job fast. Native runs full size.
     let n = if cfg!(miri) { 100 } else { 5000 };
     for i in 0..n {
@@ -1415,7 +1415,7 @@ fn m8_group_by_large_set_correct_groups() {
     // order (row i's group is i % 5, so the order is 0,1,2,3,4).
     let mut db = Database::new();
     parse_and_exec("CREATE TABLE t (id INT PRIMARY KEY, grp INT, v INT)", &mut db).unwrap();
-    // ponytail: miri interprets every instruction; a small batch exercises the
+    // miri interprets every instruction; a small batch exercises the
     // same code path while keeping the miri CI job fast. Native runs full size.
     let n = if cfg!(miri) { 200 } else { 2000 };
     for i in 0..n {
@@ -1473,7 +1473,7 @@ fn m8_distinct_dedup_large_set() {
     // 2000 rows, 7 distinct values — dedup must be complete and correct.
     let mut db = Database::new();
     parse_and_exec("CREATE TABLE t (id INT PRIMARY KEY, v INT)", &mut db).unwrap();
-    // ponytail: miri runs small, native runs full size.
+    // miri runs small, native runs full size.
     let n = if cfg!(miri) { 100 } else { 2000 };
     for i in 0..n {
         parse_and_exec(&format!("INSERT INTO t VALUES ({}, {})", i, i % 7), &mut db).unwrap();
@@ -1493,7 +1493,7 @@ fn m8_group_by_wide_perf_smoke() {
     // timing assert (flaky); the bench exposes the speedup.
     let mut db = Database::new();
     parse_and_exec("CREATE TABLE t (id INT PRIMARY KEY, grp INT, v INT)", &mut db).unwrap();
-    // ponytail: miri runs a small batch; native runs full size.
+    // miri runs a small batch; native runs full size.
     let n = if cfg!(miri) { 300 } else { 10_000 };
     for i in 0..n {
         parse_and_exec(&format!("INSERT INTO t VALUES ({}, {}, {})", i, i % 5000, i), &mut db).unwrap();

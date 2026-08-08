@@ -27,7 +27,7 @@ __pycache__/
 Thumbs.db
 
 # AI tooling (config, session state, scratch)
-.opencode/
+.open*code/
 .omo/
 .codex/
 .gemini/

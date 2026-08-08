@@ -61,7 +61,7 @@ pub(crate) static DB: LazyLock<Mutex<engine::Database>> = LazyLock::new(|| Mutex
 /// privileges — they can read/write any memory reachable from the DLL.
 /// The callback pointer is a convenience, not a security boundary.
 pub(crate) static CALLBACK: LazyLock<Mutex<Option<Callback>>> = LazyLock::new(|| Mutex::new(None));
-// ponytail: external TCP listener — global lock on a single listener
+// external TCP listener — global lock on a single listener
 pub(crate) static LISTENER: LazyLock<Mutex<Option<std::net::TcpListener>>> = LazyLock::new(|| Mutex::new(None));
 
 /// Stored credentials for TCP authentication. Empty = anonymous access.

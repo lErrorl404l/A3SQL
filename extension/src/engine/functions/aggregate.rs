@@ -305,7 +305,7 @@ pub(crate) fn eval_projection_expr(
                     Ok(("MAX".to_string(), val))
                 }
                 _ => {
-                    // ponytail: unknown function, evaluate as expression on group
+                    // unknown function, evaluate as expression on group
                     let val = eval_expr_on_group(expr, rows, col_map)?;
                     Ok((format!("{}", f.name), val))
                 }

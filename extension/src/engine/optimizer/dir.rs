@@ -133,7 +133,7 @@ impl OptimizerRule for SimplifyExpressions {
     }
 
     fn rewrite(&self, stmt: Statement) -> Result<Transformed<Statement>, EngineError> {
-        // ponytail: expression simplification is already handled inline
+        // expression simplification is already handled inline
         // during evaluation. This rule is a placeholder for future passes
         // like constant folding, predicate simplification, etc.
         Ok(Transformed::No(stmt))

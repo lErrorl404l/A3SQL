@@ -4,7 +4,7 @@
 // wraps `hemtt-preprocessor` to expand SQF macros before the expression
 // lexer sees the source. When disabled, this is a no-op passthrough.
 //
-// ponytail: the preprocessor only handles inline single-expression input
+// the preprocessor only handles inline single-expression input
 // (#define + #ifdef within the expression). File includes (#include) are
 // skipped since SQF_EVAL() expressions are self-contained strings.
 // Add a custom Resolver if #include support is needed later.

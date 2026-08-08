@@ -106,7 +106,7 @@ pub(crate) fn execute(stmt: &Statement, db: &mut Database) -> Result<String, Eng
         }
         Statement::Set(set) => stmts::transaction::exec_set(set, db),
         Statement::Pragma { name, value, is_eq: _ } => {
-            // ponytail: PRAGMA stored in config, no actual behavior change
+            // PRAGMA stored in config, no actual behavior change
             if let Some(v) = value {
                 db.set_config(&object_name_str(name), &v.to_string());
             }

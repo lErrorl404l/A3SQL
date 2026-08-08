@@ -140,7 +140,7 @@ pub(crate) fn explain_statement(stmt: &Statement, db: &Database) -> Result<Strin
         }
 
         Statement::Update(upd) => {
-            // ponytail: inline resolve_table_from_joins to avoid depending on private fn in execute.rs
+            // inline resolve_table_from_joins to avoid depending on private fn in execute.rs
             let tname = match &upd.table.relation {
                 TableFactor::Table { name, .. } => name.to_string().to_lowercase(),
                 _ => String::new(),

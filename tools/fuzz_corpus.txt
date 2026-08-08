@@ -1,5 +1,5 @@
 # a3sql fuzz seed corpus — one SQL statement per line.
-# Extracted from the deep mod-pattern harnesses (/tmp/opencode/deep_*.py) and
+# Extracted from the deep mod-pattern harnesses (/tmp/deep_*.py) and
 # tools/sql_smoke_test.py. Used to seed the proptest fuzz harness in
 # extension/src/fuzz.rs (and any future cargo-fuzz corpus).
 CREATE TABLE users (uid INT PRIMARY KEY, name STRING, role STRING, home STRING)

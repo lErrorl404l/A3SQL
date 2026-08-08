@@ -115,7 +115,7 @@ switch (toLower _matchType) do {
             _matched = _targets select {
                 private _t = _x;
                 private _hit = false;
-                { if (_t isKindOf _x) exitWith { _hit = true }; } forEach _matchValue;  // ponytail: O(n×m) fine for typical <100 rules
+                { if (_t isKindOf _x) exitWith { _hit = true }; } forEach _matchValue;  // O(n×m) fine for typical <100 rules
                 _hit
             };
         } else {

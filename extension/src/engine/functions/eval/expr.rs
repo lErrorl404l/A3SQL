@@ -141,7 +141,7 @@ pub(crate) fn eval_expr(
         } => {
             let val = eval_expr(expr, row, col_map)?;
             let pat = eval_expr(pattern, row, col_map)?;
-            // ponytail: SIMILAR TO uses LIKE-style matching (%, _ wildcards)
+            // SIMILAR TO uses LIKE-style matching (%, _ wildcards)
             let matched = simple_like(&value_to_string(&val), &value_to_string(&pat));
             Ok(DbValue::Bool(if *negated { !matched } else { matched }))
         }
@@ -441,7 +441,7 @@ pub(crate) fn exec_function(
                         // matching arma_rs's Extension::run_callbacks contract.
                         cb(name_c.as_ptr(), args_c.as_ptr(), ctx_c.as_ptr());
                     }
-                    // ponytail: SQF handles the actual result; return placeholder
+                    // SQF handles the actual result; return placeholder
                     return Ok(DbValue::String(format!("<SQF: {}>", fn_name)));
                 }
                 return Err(EngineError::Exec(format!("Unknown plugin function '{}'", fn_name)));

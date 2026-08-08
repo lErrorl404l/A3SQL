@@ -132,7 +132,7 @@ fn datetime_from_args(name: &str, args: &[FunctionArg]) -> Result<String, Engine
             None => return Err(EngineError::Exec(format!("Unsupported {name}() modifier '{}'", m))),
         }
     }
-    // ponytail: localtime modifier accepted but UTC returned — real offset
+    // localtime modifier accepted but UTC returned — real offset
     // needs the time crate 'local-offset' feature
     let secs = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -162,7 +162,7 @@ fn epoch_to_datetime(secs: i64) -> String {
 /// Supports `+N days/hours/minutes/seconds`, `N months`, `N years`, and the
 /// no-op markers `localtime`/`utc`. Unknown modifiers return None.
 ///
-/// ponytail: month/year deltas are approximated as 30/365 days — exact
+/// month/year deltas are approximated as 30/365 days — exact
 /// calendar math needs a real date library; add when a caller depends on
 /// Jan-31 + 1 month semantics.
 fn parse_sqlite_date_modifier(m: &str) -> Option<i64> {
@@ -381,7 +381,7 @@ pub(crate) fn extract_func_args(func: &Function) -> Vec<DbValue> {
                     arg: FunctionArgExpr::Expr(expr),
                     ..
                 } => {
-                    // ponytail: no eval context, pass raw SQL repr
+                    // no eval context, pass raw SQL repr
                     args.push(DbValue::String(format!("{:?}", expr)));
                 }
                 Unnamed(FunctionArgExpr::Wildcard) => {

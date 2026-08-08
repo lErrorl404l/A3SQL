@@ -18,7 +18,7 @@ fn with_ext_suffix(path: &std::path::Path, suffix: &str) -> std::path::PathBuf {
 }
 
 fn safe_data_path(filename: &str) -> Result<std::path::PathBuf, String> {
-    // ponytail: global data_dir lock; per-account dirs if multi-tenant needed
+    // global data_dir lock; per-account dirs if multi-tenant needed
     let p = Path::new(filename);
     // `has_root()` catches Windows root-relative paths like `/foo` or `\foo`
     // that `is_absolute()` misses (no drive prefix) — those still escape the

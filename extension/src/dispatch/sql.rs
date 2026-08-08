@@ -48,7 +48,7 @@ pub(crate) fn split_sql(sql: &str) -> Vec<String> {
 /// - Integers: placed as-is (parsed validation)
 /// - NULL: placed as `NULL`
 pub(crate) fn substitute_params(sql: &str, args: &[&str]) -> String {
-    // ponytail: simple char-by-char scan — fast enough for embedded DB
+    // simple char-by-char scan — fast enough for embedded DB
     let mut result = String::with_capacity(sql.len());
     let mut in_string = false;
     let mut chars = sql.char_indices().peekable();
@@ -278,7 +278,7 @@ fn handle_create_trigger(sql: &str, db: &mut crate::engine::database::Database) 
         rest
     };
 
-    // Check for WHEN condition (skip it - ponytail: not supported)
+    // Check for WHEN condition (skipped — not supported)
     let rest = if rest.to_lowercase().starts_with("when") {
         // Find BEGIN after WHEN
         let begin_pos = rest

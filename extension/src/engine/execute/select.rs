@@ -525,6 +525,6 @@ pub(crate) fn apply_order_limit(json_str: &str, query: &Query) -> Result<String,
     if query.order_by.is_none() && query.limit_clause.is_none() {
         return Ok(json_str.to_string());
     }
-    // ponytail: ORDER BY/LIMIT on UNION results is complex — pass through raw
+    // ORDER BY/LIMIT on UNION results is complex — pass through raw
     Ok(json_str.to_string())
 }

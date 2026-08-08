@@ -21,7 +21,7 @@ if (_veh != _unit) then {
 private _now = str date;
 private _mission = missionName;
 
-// ponytail: inline escape for SQL single-quotes, extract to shared fn if more fns need it
+// inline escape for SQL single-quotes, extract to shared fn if more fns need it
 _loadout = _loadout regexReplace ["'", "''"];
 _vehicleRole = _vehicleRole regexReplace ["'", "''"];
 

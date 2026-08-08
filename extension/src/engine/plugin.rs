@@ -219,11 +219,11 @@ pub(crate) fn load_plugin_dir(path: &str) -> Vec<String> {
             Ok(ft) if ft.is_file() => {}
             _ => continue,
         }
-        // ponytail: libloading handles both .so and .dll transparently
+        // libloading handles both .so and .dll transparently
         match load_plugin_file(p.to_string_lossy().as_ref()) {
             Ok(name) => loaded.push(name),
             Err(e) => {
-                // ponytail: log and skip bad plugins
+                // log and skip bad plugins
                 let fname = p.file_name().map(|n| n.to_string_lossy()).unwrap_or_default();
                 eprintln!("[a3sql] plugin load failed {}: {}", fname, e);
             }
@@ -292,7 +292,7 @@ pub extern "C" fn a3sql_plugin_register_function(
         .to_string_lossy()
         .into_owned();
 
-    // ponytail: C ABI plugins just register the name + arg counts.
+    // C ABI plugins just register the name + arg counts.
     // Actual function evaluation requires a callback, which we expose
     // through the plugin's dispatch function pointer.
     let func = PluginFunction {

@@ -24,7 +24,7 @@ multiple-versions = "deny"
 skip = [
     # Old versions pulled in transitively — cannot easily upgrade
     { name = "getrandom", version = "0.2.17" },
-    # ponytail: r-efi and syn skips removed — cargo-deny warned unnecessary-skip (only one version)
+    # r-efi and syn skips removed — cargo-deny warned unnecessary-skip (only one version)
     { name = "thiserror", version = "1.0.69" },
     { name = "thiserror-impl", version = "1.0.69" },
     { name = "winnow", version = "0.7.15" },

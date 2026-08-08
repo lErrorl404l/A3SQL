@@ -196,7 +196,7 @@ pub(crate) fn exec_insert(ins: &Insert, db: &mut Database) -> Result<String, Eng
                 if (matches!(on_conflict, Some(SqliteOnConflict::Ignore)) || ins.ignore)
                     && matches!(e, EngineError::DuplicateKey(_)) =>
             {
-                // ponytail: silently skip — row already exists
+                // silently skip — row already exists
             }
             // INSERT OR ROLLBACK: rollback transaction on conflict
             Err(e)

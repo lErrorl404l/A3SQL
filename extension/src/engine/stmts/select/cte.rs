@@ -104,7 +104,7 @@ pub(crate) fn exec_cte_query(query: &Query, db: &mut Database) -> Result<String,
                 ..
             } = &*cte.query.body
             {
-                // ponytail: anchor is already in db via first pass above.
+                // anchor is already in db via first pass above.
                 // The recursive term references the CTE alias — run it in a loop
                 // until no new rows are produced (iterative fixpoint).
                 const MAX_ITERS: usize = 100;

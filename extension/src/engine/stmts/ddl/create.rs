@@ -174,7 +174,7 @@ pub(crate) fn exec_create_table(def: &sqlparser::ast::CreateTable, db: &mut Data
 // ── CREATE VIEW ─────────────────────────────────────────────────────────
 
 pub(crate) fn exec_create_view(cv: &sqlparser::ast::CreateView, db: &mut Database) -> Result<String, EngineError> {
-    // ponytail: non-materialized views only (re-executed each reference)
+    // non-materialized views only (re-executed each reference)
     if cv.materialized {
         return Err(EngineError::Exec("Materialized views are not supported".into()));
     }

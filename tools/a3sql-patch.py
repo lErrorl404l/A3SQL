@@ -165,7 +165,7 @@ def send_live_patch(
     return send_command(host, port, f"live_patch {cmd}", user, password)
 
 
-# ── SQL escaping (ponytail: minimal — only single-quote) ─────────────────
+# ── SQL escaping (minimal — only single-quote) ───────────────────────────
 
 
 def _sqlesc(s: Any) -> str:

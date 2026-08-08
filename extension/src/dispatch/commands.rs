@@ -31,7 +31,7 @@ pub(super) fn handle_live_patch(db: &mut engine::Database, trimmed: &str, args: 
     };
     let first_arg = lp_args.first().copied().unwrap_or("");
 
-    // ponytail: table creation is idempotent via IF NOT EXISTS
+    // table creation is idempotent via IF NOT EXISTS
     let create_sql = "CREATE TABLE IF NOT EXISTS patch_rules (id INTEGER AUTO_INCREMENT, name TEXT NOT NULL PRIMARY KEY, active INTEGER DEFAULT 1, priority INTEGER DEFAULT 0, match_type TEXT NOT NULL DEFAULT 'exact', match_value TEXT DEFAULT '', target_type TEXT NOT NULL, property TEXT NOT NULL, operator TEXT DEFAULT 'set', value TEXT NOT NULL, created_at TEXT DEFAULT '')";
     if let Err(e) = execute::parse_and_exec(create_sql, db) {
         return error_response(ErrorCode::Exec, &e.to_string());
