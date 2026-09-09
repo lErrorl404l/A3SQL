@@ -15,7 +15,9 @@ include = [
 
 [version]
 path = "addons/main/script_version.hpp"
-git_hash = 1
+# 0 = version purely from script_version.hpp, bumped at release time
+# (matches ACE3/ACRE2/ZEN practice). Use 8 for a git-hash suffix.
+git_hash = 0
 
 # Launch profiles moved to .hemtt/launch.toml
 # Run: hemtt launch [profile]
@@ -31,7 +33,7 @@ archive = true
 #   hemtt keys generate   # run locally, interactive password prompt
 # Keep a3sql.hemttprivatekey OUT of VCS (it is gitignored).
 # Do NOT commit private_key_hash — HEMTT hard-fails encrypted keys in CI.
-# CI uses per-release ephemeral signing (hemtt build --release) instead.
+# CI uses per-release ephemeral signing (hemtt release) instead.
 [signing]
 authority = "a3sql"
 
