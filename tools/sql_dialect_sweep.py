@@ -244,23 +244,3 @@ check("lower/upper", "SELECT lower('ABC'), upper('abc')")
 
 print(f"\nDIALECT SWEEP: {passed} passed, {failed} failed")
 sys.exit(1 if failed else 0)
-
-# ── Path B additions: SQLite compat layer ────────────────────────────
-check(
-    "INSERT OR REPLACE",
-    "CREATE TABLE t_ir (id INTEGER PRIMARY KEY, v TEXT); INSERT OR REPLACE INTO t_ir VALUES (1, 'x')",
-)
-check("INSERT OR IGNORE dup", "INSERT OR IGNORE INTO t_ir VALUES (1, 'y')")
-check("INSERT OR IGNORE new", "INSERT OR IGNORE INTO t_ir VALUES (2, 'z')")
-check("datetime +1 day", "SELECT datetime('now', '+1 day')")
-check("datetime -30 days", "SELECT datetime('now', '-30 days')")
-check("datetime +3 hours", "SELECT datetime('now', '+3 hours')")
-check("date()", "SELECT date('now')")
-check("time()", "SELECT time('now')")
-check("strftime", "SELECT strftime('%Y-%m-%d %H:%M:%S', 'now')")
-check("instr", "SELECT instr('hello', 'll')")
-check("ltrim", "SELECT ltrim('  x')")
-check("rtrim", "SELECT rtrim('x  ')")
-check("typeof", "SELECT typeof(42)")
-check("char", "SELECT char(65, 66)")
-check("lower/upper", "SELECT lower('ABC'), upper('abc')")
