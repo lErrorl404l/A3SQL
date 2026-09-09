@@ -1,6 +1,6 @@
 /* A3SQL in-game smoke test — comprehensive feature verification
  * Run from Arma 3 debug console (server). Outputs to RPT.
- * Usage: execVM "z\a3db\addons\main\tests\a3sql_smoke_test.sqf"
+ * Usage: execVM "z\a3sql\addons\main\tests\a3sql_smoke_test.sqf"
  */
 
 private _fail = 0;

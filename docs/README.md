@@ -160,6 +160,18 @@ private _version = "a3sql" callExtension "version";
 // → [0,"OK","a3sql <current version>"]
 ```
 
+If the extension fails to load, Arma 2.22+ returns one of these error codes from `callExtension` instead of the result array:
+
+| Code | Meaning |
+|---|---|
+| 400 | Extension load failed |
+| 403 | Extension blocked by BattlEye |
+| 404 | Extension not found (wrong path or missing `.so`/`.dll`) |
+| 412 | Extension blocked by script |
+| 415 | Wrong architecture (32-bit binary on a 64-bit game, or vice versa) |
+
+On older game builds a load failure returns an empty string. If you see 404, check the extension binary is unpacked next to the PBOs. If you see 415, you are running the wrong bitness for the game client.
+
 ## Server admins
 
 ### CBA settings
