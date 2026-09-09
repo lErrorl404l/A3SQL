@@ -10,7 +10,7 @@ params [
     ["_default", "", ["", 0, true, false]]
 ];
 
-if (isNil "_value" || {_value isEqualTo ""} || {_value isEqualTo 0} || {_value isEqualTo false}) then {
+if (isNil "_value" || _value isEqualTo "" || _value isEqualTo 0 || _value isEqualTo false) then {
     _default
 } else {
     _value
