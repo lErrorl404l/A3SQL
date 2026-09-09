@@ -31,7 +31,7 @@ _verify = _ext callExtension "SELECT val FROM smoke WHERE id = 'a'";
 systemChat format ["[A3SQL] update verify: %1", _verify];
 
 _fuzzy = _ext callExtension "SELECT id FROM smoke WHERE val %% '15'";
-systemChat format ["[A3SQL] fuzzy: %1", _fuzzy];
+systemChat format ["[A3SQL] fuzzy (expect a): %1", _fuzzy];
 
 _begin = _ext callExtension "BEGIN";
 systemChat format ["[A3SQL] txn begin: %1", _begin];
@@ -98,9 +98,9 @@ diag_log "=== A3SQL PATCH TEST ===";
 private _lp1 = _ext callExtension ["live_patch", ["texture", "tex1", "a3sql\\test.paa"]];
 systemChat format ["[PATCH] live_patch: %1", _lp1];
 
-// 2. patch_rules table auto-created
-private _tbl = _ext callExtension "SELECT name FROM sqlite_master WHERE type='table' AND name='patch_rules'";
-systemChat format ["[PATCH] patch_rules exists: %1", _tbl];
+// 2. patch_rules table auto-created — SHOW TABLES is the engine's catalog query
+private _tbl = _ext callExtension "SHOW TABLES";
+systemChat format ["[PATCH] tables: %1", _tbl];
 
 // 3. Insert a test rule and read it back
 private _ins = _ext callExtension "INSERT INTO patch_rules (name, active, priority, target_type, property, value) VALUES ('test_rule', 1, 0, 'texture', 'tex1', 'test.paa')";
