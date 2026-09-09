@@ -129,6 +129,11 @@ jobs:
           # Realistic SQL workloads (stats/admin/loadouts domains) through the
           # real binary — surfaces dialect gaps vs real-mod query shapes.
           python3 tools/sql_compat_report.py --bin a3sql_x64.so
+      - name: SQL dialect sweep
+        run: |
+          # Every feature documented in SQL-Dialect.md through the real binary.
+          # Exit 0 = documented == working (Production-Readiness gate).
+          python3 tools/sql_dialect_sweep.py a3sql_x64.so
       - name: Build addon
         run: hemtt build
       - name: Upload addon
@@ -149,31 +154,32 @@ jobs:
           submodules: recursive
       - name: Install HEMTT
         uses: arma-actions/hemtt@a0570ddd80d2b7be9c0f052494c0f700b42668dd # v1
-      - name: Download all artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      - name: Download extension binaries
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          pattern: a3sql-*
-          merge-multiple: true
+          # NO merge-multiple — several artifacts contain liba3sql.so /
+          # a3sql.dll; flattening collides nondeterministically (see the
+          # build-addon job comment). Pattern a3sql-*-* picks the four cross
+          # artifacts and excludes a3sql-addon (single-hyphen name).
+          pattern: a3sql-*-*
           path: extension/target/release
       - name: Rename extension binaries to Arma naming convention
         run: |
           # a3sql_x64.so (Linux 64-bit)
-          if [ -f extension/target/release/liba3sql.so ]; then
-            cp extension/target/release/liba3sql.so a3sql_x64.so
+          if [ -f extension/target/release/a3sql-x86_64-unknown-linux-gnu/liba3sql.so ]; then
+            cp extension/target/release/a3sql-x86_64-unknown-linux-gnu/liba3sql.so a3sql_x64.so
           fi
           # a3sql_x64.dll (Windows 64-bit)
-          if [ -f extension/target/release/a3sql_x64.dll ]; then
-            cp extension/target/release/a3sql_x64.dll a3sql_x64.dll
-          elif [ -f extension/target/release/a3sql.dll ]; then
-            cp extension/target/release/a3sql.dll a3sql_x64.dll
+          if [ -f extension/target/release/a3sql-x86_64-pc-windows-gnu/a3sql.dll ]; then
+            cp extension/target/release/a3sql-x86_64-pc-windows-gnu/a3sql.dll a3sql_x64.dll
           fi
-          # a3sql.so (Linux 32-bit) — already renamed by upstream job
-          if [ -f extension/target/release/a3sql_x86.so ]; then
-            cp extension/target/release/a3sql_x86.so a3sql.so
+          # a3sql.so (Linux 32-bit)
+          if [ -f extension/target/release/a3sql-i686-unknown-linux-gnu/a3sql_x86.so ]; then
+            cp extension/target/release/a3sql-i686-unknown-linux-gnu/a3sql_x86.so a3sql.so
           fi
-          # a3sql.dll (Windows 32-bit) — already renamed by upstream job
-          if [ -f extension/target/release/a3sql_x86.dll ]; then
-            cp extension/target/release/a3sql_x86.dll a3sql.dll
+          # a3sql.dll (Windows 32-bit)
+          if [ -f extension/target/release/a3sql-i686-pc-windows-gnu/a3sql_x86.dll ]; then
+            cp extension/target/release/a3sql-i686-pc-windows-gnu/a3sql_x86.dll a3sql.dll
           fi
           ls -la a3sql*.so a3sql*.dll 2>/dev/null || echo "(no extension binaries present)"
       - name: Build release
@@ -195,31 +201,30 @@ jobs:
           submodules: recursive
       - name: Install HEMTT
         uses: arma-actions/hemtt@a0570ddd80d2b7be9c0f052494c0f700b42668dd # v1
-      - name: Download all artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+      - name: Download extension binaries
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          pattern: a3sql-*
-          merge-multiple: true
+          # NO merge-multiple — see release job comment. Pattern a3sql-*-*
+          # picks the four cross artifacts and excludes a3sql-addon.
+          pattern: a3sql-*-*
           path: extension/target/release
       - name: Rename extension binaries to Arma naming convention
         run: |
           # a3sql_x64.so (Linux 64-bit)
-          if [ -f extension/target/release/liba3sql.so ]; then
-            cp extension/target/release/liba3sql.so a3sql_x64.so
+          if [ -f extension/target/release/a3sql-x86_64-unknown-linux-gnu/liba3sql.so ]; then
+            cp extension/target/release/a3sql-x86_64-unknown-linux-gnu/liba3sql.so a3sql_x64.so
           fi
           # a3sql_x64.dll (Windows 64-bit)
-          if [ -f extension/target/release/a3sql_x64.dll ]; then
-            cp extension/target/release/a3sql_x64.dll a3sql_x64.dll
-          elif [ -f extension/target/release/a3sql.dll ]; then
-            cp extension/target/release/a3sql.dll a3sql_x64.dll
+          if [ -f extension/target/release/a3sql-x86_64-pc-windows-gnu/a3sql.dll ]; then
+            cp extension/target/release/a3sql-x86_64-pc-windows-gnu/a3sql.dll a3sql_x64.dll
           fi
-          # a3sql.so (Linux 32-bit) — already renamed by upstream job
-          if [ -f extension/target/release/a3sql_x86.so ]; then
-            cp extension/target/release/a3sql_x86.so a3sql.so
+          # a3sql.so (Linux 32-bit)
+          if [ -f extension/target/release/a3sql-i686-unknown-linux-gnu/a3sql_x86.so ]; then
+            cp extension/target/release/a3sql-i686-unknown-linux-gnu/a3sql_x86.so a3sql.so
           fi
-          # a3sql.dll (Windows 32-bit) — already renamed by upstream job
-          if [ -f extension/target/release/a3sql_x86.dll ]; then
-            cp extension/target/release/a3sql_x86.dll a3sql.dll
+          # a3sql.dll (Windows 32-bit)
+          if [ -f extension/target/release/a3sql-i686-pc-windows-gnu/a3sql_x86.dll ]; then
+            cp extension/target/release/a3sql-i686-pc-windows-gnu/a3sql_x86.dll a3sql.dll
           fi
           ls -la a3sql*.so a3sql*.dll 2>/dev/null || echo "(no extension binaries present)"
       - name: Set publishedid
