@@ -1,10 +1,19 @@
 # a3sql cross-compilation config
 #
-# These linkers are needed when building Windows targets on Linux CI runners.
-# On Ubuntu: sudo apt-get install mingw-w64 gcc-multilib g++-multilib
+# MSVC targets: build on Windows runners (CI) or use cargo-xwin on Linux.
+#   cargo install cargo-xwin && cargo xwin build --release --target x86_64-pc-windows-msvc
+# cargo-xwin manages its own xwin SDK/CRT cache — no local paths needed.
 #
-# 32-bit Windows builds need --kill-at to strip stdcall @N decoration from
-# exported symbols so Arma 3 can find RVExtension/RVExtensionArgs by name.
+# GNU targets: cross-compile on Linux with mingw-w64.
+#   sudo apt-get install gcc-multilib g++-multilib
+#   32-bit needs --kill-at for Arma 3 symbol visibility.
+
+[target.x86_64-pc-windows-msvc]
+# Built on Windows runners or via cargo-xwin. No linker override needed —
+# cargo-xwin and windows-latest both provide MSVC link.exe.
+
+[target.i686-pc-windows-msvc]
+# Same as x64.
 
 [target.x86_64-pc-windows-gnu]
 linker = "x86_64-w64-mingw32-gcc"
