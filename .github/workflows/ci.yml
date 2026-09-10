@@ -1,4 +1,4 @@
-# a3sql CI — test, cross-compile, build addon, release
+# a3sql CI — test, compile extensions (MSVC for Windows, GCC for Linux), build addon, release
 # Uses org-wide reusable workflow for core pipeline.
 
 name: CI
@@ -56,36 +56,49 @@ jobs:
           name: a3sql-i686-unknown-linux-gnu
           path: extension/target/release/a3sql_*.so
 
-  # ── i686 Windows cross-compile ───────────────────────────────────────
-  build-windows-i686:
-    name: build i686-pc-windows-gnu
-    runs-on: ubuntu-latest
+  # ── Windows x64 MSVC (Arma 3 requires MSVC-built DLLs) ──────────────
+  build-windows-x64:
+    name: build x86_64-pc-windows-msvc
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install Rust
         uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
         with:
-          target: i686-pc-windows-gnu
-          cache-shared-key: a3sql-ci-win32-${{ hashFiles('extension/Cargo.lock') }}
-      - name: Install cross-compile deps
-        run: sudo apt-get update && sudo apt-get install -y mingw-w64
+          target: x86_64-pc-windows-msvc
+          cache-shared-key: a3sql-ci-win64-msvc-${{ hashFiles('extension/Cargo.lock') }}
       - name: Build
-        run: cargo build --release --manifest-path extension/Cargo.toml --target i686-pc-windows-gnu
-      - name: Rename artifact
-        run: |
-          mkdir -p extension/target/release
-          mv extension/target/i686-pc-windows-gnu/release/a3sql.dll extension/target/release/a3sql_x86.dll 2>/dev/null || true
+        run: cargo build --release --manifest-path extension/Cargo.toml --target x86_64-pc-windows-msvc
       - name: Upload artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: a3sql-i686-pc-windows-gnu
-          path: extension/target/release/a3sql_*.dll
+          name: a3sql-x86_64-pc-windows-msvc
+          path: extension/target/x86_64-pc-windows-msvc/release/a3sql.dll
+
+  # ── Windows i686 MSVC ───────────────────────────────────────────────
+  build-windows-i686:
+    name: build i686-pc-windows-msvc
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install Rust
+        uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
+        with:
+          target: i686-pc-windows-msvc
+          cache-shared-key: a3sql-ci-win32-msvc-${{ hashFiles('extension/Cargo.lock') }}
+      - name: Build
+        run: cargo build --release --manifest-path extension/Cargo.toml --target i686-pc-windows-msvc
+      - name: Upload artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: a3sql-i686-pc-windows-msvc
+          path: extension/target/i686-pc-windows-msvc/release/a3sql.dll
 
   # ── Addon build (depends on all build jobs) ─────────────────────────
   build-addon:
     name: HEMTT build
     runs-on: ubuntu-latest
-    needs: [ci, build-linux-i686, build-windows-i686]
+    needs: [ci, build-linux-i686, build-windows-x64, build-windows-i686]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -114,16 +127,20 @@ jobs:
           if [ -f extension/target/release/a3sql-x86_64-unknown-linux-gnu/liba3sql.so ]; then
             cp extension/target/release/a3sql-x86_64-unknown-linux-gnu/liba3sql.so a3sql_x64.so
           fi
-          # a3sql_x64.dll (Windows 64-bit)
-          if [ -f extension/target/release/a3sql-x86_64-pc-windows-gnu/a3sql.dll ]; then
+          # a3sql_x64.dll (Windows 64-bit MSVC — preferred over mingw)
+          if [ -f extension/target/release/a3sql-x86_64-pc-windows-msvc/a3sql.dll ]; then
+            cp extension/target/release/a3sql-x86_64-pc-windows-msvc/a3sql.dll a3sql_x64.dll
+          elif [ -f extension/target/release/a3sql-x86_64-pc-windows-gnu/a3sql.dll ]; then
             cp extension/target/release/a3sql-x86_64-pc-windows-gnu/a3sql.dll a3sql_x64.dll
           fi
           # a3sql.so (Linux 32-bit)
           if [ -f extension/target/release/a3sql-i686-unknown-linux-gnu/a3sql_x86.so ]; then
             cp extension/target/release/a3sql-i686-unknown-linux-gnu/a3sql_x86.so a3sql.so
           fi
-          # a3sql.dll (Windows 32-bit)
-          if [ -f extension/target/release/a3sql-i686-pc-windows-gnu/a3sql_x86.dll ]; then
+          # a3sql.dll (Windows 32-bit MSVC — preferred over mingw)
+          if [ -f extension/target/release/a3sql-i686-pc-windows-msvc/a3sql.dll ]; then
+            cp extension/target/release/a3sql-i686-pc-windows-msvc/a3sql.dll a3sql.dll
+          elif [ -f extension/target/release/a3sql-i686-pc-windows-gnu/a3sql_x86.dll ]; then
             cp extension/target/release/a3sql-i686-pc-windows-gnu/a3sql_x86.dll a3sql.dll
           fi
           ls -la a3sql*.so a3sql*.dll 2>/dev/null || echo "(no extension binaries present)"
@@ -178,16 +195,20 @@ jobs:
           if [ -f extension/target/release/a3sql-x86_64-unknown-linux-gnu/liba3sql.so ]; then
             cp extension/target/release/a3sql-x86_64-unknown-linux-gnu/liba3sql.so a3sql_x64.so
           fi
-          # a3sql_x64.dll (Windows 64-bit)
-          if [ -f extension/target/release/a3sql-x86_64-pc-windows-gnu/a3sql.dll ]; then
+          # a3sql_x64.dll (Windows 64-bit MSVC — preferred over mingw)
+          if [ -f extension/target/release/a3sql-x86_64-pc-windows-msvc/a3sql.dll ]; then
+            cp extension/target/release/a3sql-x86_64-pc-windows-msvc/a3sql.dll a3sql_x64.dll
+          elif [ -f extension/target/release/a3sql-x86_64-pc-windows-gnu/a3sql.dll ]; then
             cp extension/target/release/a3sql-x86_64-pc-windows-gnu/a3sql.dll a3sql_x64.dll
           fi
           # a3sql.so (Linux 32-bit)
           if [ -f extension/target/release/a3sql-i686-unknown-linux-gnu/a3sql_x86.so ]; then
             cp extension/target/release/a3sql-i686-unknown-linux-gnu/a3sql_x86.so a3sql.so
           fi
-          # a3sql.dll (Windows 32-bit)
-          if [ -f extension/target/release/a3sql-i686-pc-windows-gnu/a3sql_x86.dll ]; then
+          # a3sql.dll (Windows 32-bit MSVC — preferred over mingw)
+          if [ -f extension/target/release/a3sql-i686-pc-windows-msvc/a3sql.dll ]; then
+            cp extension/target/release/a3sql-i686-pc-windows-msvc/a3sql.dll a3sql.dll
+          elif [ -f extension/target/release/a3sql-i686-pc-windows-gnu/a3sql_x86.dll ]; then
             cp extension/target/release/a3sql-i686-pc-windows-gnu/a3sql_x86.dll a3sql.dll
           fi
           ls -la a3sql*.so a3sql*.dll 2>/dev/null || echo "(no extension binaries present)"
