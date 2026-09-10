@@ -437,4 +437,4 @@ The extension exposes the standard Arma C ABI (`RVExtension`), so it loads as a 
 
 ### License
 
-The mod is licensed under the [Arma Public License Share Alike (APL-SA)](../LICENSE), Copyright 2026 ABE Team. Note: the Rust crate's `Cargo.toml` declares `MIT OR Apache-2.0`; that is a license convention for the source code only, and does not change the mod's license. Anything you build with A3SQL is covered by APL-SA.
+The mod is licensed under the [Arma Public License Share Alike (APL-SA)](../LICENSE), Copyright 2026 lErrorl404l. Note: the Rust crate's `Cargo.toml` declares `MIT OR Apache-2.0`; that is a license convention for the source code only, and does not change the mod's license. Anything you build with A3SQL is covered by APL-SA.

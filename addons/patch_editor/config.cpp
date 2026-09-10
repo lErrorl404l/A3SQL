@@ -4,7 +4,7 @@
 class CfgPatches {
     class ADDON {
         name = "A3SQL - Patch Editor";
-        author = "ABE Team";
+        author = "lErrorl404l";
         requiredVersion = REQUIRED_VERSION;
         requiredAddons[] = {"a3sql_patch_core", "cba_xeh"};
         units[] = {};

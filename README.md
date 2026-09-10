@@ -110,4 +110,4 @@ Pull requests welcome. For bugs and feature requests, open an [issue](https://gi
 
 ## License
 
-Licensed under the [Arma Public License Share Alike (APL-SA)](LICENSE), Copyright 2026 ABE Team.
+Licensed under the [Arma Public License Share Alike (APL-SA)](LICENSE), Copyright 2026 lErrorl404l.

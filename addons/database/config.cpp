@@ -3,7 +3,7 @@
 class CfgPatches {
     class ADDON {
         name = "A3SQL - Database";
-        author = "ABE Team";
+        author = "lErrorl404l";
         requiredVersion = REQUIRED_VERSION;
         requiredAddons[] = {"a3sql_main", "cba_xeh"};
         units[] = {};
