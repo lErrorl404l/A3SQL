@@ -1,0 +1,104 @@
+[h1]A3SQL — Live SQL Database for Arma 3[/h1]
+
+A3SQL runs a full SQL engine inside your Arma 3 server. Store, query, and update data with plain SQL — player stats that survive restarts, faction loadouts, event logs, admin commands, and mid-mission value patching. No external database. No PBO repacking.
+
+[hr][/hr]
+
+[h2]Features[/h2]
+
+[list]
+[*][b]Player Stats & Progression[/b] — Rank, score, kills, and playtime tracked across sessions. Saved on disconnect, restored on JIP reconnect.
+[*][b]Loadout Management[/b] — Faction and role loadout templates stored in SQL, applied on spawn with a single call.
+[*][b]Dynamic Live Patching[/b] — Change weapon stats, vehicle properties, and other runtime values mid-mission from SQL rules. No mission restart needed.
+[*][b]Analytics & Logging[/b] — Performance snapshots, kill events, and player connections logged to SQL. Exportable as CSV for after-action review.
+[*][b]Remote Administration[/b] — Manage the server over TCP: kick/ban players, change missions, run admin commands. Forward notifications to Discord via webhooks.
+[/list]
+
+[h2]SQL Engine[/h2]
+
+A3SQL includes a custom SQL engine built in Rust. It supports:
+[list]
+[*]CREATE TABLE / ALTER TABLE / DROP TABLE
+[*]INSERT, UPDATE, DELETE with RETURNING clause
+[*]SELECT with WHERE, JOIN (INNER, LEFT, RIGHT, FULL, NATURAL), GROUP BY, HAVING, ORDER BY
+[*]Window functions (ROW_NUMBER, RANK, DENSE_RANK, SUM/AVG/COUNT OVER)
+[*]Common Table Expressions (WITH ... AS)
+[*]Subqueries, UNION, INTERSECT, EXCEPT
+[*]CHECK and FOREIGN KEY constraints
+[*]Transactions (BEGIN, COMMIT, ROLLBACK)
+[*]Views (CREATE VIEW, DROP VIEW)
+[*]Full-text search via trigram index
+[*]VACUUM and REINDEX
+[/list]
+
+[h2]Requirements[/h2]
+
+[list]
+[*][url=https://github.com/CBATeam/CBA_A3/releases]CBA A3[/url] (latest version)
+[*]Arma 3
+[/list]
+
+[h2]Installation[/h2]
+
+[list=1]
+[*]Subscribe to this item, or download the [url=https://github.com/lErrorl404l/A3SQL/releases/latest]latest release[/url] from GitHub and unpack @a3sql into your Arma 3 directory.
+[*]Launch with: [code]-mod=@cba_a3;@a3sql[/code]
+[*]Configure via CBA Settings → A3SQL categories.
+[/list]
+
+[h2]Quick Start[/h2]
+
+Server-side SQF:
+[code]
+// Create a table
+["CREATE TABLE IF NOT EXISTS stats (uid STRING PRIMARY KEY, name STRING, score INT)"] call a3sql_fnc_execute;
+
+// Insert data
+["INSERT INTO stats VALUES ('76561198000000001', 'Scarface', 1500)"] call a3sql_fnc_execute;
+
+// Query top scores
+_result = ["SELECT name, score FROM stats ORDER BY score DESC LIMIT 10"] call a3sql_fnc_execute;
+[/code]
+
+Every command returns [returnCode, status, data]. Use parameterized queries ($1, $2) for user input.
+
+[h2]For Modders[/h2]
+
+Add A3SQL as a dependency:
+[code]
+requiredAddons[] = {"a3sql_main", "a3sql_database", "cba_main"};
+[/code]
+
+Execute SQL from SQF:
+[code]
+_result = ["SELECT * FROM loadout_templates WHERE faction = 'NATO'"] call a3sql_fnc_selectMap;
+[/code]
+
+[h2]Modules[/h2]
+
+A3SQL is modular. Remove any PBO you do not need:
+[list]
+[*][b]a3sql_main[/b] — Core mod definition (required)
+[*][b]a3sql_database[/b] — SQL engine and query API
+[*][b]a3sql_patch_core[/b] — Dynamic patching engine
+[*][b]a3sql_patch_editor[/b] — In-game rule editor
+[*][b]a3sql_patch_operators[/b] — Value transformation operators
+[*][b]a3sql_admin[/b] — Player tracking and admin commands
+[*][b]a3sql_analytics[/b] — Performance monitoring and event logging
+[*][b]a3sql_loadouts[/b] — Faction/role loadout templates
+[*][b]a3sql_persistence[/b] — Player state save/restore
+[*][b]a3sql_progression[/b] — Rank/score tracking
+[/list]
+
+[h2]Links[/h2]
+
+[list]
+[*][url=https://lerrorl404l.github.io/A3SQL/]Documentation[/url]
+[*][url=https://lerrorl404l.github.io/A3SQL/SQL-Cheat-Sheet.html]SQL Cheat Sheet[/url]
+[*][url=https://lerrorl404l.github.io/A3SQL/SQL-Dialect.html]SQL Dialect Reference[/url]
+[*][url=https://github.com/lErrorl404l/A3SQL]GitHub Repository[/url]
+[/list]
+
+[h2]License[/h2]
+
+Arma Public License Share Alike (APL-SA).
