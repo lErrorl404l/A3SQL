@@ -17,7 +17,7 @@ Requires the latest version of [CBA A3](https://github.com/CBATeam/CBA_A3/releas
 - **Loadout management.** Faction and role loadout templates in SQL, applied on spawn with a single call.
 - **Dynamic live patching.** Change weapon stats, vehicle properties, and other runtime values mid-mission from SQL rules. No mission restart.
 - **Analytics and logging.** Performance snapshots, kill events, and player connections logged to SQL, exportable as CSV for after-action review.
-- **Remote administration.** Manage the server from outside the game over the TCP listener: kick/ban players, change missions, run admin commands. Forward notifications to Discord via webhooks.
+- **Remote administration.** Manage the server from outside the game over the TCP listener: kick/ban players, change missions, run admin commands. The in-game listener binds to `127.0.0.1` (same machine only); use the standalone server for remote access. Forward notifications to Discord via webhooks.
 
 ## Installation
 
@@ -79,7 +79,7 @@ A3SQL is modular. Remove any PBO you do not need:
 Add a3sql as a dependency:
 
 ```cpp
-requiredAddons[] = {"a3sql_main", "a3sql_database"};
+requiredAddons[] = {"a3sql_main", "a3sql_database", "cba_main"};
 ```
 
 Execute SQL from SQF:
