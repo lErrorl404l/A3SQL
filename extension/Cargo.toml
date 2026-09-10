@@ -1,5 +1,3 @@
-[workspace]
-
 [package]
 name = "a3sql"
 version = "1.0.0"
