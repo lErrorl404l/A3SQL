@@ -24,14 +24,17 @@ confidence-threshold = 0.8
 [[licenses.clarify]]
 name = "hemtt-preprocessor"
 expression = "GPL-2.0-only"
+license-files = [{ path = "LICENSE", hash = 0x00000000 }]
 
 [[licenses.clarify]]
 name = "hemtt-tokens"
 expression = "GPL-2.0-only"
+license-files = [{ path = "LICENSE", hash = 0x00000000 }]
 
 [[licenses.clarify]]
 name = "hemtt-error"
 expression = "GPL-2.0-only"
+license-files = [{ path = "LICENSE", hash = 0x00000000 }]
 
 [bans]
 multiple-versions = "deny"
