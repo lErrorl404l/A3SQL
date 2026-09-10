@@ -29,10 +29,3 @@ format:
     toc: true
     code-fold: false
     code-tools: false
-  pdf:
-    documentclass: scrreprt
-    toc: true
-    number-sections: true
-    colorlinks: true
-  epub:
-    toc: true
