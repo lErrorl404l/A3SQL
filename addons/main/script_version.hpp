@@ -1,5 +1,5 @@
 #ifndef MAJOR
-#define MAJOR 0
+#define MAJOR 1
 #endif
 #ifndef MINOR
 #define MINOR 2
