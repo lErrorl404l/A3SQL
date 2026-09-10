@@ -2,9 +2,21 @@
 """Dialect sweep — run every feature documented in SQL-Dialect.md against the
 real extension binary and report failures. Exit 0 = documented == working."""
 
+import atexit
 import ctypes
 import os
+import shutil
 import sys
+import tempfile
+
+# Hermetic data dir: temp dir via A3SQL_CONFIG so save/load statements never
+# touch ./a3sql_data. Same pattern as sql_smoke_test.py.
+_cfg_dir = tempfile.mkdtemp(prefix="a3sql_sweep_")
+_cfg_file = os.path.join(_cfg_dir, "a3sql.toml")
+with open(_cfg_file, "w") as _f:
+    _f.write(f'data_dir = "{_cfg_dir}/data"\n')
+os.environ["A3SQL_CONFIG"] = _cfg_file
+atexit.register(shutil.rmtree, _cfg_dir, ignore_errors=True)
 
 lib = ctypes.CDLL(os.path.abspath(sys.argv[1] if len(sys.argv) > 1 else "a3sql_x64.so"))
 lib.RVExtension.argtypes = [ctypes.c_char_p, ctypes.c_uint32, ctypes.c_char_p]

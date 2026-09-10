@@ -43,7 +43,7 @@ try:
 except (AttributeError, ValueError):
     pass  # non-TTY stream without reconfigure — faulthandler still works
 
-BUF_SIZE = 20480  # must match OUTPUT_BUF_SIZE in the extension
+BUF_SIZE = 30720  # must match OUTPUT_BUF_SIZE in the extension
 
 
 def find_binary(explicit):
