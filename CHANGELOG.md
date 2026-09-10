@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+## [1.0.0]
+
+First stable release.
+
+### Added
+- SQL cheat sheet with copy-paste patterns for schema, DML, joins, aggregates, window functions, CTEs, transactions, and control commands
+- Quarto documentation book with dark mode, full-text search, and six-part structure
+- SBOM attached to GitHub releases (Def Stan 05-138 supply-chain evidence)
+- i686 cross-compile jobs for Linux and Windows
+
+### Changed
+- CI deduplicated: removed clippy and cargo test jobs already covered by org reusable workflow
+- All CI actions SHA-pinned (supply-chain hardening)
+- cargo-deny: added `GPL-2.0` (deprecated form) and `LicenseRef-Arma-Public-License-Share-Alike` to allow list
+- cargo-deny: removed broken `[[licenses.clarify]]` entries for hemtt crates
+- Documentation reorganised into six parts: Getting Started, SQL Reference, Integration, Networking, Operations, Development
+
+### Fixed
+- GitHub Pages deployment now uses GitHub Actions source (not branch deploy)
+- Quarto build: removed PDF/epub formats requiring lualatex (HTML only)
+
 ## [0.2.0]
 
 ### Added
