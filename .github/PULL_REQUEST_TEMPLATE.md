@@ -12,8 +12,8 @@
 
 ## How Has This Been Tested?
 
-- [ ] `cargo test --lib -p a3sql` — all pass
-- [ ] `cargo clippy -p a3sql --all-targets` — no warnings
+- [ ] `cargo test --manifest-path extension/Cargo.toml` — all pass
+- [ ] `cargo clippy --manifest-path extension/Cargo.toml --all-targets -- -D warnings` — no warnings
 - [ ] `uv run python3 tools/sqf_validator.py addons/` — clean
 - [ ] Manual test in-game (if applicable)
 

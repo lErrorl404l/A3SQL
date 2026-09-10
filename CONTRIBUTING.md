@@ -65,7 +65,7 @@ cargo clippy --manifest-path extension/Cargo.toml --all-targets -- -D warnings
 cargo fmt --check
 
 # SQF + config validators
-python3 tools/sqfvmChecker.py
+uv run python3 tools/sqfvmChecker.py
 python3 tools/sqf_validator.py addons/
 python3 tools/config_style_checker.py
 

@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.2.0]
+
 ### Added
 - Plugin system: Rust trait, C ABI dynamic, SQF registration
 - RETURNING clause for INSERT/UPDATE/DELETE
@@ -16,6 +18,7 @@
 - CLI interactive REPL mode (`a3sql-server --interactive`)
 - Graceful shutdown with auto-save on SIGTERM
 - Full-text search via trigram index
+- SQL compatibility corpus (7 SQL files, 150+ statements)
 
 ### Changed
 - Database renamed from a3db to a3sql
