@@ -10,6 +10,9 @@ on:
   release:
     types: [published]
 
+permissions:
+  contents: write
+
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
@@ -195,66 +198,3 @@ jobs:
         with:
           files: releases/*.zip
           name: a3sql-${{ github.event.release.tag_name }}
-
-  workshop:
-    name: Publish to Steam Workshop
-    if: github.event_name == 'release'
-    needs: [build-addon]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          submodules: recursive
-      - name: Install HEMTT
-        uses: arma-actions/hemtt@a0570ddd80d2b7be9c0f052494c0f700b42668dd # v1
-      - name: Download extension binaries
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          # NO merge-multiple — see release job comment. Pattern a3sql-*-*
-          # picks the four cross artifacts and excludes a3sql-addon.
-          pattern: a3sql-*-*
-          path: extension/target/release
-      - name: Rename extension binaries to Arma naming convention
-        run: |
-          # a3sql_x64.so (Linux 64-bit)
-          if [ -f extension/target/release/a3sql-x86_64-unknown-linux-gnu/liba3sql.so ]; then
-            cp extension/target/release/a3sql-x86_64-unknown-linux-gnu/liba3sql.so a3sql_x64.so
-          fi
-          # a3sql_x64.dll (Windows 64-bit)
-          if [ -f extension/target/release/a3sql-x86_64-pc-windows-gnu/a3sql.dll ]; then
-            cp extension/target/release/a3sql-x86_64-pc-windows-gnu/a3sql.dll a3sql_x64.dll
-          fi
-          # a3sql.so (Linux 32-bit)
-          if [ -f extension/target/release/a3sql-i686-unknown-linux-gnu/a3sql_x86.so ]; then
-            cp extension/target/release/a3sql-i686-unknown-linux-gnu/a3sql_x86.so a3sql.so
-          fi
-          # a3sql.dll (Windows 32-bit)
-          if [ -f extension/target/release/a3sql-i686-pc-windows-gnu/a3sql_x86.dll ]; then
-            cp extension/target/release/a3sql-i686-pc-windows-gnu/a3sql_x86.dll a3sql.dll
-          fi
-          ls -la a3sql*.so a3sql*.dll 2>/dev/null || echo "(no extension binaries present)"
-      - name: Set publishedid
-        run: |
-          ID=$(printf '%s' "${{ secrets.STEAM_WORKSHOP_PUBLISHEDID }}" | tr -dc '0-9')
-          if [ -z "$ID" ]; then
-            echo "::error::STEAM_WORKSHOP_PUBLISHEDID secret is missing or not numeric"
-            exit 1
-          fi
-          # HEMTT expects `publishedid = <digits>;` in meta.cpp (regex: publishedid\s*=\s*(\d+);)
-          sed -i "s/^publishedid = .*/publishedid = $ID;/" meta.cpp
-          cat meta.cpp
-      - name: Fetch changelog from release
-        run: |
-          echo 'CHANGE_NOTES<<EOF' >> $GITHUB_ENV
-          gh release view "${{ github.event.release.tag_name }}" --json body --jq .body >> $GITHUB_ENV
-          echo 'EOF' >> $GITHUB_ENV
-        env:
-          GH_TOKEN: ${{ github.token }}
-      - name: Publish
-        run: |
-          hemtt publish \
-            --steam-user '${{ secrets.STEAM_USERNAME }}' \
-            --steam-pass '${{ secrets.STEAM_PASSWORD }}' \
-            --change-notes "$CHANGE_NOTES"
-        env:
-          HEMTT_STEAM_GUARD_CODE: ${{ secrets.STEAM_GUARD_CODE }}
