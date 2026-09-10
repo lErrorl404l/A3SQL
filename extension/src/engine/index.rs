@@ -349,9 +349,15 @@ mod tests {
     fn trigram_no_match() {
         let mut idx = TrigramIndex::new("name");
         idx.insert(0, &DbValue::String("abcdef".into()));
-        let _candidates = idx.candidates("xyz");
-        // With permissive algorithm, candidates may be found. That's fine.
-        // The actual scoring in Table::trigram_similarity will filter.
+        // "xyz" shares no trigram with "abcdef", so the candidate set must be
+        // empty. The permissive algorithm only returns rows that share at
+        // least one trigram with the pattern.
+        let candidates = idx.candidates("xyz");
+        assert!(
+            candidates.is_empty(),
+            "no trigram overlap must yield no candidates: {:?}",
+            candidates
+        );
     }
 
     #[test]

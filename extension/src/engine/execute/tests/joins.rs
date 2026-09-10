@@ -489,7 +489,18 @@ fn join_with_aggregate() {
     b.insert(vec![DbValue::Int(1)]).unwrap();
     b.insert(vec![DbValue::Int(1)]).unwrap();
     db.create_table("b", b).unwrap();
-    println!("note: JOIN+aggregate not yet supported");
+    // JOIN with an aggregate must return the per-group count. Table a has
+    // ids 1 and 2; table b has two rows with aid=1 and none with aid=2.
+    let r = parse_and_exec(
+        "SELECT a.id, count(b.aid) AS n FROM a JOIN b ON a.id = b.aid GROUP BY a.id",
+        &mut db,
+    )
+    .unwrap();
+    assert!(
+        r.contains("2"),
+        "JOIN+aggregate must count the two b rows for a.id=1: {}",
+        r
+    );
 }
 
 #[test]

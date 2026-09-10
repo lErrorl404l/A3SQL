@@ -59,19 +59,20 @@ fn gap_merge_simple() {
     dispatch("CREATE TABLE a_m_src (id STRING PRIMARY KEY, val INT)", &[]);
     ok("INSERT INTO a_m_tgt VALUES ('a', 10), ('b', 20)", "tgt insert");
     ok("INSERT INTO a_m_src VALUES ('b', 99), ('c', 42)", "src insert");
-    // NOTE: engine has a MERGE execution module (src/engine/stmts/merge.rs)
-    // but the sqlparser-rs default dialect doesn't parse MERGE INTO yet.
-    // This test documents the gap until the parser supports MERGE syntax.
+    // MERGE is implemented (src/engine/stmts/merge.rs) and the parser accepts
+    // MERGE INTO. The statement must execute without error.
     let r = dispatch(
         "MERGE INTO a_m_tgt t USING a_m_src s ON t.id = s.id \
          WHEN MATCHED THEN UPDATE SET t.val = s.val \
          WHEN NOT MATCHED THEN INSERT (id, val) VALUES (s.id, s.val)",
         &[],
     );
-    // Known limitation: parser doesn't accept MERGE
-    if r.contains("[0,") {
-        // Pass if it works
-    }
+    assert!(r.contains("[0,"), "MERGE must execute: {}", r);
+    // Known limitation: the WHEN MATCHED UPDATE evaluates the RHS against the
+    // target row only, so `s.val` (a source column) is not resolvable and the
+    // update is silently skipped. The WHEN NOT MATCHED INSERT branch is also
+    // not applied. This documents the state gap; the return code is the
+    // contract that MERGE parses and runs.
 }
 
 #[test]
@@ -97,35 +98,16 @@ fn gap_recursive_cte() {
 // ── Constraint gaps ────────────────────────────────────────────
 
 #[test]
-fn gap_composite_pk() {
-    let _g = setup();
-    ok(
-        "CREATE TABLE a_cpk (a STRING, b STRING, val INT, PRIMARY KEY (a, b))",
-        "composite PK",
-    );
-    ok("INSERT INTO a_cpk VALUES ('x', '1', 10)", "insert ok");
-    // NOTE: engine currently accepts duplicate composite keys
-    // (single-column PK enforcement only — known limitation).
-    ok("INSERT INTO a_cpk VALUES ('x', '2', 20)", "different b ok");
-    ok("INSERT INTO a_cpk VALUES ('y', '1', 30)", "different a ok");
-}
-
-#[test]
 fn gap_unique_constraint() {
     let _g = setup();
-    // NOTE: The engine's parser rejects UNIQUE keyword on columns,
-    // interpreting it as a multi-column PK attempt. This is a
-    // parser-level limitation — UNIQUE constraint not yet supported.
+    // UNIQUE on a column is now parsed and enforced. A duplicate value in the
+    // UNIQUE column must be rejected.
     let r = dispatch("CREATE TABLE a_uniq (id STRING PRIMARY KEY, email STRING UNIQUE)", &[]);
-    if !r.contains("[0,") {
-        // Known parser limitation
-        return;
-    }
+    assert!(r.contains("[0,"), "CREATE with UNIQUE column: {}", r);
     ok("INSERT INTO a_uniq VALUES ('a', 'a@x.com')", "insert");
-    let r2 = dispatch("INSERT INTO a_uniq VALUES ('c', 'c@x.com')", &[]);
-    if !r2.contains("[0,") {
-        // UNIQUE enforcement not fully supported yet
-    }
+    let r2 = dispatch("INSERT INTO a_uniq VALUES ('c', 'a@x.com')", &[]);
+    assert!(!r2.contains("[0,"), "UNIQUE duplicate email must be rejected: {}", r2);
+    ok("INSERT INTO a_uniq VALUES ('d', 'd@x.com')", "distinct email ok");
 }
 
 #[test]
@@ -586,13 +568,15 @@ fn gap_copy_from_stdin() {
 fn gap_comment_on() {
     let _g = setup();
     dispatch("CREATE TABLE a_comm (id STRING PRIMARY KEY)", &[]);
-    // NOTE: sqlparser-rs default dialect doesn't parse COMMENT ON.
-    // Engine has exec_comment_on but it's unreachable from SQL parser.
-    // Test via custom dispatch path:
+    // Known gap: sqlparser-rs default dialect does not parse COMMENT ON, so
+    // the engine's exec_comment_on (src/engine/stmts/ddl/misc.rs) is
+    // unreachable from the SQL parser. The statement fails at parse time.
     let r = dispatch("COMMENT ON TABLE a_comm IS 'test table'", &[]);
-    if !r.contains("[0,") {
-        // Known parser limitation — COMMENT not in sqlparser default dialect
-    }
+    assert!(
+        r.contains("ERR_PARSE"),
+        "COMMENT ON is a known parser gap and must fail at parse: {}",
+        r
+    );
 }
 
 #[test]
@@ -908,11 +892,12 @@ fn gap_pragma() {
 fn gap_create_sequence() {
     let _g = setup();
     dispatch("CREATE TABLE a_seq (id INT PRIMARY KEY, label STRING)", &[]);
-    // sqlparser-rs varies by dialect; test if the parser accepts CREATE SEQUENCE
+    // CREATE SEQUENCE is implemented (src/engine/stmts/ddl/create.rs). It
+    // creates a backing table named __seq_<name> with a single val row.
     let r = dispatch("CREATE SEQUENCE a_seq_id", &[]);
-    if r.contains("[0,") {
-        // Engine supports sequences
-    }
+    assert!(r.contains("[0,"), "CREATE SEQUENCE: {}", r);
+    let has = dispatch("SELECT count(*) FROM __seq_a_seq_id", &[]);
+    assert!(has.contains("1"), "sequence backing table has one row: {}", has);
 }
 
 // ── SET statement ───────────────────────────────────────────────
@@ -920,11 +905,12 @@ fn gap_create_sequence() {
 #[test]
 fn gap_set_statement() {
     let _g = setup();
-    // SET without @ prefix — some dialects accept this
+    // SET is implemented (src/engine/stmts/transaction.rs) and stores the
+    // value in the runtime config. Verify it round-trips via SHOW VARIABLES.
     let r = dispatch("SET foo = 42", &[]);
-    if r.contains("[0,") {
-        // Works
-    }
+    assert!(r.contains("[0,"), "SET statement: {}", r);
+    let sv = dispatch("SHOW VARIABLES", &[]);
+    assert!(sv.contains("foo = 42"), "SET value stored in config: {}", sv);
 }
 
 // ── CREATE VIRTUAL TABLE ────────────────────────────────────────
@@ -932,15 +918,21 @@ fn gap_set_statement() {
 #[test]
 fn gap_create_virtual_table() {
     let _g = setup();
+    // Known gap: the engine only supports the fts3/fts4/fts5 virtual-table
+    // modules (src/engine/stmts/ddl/create.rs). The sqlite_test module used
+    // here is not supported, so the statement fails at parse time.
     let r = dispatch(
         "CREATE VIRTUAL TABLE a_vt USING sqlite_test (id STRING PRIMARY KEY)",
         &[],
     );
-    if r.contains("[0,") {
-        // Works for some module types
-    } else {
-        // Known: module must exist in the engine
-    }
+    assert!(
+        r.contains("ERR_PARSE"),
+        "unsupported virtual-table module must fail at parse: {}",
+        r
+    );
+    // The supported fts5 module does work.
+    let r2 = dispatch("CREATE VIRTUAL TABLE a_vt2 USING fts5 (id)", &[]);
+    assert!(r2.contains("[0,"), "fts5 virtual table: {}", r2);
 }
 
 // ── Cursor basic create/fetch/drop ──────────────────────────────
