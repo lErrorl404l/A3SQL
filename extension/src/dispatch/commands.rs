@@ -8,7 +8,10 @@ use crate::parser::parse_sql;
 use crate::server;
 
 mod io;
-pub(super) use io::{handle_dump_sql, handle_export, handle_export_to_file, handle_import, handle_load, handle_save};
+pub(crate) use io::{
+    handle_dump_sql, handle_export, handle_export_to_file, handle_import, handle_load, handle_save, persist_load,
+    persist_save,
+};
 
 // ── Live patch ─────────────────────────────────────────────────────────────
 

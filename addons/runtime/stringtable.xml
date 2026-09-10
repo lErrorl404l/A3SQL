@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project name="A3SQL">
+    <Package name="Runtime">
+        <Key ID="STR_a3sql_runtime_Category">
+            <English>A3SQL Runtime</English>
+        </Key>
+        <Key ID="STR_a3sql_runtime_Enabled_Description">
+            <English>Enable the live event engine that applies DB override rules to game objects.</English>
+        </Key>
+        <Key ID="STR_a3sql_runtime_Enabled_DisplayName">
+            <English>Enable Runtime Engine</English>
+        </Key>
+        <Key ID="STR_a3sql_runtime_LogLevel_Description">
+            <English>Verbosity of diagnostic messages for the runtime engine.</English>
+        </Key>
+        <Key ID="STR_a3sql_runtime_LogLevel_DisplayName">
+            <English>Log Level</English>
+        </Key>
+        <Key ID="STR_a3sql_runtime_PollHz_Description">
+            <English>How often to scan for new objects to attach the HitPart handler.</English>
+        </Key>
+        <Key ID="STR_a3sql_runtime_PollHz_DisplayName">
+            <English>Object Poll Rate (Hz)</English>
+        </Key>
+    </Package>
+</Project>

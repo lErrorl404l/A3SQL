@@ -62,6 +62,7 @@ A3SQL is modular. Remove any PBO you do not need:
 | `a3sql_loadouts` | Faction/role loadout templates |
 | `a3sql_persistence` | Player state save/restore |
 | `a3sql_progression` | Rank/score tracking |
+| `a3sql_runtime` | Runtime event engine: applies DB override rules to live objects on Fired/Hit/Killed events |
 
 ## Documentation
 

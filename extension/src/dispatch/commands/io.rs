@@ -346,6 +346,75 @@ pub(crate) fn handle_export_to_file(db: &engine::Database, trimmed: &str, args: 
     }
 }
 
+// ── Trusted-path persistence (operator CLI, not client commands) ────────
+//
+// `a3sql-server --db <path>` passes an operator-supplied path. It may be
+// absolute or outside the data dir — that is the operator's intent. The
+// client-facing SAVE/LOAD commands keep the sandboxed `safe_data_path`
+// behaviour; these two functions operate on the resolved path directly.
+
+/// Load a database from an absolute path (operator-trusted). All-or-nothing:
+/// parse into a fresh Database and swap in only on success. Falls back to the
+/// `.bak` (previous good save) if the main save is missing or corrupt — the
+/// same crash-recovery contract as the client `LOAD` command.
+pub(crate) fn persist_load(db: &mut engine::Database, path: &std::path::Path) -> Result<(), String> {
+    let mut fresh = engine::Database::new();
+    let main_result: Result<(), String> = match std::fs::read(path) {
+        Ok(bytes) => engine::serialize::import_binary(&bytes, &mut fresh).map_err(|e| format!("Load failed: {}", e)),
+        Err(e) => Err(format!("Read failed: {}", e)),
+    };
+    match main_result {
+        Ok(()) => {
+            *db = fresh;
+            Ok(())
+        }
+        Err(main_err) => {
+            // Main save missing or corrupt — fall back to the last good .bak.
+            fresh = engine::Database::new();
+            let bak_path = with_ext_suffix(path, "bak");
+            let bak_bytes = match std::fs::read(&bak_path) {
+                Ok(b) => b,
+                Err(_) => return Err(main_err),
+            };
+            engine::serialize::import_binary(&bak_bytes, &mut fresh)
+                .map_err(|bak_e| format!("Load failed (main: {}; backup: {})", main_err, bak_e))?;
+            *db = fresh;
+            Ok(())
+        }
+    }
+}
+
+/// Save a database to an absolute path (operator-trusted), atomic-write
+/// semantics (tmp + rename) so a crash never corrupts the last good save.
+pub(crate) fn persist_save(db: &engine::Database, path: &std::path::Path) -> Result<(), String> {
+    use std::io::Write;
+    let bytes = engine::serialize::export_binary(db);
+
+    let tmp_path = with_ext_suffix(path, "tmp");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        let mut f = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(true)
+            .write(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(&tmp_path)
+            .map_err(|e| format!("Save failed: {}", e))?;
+        f.write_all(&bytes).map_err(|e| format!("Save failed: {}", e))?;
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::write(&tmp_path, &bytes).map_err(|e| format!("Save failed: {}", e))?;
+    }
+    // Keep previous good save as .bak before replacing.
+    if path.exists() {
+        let bak_path = with_ext_suffix(path, "bak");
+        let _ = std::fs::rename(path, bak_path);
+    }
+    std::fs::rename(&tmp_path, path).map_err(|e| format!("Save failed: {}", e))
+}
+
 // ── Tests ────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -562,6 +631,51 @@ mod tests {
             hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
         }
         hash
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)] // fs blocked by miri isolation
+    fn persist_accepts_absolute_paths() {
+        // Regression: --db /abs/path must work (operator-trusted path), even
+        // though client SAVE/LOAD commands reject absolute paths.
+        let dir = temp_data_dir("persist_abs");
+        let file = dir.join("a3sql_abs.bin");
+
+        let mut db = make_db(false);
+        assert!(persist_save(&db, &file).is_ok(), "persist_save on absolute path");
+        assert!(file.exists(), "file written at absolute path");
+
+        let mut fresh = engine::Database::new();
+        assert!(persist_load(&mut fresh, &file).is_ok(), "persist_load on absolute path");
+        assert!(fresh.has_table("items"));
+        assert_eq!(row_count(&fresh), 2);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)] // fs blocked by miri isolation
+    fn persist_save_rotates_bak_and_recovers() {
+        let dir = temp_data_dir("persist_bak");
+        let file = dir.join("a3sql_bak.bin");
+
+        assert!(persist_save(&make_db(false), &file).is_ok()); // v1
+        assert!(persist_save(&make_db(true), &file).is_ok()); // v2
+
+        let bak = dir.join("a3sql_bak.bin.bak");
+        assert!(bak.exists(), ".bak holds the previous save");
+        let bak_bytes = std::fs::read(&bak).unwrap();
+        assert_eq!(bak_bytes, engine::serialize::export_binary(&make_db(false)));
+
+        // Corrupt main; load falls back to .bak
+        let mut main_bytes = std::fs::read(&file).unwrap();
+        main_bytes[8] ^= 0xff;
+        std::fs::write(&file, &main_bytes).unwrap();
+
+        let mut fresh = engine::Database::new();
+        let r = persist_load(&mut fresh, &file);
+        assert!(r.is_ok(), "persist_load recovers from .bak: {:?}", r);
+        assert_eq!(row_count(&fresh), 2, "bak holds v1 (2 rows)");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

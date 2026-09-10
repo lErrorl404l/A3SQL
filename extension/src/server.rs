@@ -72,9 +72,14 @@ fn serve_client(stream: std::net::TcpStream) {
                 if expected_user.is_empty() && expected_pass.is_empty() {
                     // listener_require_auth is set but no credentials are
                     // configured — LOGIN can never succeed. Say so plainly.
+                    // The fix differs by deployment: in-game, set the CBA
+                    // listener user/password settings; standalone, set
+                    // listener_require_auth = false in a3sql.toml (trusted
+                    // loopback only) or configure credentials via
+                    // `set_credentials <user> <pass>`.
                     let _ = writeln!(
                         stream,
-                        "[-1,\"ERR_AUTH\",\"No credentials configured — set listener_user/password in CBA settings\"]"
+                        "[-1,\"ERR_AUTH\",\"No credentials configured. In-game: set the A3SQL listener user/password in CBA settings. Standalone: set listener_require_auth = false in a3sql.toml (loopback only) or call set_credentials <user> <pass> first\"]"
                     );
                     let _ = stream.flush();
                     break;
@@ -124,24 +129,28 @@ pub fn start_server(bind: &str, port: u16, db_path: Option<&str>) -> Result<Stri
     let addr = format!("{}:{}", bind, port);
 
     if let Some(path) = db_path {
-        // Load existing database if file exists
+        // Operator-trusted path (absolute allowed): bypass the client-facing
+        // SAVE/LOAD sandbox, which rejects absolute paths. This is the
+        // standalone server's --db persistence, not a client command.
+        let p = std::path::PathBuf::from(path);
         let mut db = crate::ffi::DB.lock().unwrap_or_else(|e| e.into_inner());
-        let r = dispatch::dispatch_inner(&mut db, &format!("load {}", path), &[]);
-        eprintln!("[a3sql-server] Loaded from {}: {}", path, r);
+        match crate::dispatch::persist_load(&mut db, &p) {
+            Ok(()) => eprintln!("[a3sql-server] Loaded from {}", p.display()),
+            Err(e) => eprintln!("[a3sql-server] Load failed ({}): {}", p.display(), e),
+        }
     }
 
     let listener = try_bind(&addr).map_err(|e| format!("Bind failed: {}", e))?;
 
     // Register auto-save on SIGTERM for persistence
     if let Some(path) = db_path {
-        let path = path.to_string();
+        let path = std::path::PathBuf::from(path);
         std::thread::spawn(move || {
             loop {
                 std::thread::sleep(std::time::Duration::from_secs(30));
-                let mut db = crate::ffi::DB.lock().unwrap_or_else(|e| e.into_inner());
-                let r = dispatch::dispatch_inner(&mut db, &format!("save {}", path), &[]);
-                if r.contains("ERR") {
-                    eprintln!("[a3sql-server] auto-save: {}", r);
+                let db = crate::ffi::DB.lock().unwrap_or_else(|e| e.into_inner());
+                if let Err(e) = crate::dispatch::persist_save(&db, &path) {
+                    eprintln!("[a3sql-server] auto-save: {}", e);
                 }
             }
         });

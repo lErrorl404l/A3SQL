@@ -61,8 +61,19 @@ fn main() {
                 eprintln!("a3sql-server [OPTIONS]");
                 eprintln!("  --port, -p <PORT>   TCP port (default: 33306)");
                 eprintln!("  --bind, -b <IP>     Bind address (default: 127.0.0.1)");
-                eprintln!("  --db, -d <PATH>     Persist database to file (auto-save)");
+                eprintln!("  --db, -d <PATH>     Persist database to file (auto-save, absolute paths OK)");
                 eprintln!("  --interactive, -i   Interactive REPL mode");
+                eprintln!("  --help, -h          Show options");
+                eprintln!();
+                eprintln!("Config: reads $A3SQL_CONFIG or ./a3sql.toml (optional).");
+                eprintln!("  listener_require_auth = false  allow anonymous connections");
+                eprintln!("  data_dir = \"./a3sql_data\"       file I/O sandbox directory");
+                eprintln!("See a3sql.toml.example in the repo for a documented template.");
+                eprintln!();
+                eprintln!("Auth: LOGIN <user> <pass> is REQUIRED on every TCP connection by");
+                eprintln!("default (fail-closed). For a trusted loopback deployment, set");
+                eprintln!("listener_require_auth = false in a3sql.toml, or call");
+                eprintln!("set_credentials <user> <pass> before clients connect.");
                 return;
             }
             _ => {
@@ -167,14 +178,14 @@ fn graceful_shutdown(db_path: &Option<String>) {
     // Stop accepting new TCP connections
     a3sql::dispatch("stop", &[]);
 
-    // Final save if persistence is enabled
+    // Final save if persistence is enabled (operator-trusted path — bypasses
+    // the client-facing SAVE sandbox which rejects absolute paths).
     if let Some(path) = db_path {
         eprintln!("Saving database to {}...", path);
-        let r = a3sql::dispatch(&format!("save {}", path), &[]);
-        if r.contains("ERR") {
-            eprintln!("Save failed: {}", r);
-        } else {
-            eprintln!("Database saved.");
+        let p = std::path::PathBuf::from(path);
+        match a3sql::persist_to(&p) {
+            Ok(()) => eprintln!("Database saved."),
+            Err(e) => eprintln!("Save failed: {}", e),
         }
     }
 

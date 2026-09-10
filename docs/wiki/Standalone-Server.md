@@ -29,9 +29,9 @@ a3sql-server --interactive
 |---|---|
 | `--port, -p <PORT>` | Listen port (default `33306`) |
 | `--bind, -b <IP>` | Bind address (default `127.0.0.1`) |
-| `--db, -d <PATH>` | Persist to file: load at start, auto-save every 30 s, final save on shutdown |
+| `--db, -d <PATH>` | Persist to file: load at start, auto-save every 30 s, final save on shutdown. Absolute and relative paths both work. |
 | `--interactive, -i` | Read SQL from the console instead of only serving TCP |
-| `--help, -h` | Show options |
+| `--help, -h` | Show options, config file location, and the auth requirement |
 
 ## Interactive mode
 
@@ -71,6 +71,9 @@ listener_require_auth = true
 data_dir = "./a3sql_data"
 game_version = "2.22"
 ```
+
+A fully-commented template ships as `a3sql.toml.example` in the repository
+root — copy it next to the binary and edit.
 
 The server and the in-game extension read the same config format.
 

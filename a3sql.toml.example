@@ -1,0 +1,21 @@
+# a3sql.toml — example configuration for a3sql-server and the in-game listener
+#
+# Copy to the directory you run a3sql-server from, or point to it with:
+#   export A3SQL_CONFIG=/path/to/a3sql.toml
+# A missing file is NOT an error — every key has a safe default.
+
+# Require `LOGIN <user> <pass>` on every TCP connection.
+# Default: true (fail-closed — the listener refuses anonymous connections).
+# Set to false ONLY for a trusted loopback-only deployment (default bind is
+# 127.0.0.1). On a shared or network-accessible host keep this true.
+listener_require_auth = true
+
+# Directory for file I/O commands (SAVE, LOAD, export_to_file).
+# Default: ./a3sql_data
+data_dir = "./a3sql_data"
+
+# Optional: expected Arma 3 version (e.g. "2.22"). When set, the engine
+# compares it to the arma3-wiki command data version and logs a warning on
+# mismatch. Useful when you run the engine against a newer game than the
+# wiki data covers.
+# game_version = "2.22"

@@ -3,9 +3,10 @@
 //! Command dispatch — routes `callExtension` input to SQL execution or
 //! custom commands (SAVE/LOAD/EXPORT/IMPORT/LISTEN/PLUGINS).
 
-mod commands;
+pub(crate) mod commands;
 mod sql;
 
+pub(crate) use commands::{persist_load, persist_save};
 #[allow(unused_imports)]
 pub(crate) use sql::{split_sql, substitute_params};
 

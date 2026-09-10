@@ -29,6 +29,15 @@ mod fuzz;
 pub use dispatch::dispatch;
 pub use server::start_server;
 
+/// Persist the current in-memory database to `path` (operator-trusted, any
+/// absolute/relative path). Returns an error string on failure. This is the
+/// public API the standalone `a3sql-server` uses on shutdown — it bypasses
+/// the client-facing SAVE/LOAD sandbox, which rejects absolute paths.
+pub fn persist_to(path: &std::path::Path) -> Result<(), String> {
+    let db = ffi::DB.lock().unwrap_or_else(|e| e.into_inner());
+    dispatch::persist_save(&db, path)
+}
+
 // ── Tests ────────────────────────────────────────────────────────────────
 // Integration tests (abi, dispatch, plugins) live in tests/abi.rs.
 // This module keeps unit tests for internal pub(crate) functions only.
