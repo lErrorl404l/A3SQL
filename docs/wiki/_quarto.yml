@@ -1,0 +1,38 @@
+project:
+  type: book
+  output-dir: _site
+
+book:
+  title: "A3SQL Documentation"
+  author: "lErrorl404l"
+  date: "2026-09-10"
+  chapters:
+    - index.qmd
+    - Getting-Started.md
+    - SQL-Dialect.md
+    - CBA-Settings.md
+    - Module-Guide.md
+    - Patch-Framework.md
+    - Use-Cases.md
+    - Plugins.md
+    - Standalone-Server.md
+    - TCP-Connector.md
+    - SQL-Compatibility-Report.md
+    - Production-Readiness.md
+    - Security.md
+    - Building.md
+    - Development-Setup.md
+
+format:
+  html:
+    theme: cosmo
+    toc: true
+    code-fold: false
+    code-tools: false
+  pdf:
+    documentclass: scrreprt
+    toc: true
+    number-sections: true
+    colorlinks: true
+  epub:
+    toc: true

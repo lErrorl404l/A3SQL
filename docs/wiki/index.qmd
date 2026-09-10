@@ -1,0 +1,35 @@
+---
+title: "A3SQL Documentation"
+---
+
+# A3SQL
+
+A3SQL is an SQL database engine and management framework for Arma 3. It
+provides in-memory SQLite with full dialect support, SQF integration, and
+tools for server admins and mission makers.
+
+## Features
+
+- **SQL database engine.** In-memory SQLite with full dialect support, running
+  inside the Arma 3 process.
+- **SQF integration.** Execute SQL from SQF with `a3sql_fnc_execute`. Parameterised
+  queries, prepared statements, and result parsing built in.
+- **Persistence.** Player stats, loadouts, and mission state survive server restarts.
+- **Dynamic live patching.** Change weapon stats, vehicle properties, and other
+  runtime values mid-mission from SQL rules.
+- **Analytics and logging.** Performance snapshots, kill events, and player
+  connections logged to SQL, exportable as CSV.
+- **Remote administration.** Manage the server from outside the game over the TCP
+  listener.
+
+## Quick Start
+
+1. Download the latest release from [GitHub](https://github.com/lErrorl404l/a3sql/releases).
+2. Extract `@a3sql` into your Arma 3 directory.
+3. Add `@a3sql` to your `-mod=` parameter.
+4. See [Getting Started](Getting-Started.md) for detailed setup.
+
+## Links
+
+- [GitHub Repository](https://github.com/lErrorl404l/a3sql)
+- [Issue Tracker](https://github.com/lErrorl404l/a3sql/issues)

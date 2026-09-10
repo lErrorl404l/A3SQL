@@ -1,12 +1,3 @@
----
-layout: wiki
-wiki: A3SQL
-title: Use Cases
-group: wiki
-order: 4
-parent: Home
----
-
 # Use Cases
 
 Practical scenarios for A3SQL. Each section shows what you build, how to
