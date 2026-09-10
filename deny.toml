@@ -10,7 +10,8 @@ allow = [
     "Apache-2.0",
     "Apache-2.0 WITH LLVM-exception",
     "BSL-1.0",
-    "GPL-2.0",
+    "GPL-2.0-only",
+    "GPL-2.0-or-later",
     "BSD-3-Clause",
     "ISC",
     "MPL-2.0",
@@ -18,6 +19,19 @@ allow = [
     "Zlib",
 ]
 confidence-threshold = 0.8
+
+# hemtt crates use deprecated SPDX "GPL-2.0" — clarify to modern equivalent
+[[licenses.clarify]]
+name = "hemtt-preprocessor"
+expression = "GPL-2.0-only"
+
+[[licenses.clarify]]
+name = "hemtt-tokens"
+expression = "GPL-2.0-only"
+
+[[licenses.clarify]]
+name = "hemtt-error"
+expression = "GPL-2.0-only"
 
 [bans]
 multiple-versions = "deny"
