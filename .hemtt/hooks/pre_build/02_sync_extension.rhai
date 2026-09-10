@@ -2,17 +2,18 @@
 // Local `cargo build --release` emits liba3sql.so (or a3sql.dll on Windows);
 // Arma expects a3sql_x64.so / a3sql_x64.dll (forceRenameLib = "a3sql").
 //
-// This hook copies whatever exists in extension/target/* into the VFS root,
-// so `hemtt build`/`hemtt release` always package the current build — never a
-// stale repo-root dev copy. In CI the binaries are already renamed correctly
-// before `hemtt build`, so the hook is a no-op there. Skipped sources are
-// reported, not fatal: a hook must never break a build that has no binaries.
-let target = HEMTT_VFS.join("extension").join("target");
+// With the root workspace Cargo.toml, cargo outputs to target/ (root level).
+// Without it, cargo outputs to extension/target/. This hook searches both.
+// In CI the binaries are already renamed correctly before `hemtt build`,
+// so the hook is a no-op there. Skipped sources are reported, not fatal.
+let root_target = HEMTT_VFS.join("target");
+let ext_target = HEMTT_VFS.join("extension").join("target");
 
 let synced = 0;
 
-// Linux x86_64
-let linux64 = target.join("release").join("liba3sql.so");
+// Linux x86_64 — try root target first, then extension target
+let linux64 = root_target.join("release").join("liba3sql.so");
+if !linux64.exists() { linux64 = ext_target.join("release").join("liba3sql.so"); }
 if linux64.exists() {
     let dest = HEMTT_VFS.join("a3sql_x64.so");
     if dest.exists() { dest.remove_file(); }
@@ -22,7 +23,8 @@ if linux64.exists() {
 }
 
 // Linux i686
-let linux32 = target.join("i686-unknown-linux-gnu").join("release").join("liba3sql.so");
+let linux32 = root_target.join("i686-unknown-linux-gnu").join("release").join("liba3sql.so");
+if !linux32.exists() { linux32 = ext_target.join("i686-unknown-linux-gnu").join("release").join("liba3sql.so"); }
 if linux32.exists() {
     let dest = HEMTT_VFS.join("a3sql.so");
     if dest.exists() { dest.remove_file(); }
@@ -31,8 +33,11 @@ if linux32.exists() {
     print("Synced a3sql.so (linux i686)");
 }
 
-// Windows x86_64
-let win64 = target.join("x86_64-pc-windows-gnu").join("release").join("a3sql.dll");
+// Windows x86_64 (MSVC first, then GNU)
+let win64 = root_target.join("x86_64-pc-windows-msvc").join("release").join("a3sql.dll");
+if !win64.exists() { win64 = root_target.join("x86_64-pc-windows-gnu").join("release").join("a3sql.dll"); }
+if !win64.exists() { win64 = ext_target.join("x86_64-pc-windows-msvc").join("release").join("a3sql.dll"); }
+if !win64.exists() { win64 = ext_target.join("x86_64-pc-windows-gnu").join("release").join("a3sql.dll"); }
 if win64.exists() {
     let dest = HEMTT_VFS.join("a3sql_x64.dll");
     if dest.exists() { dest.remove_file(); }
@@ -41,8 +46,11 @@ if win64.exists() {
     print("Synced a3sql_x64.dll (windows x86_64)");
 }
 
-// Windows i686
-let win32 = target.join("i686-pc-windows-gnu").join("release").join("a3sql.dll");
+// Windows i686 (MSVC first, then GNU)
+let win32 = root_target.join("i686-pc-windows-msvc").join("release").join("a3sql.dll");
+if !win32.exists() { win32 = root_target.join("i686-pc-windows-gnu").join("release").join("a3sql.dll"); }
+if !win32.exists() { win32 = ext_target.join("i686-pc-windows-msvc").join("release").join("a3sql.dll"); }
+if !win32.exists() { win32 = ext_target.join("i686-pc-windows-gnu").join("release").join("a3sql.dll"); }
 if win32.exists() {
     let dest = HEMTT_VFS.join("a3sql.dll");
     if dest.exists() { dest.remove_file(); }
@@ -52,5 +60,5 @@ if win32.exists() {
 }
 
 if synced == 0 {
-    print("No extension binaries found in extension/target — build will package any repo-root copies or none.");
+    print("No extension binaries found in target/ — build will package any repo-root copies or none.");
 }
