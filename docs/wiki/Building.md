@@ -1,0 +1,136 @@
+# Building
+
+This page is for building A3SQL itself from source. If you just want to use
+A3SQL in your own mod, grab a release, add `a3sql_main` + `a3sql_database` to
+your `requiredAddons[]`, and skip straight to the [Module Guide](Module-Guide.md).
+None of this is needed to ship your mod.
+
+For A3SQL development there are two build steps: the **Rust extension**
+(native DLL/SO) and the **Arma 3 addon** (PBO files via HEMTT).
+
+## Prerequisites
+
+- [Rust](https://rustup.rs/) stable, at or above the `rust-version` declared in `extension/Cargo.toml`
+- [HEMTT](https://hemtt.dev/) — Arma addon build tool
+- [CBA_A3](https://github.com/CBATeam/CBA_A3) — for addon compilation (HEMTT dev dependencies)
+- [UV](https://docs.astral.sh/uv/) (recommended) — Python tooling runner
+- Wine or Proton (optional) — for code signing on Linux (see Code Signing below)
+
+## Quick Build
+
+```bash
+# 1. Build the Rust extension
+cargo build --release --manifest-path extension/Cargo.toml
+
+# 2. Copy to Arma 3 directory
+cp extension/target/release/liba3sql.so "/path/to/Arma 3/@a3sql/a3sql_x64.so"
+# or for Windows cross-compile:
+cp extension/target/x86_64-pc-windows-gnu/release/a3sql.dll "/path/to/Arma 3/@a3sql/a3sql_x64.dll"
+
+# 3. Build addon PBOs
+hemtt build
+
+# 4. Result in .hemttout/build/
+```
+
+## Cross-compilation
+
+The extension builds for Linux and Windows, 32-bit and 64-bit each. Pick the
+`--target` triple for the platform you need. The 32-bit targets exist for
+legacy servers only: Arma 3 deprecated 32-bit support in 2.22, so new
+deployments should use the 64-bit binaries:
+
+```bash
+# Linux x86_64 (native)
+cargo build --release --target x86_64-unknown-linux-gnu --manifest-path extension/Cargo.toml
+
+# Linux 32-bit
+cargo build --release --target i686-unknown-linux-gnu --manifest-path extension/Cargo.toml
+
+# Windows x86_64 (MinGW cross)
+cargo build --release --target x86_64-pc-windows-gnu --manifest-path extension/Cargo.toml
+
+# Windows 32-bit
+cargo build --release --target i686-pc-windows-gnu --manifest-path extension/Cargo.toml
+```
+
+## Testing
+
+```bash
+cargo test --manifest-path extension/Cargo.toml   # full test suite
+cargo clippy --manifest-path extension/Cargo.toml --all-targets -- -D warnings
+cargo fmt --check                                  # formatting
+hemtt check -p -e                                  # SQF + config validation
+```
+
+## Developer Tooling
+
+### Python tools (UV)
+
+All development Python scripts are in `tools/`. Run with UV:
+
+```bash
+# Environment report
+uv run python3 tools/setup.py --report
+
+# SQF validation
+uv run python3 tools/sqfvmChecker.py
+uv run python3 tools/sqf_validator.py addons/
+
+# Config style check
+uv run python3 tools/config_style_checker.py
+```
+
+### Code Signing (HEMTT)
+
+A3SQL signs addons with HEMTT. Generate a local key once:
+
+```bash
+hemtt keys generate
+```
+
+Keep `a3sql.hemttprivatekey` out of version control (already gitignored) and
+never commit `private_key_hash`. HEMTT signs automatically during
+`hemtt release`; signed zips go to `releases/`. Signing is configured in
+`.hemtt/project.toml` → `[signing] authority = "a3sql"`. CI signs each release
+with a per-release ephemeral key.
+
+### Steam Library Discovery
+
+`tools/proton.py` automatically finds Arma 3 via Steam VDF (`libraryfolders.vdf`), including Wine prefix and workshop paths. Used by `tools/setup.py` for file patching symlink setup.
+
+## CI/CD
+
+GitHub Actions (`.github/workflows/ci.yml`) runs on push/PR to `main`:
+
+1. **validate** — SQF syntax validation + config style check + HEMTT check + BOM check
+2. **test** — cargo test + clippy + rustfmt on ubuntu-latest
+3. **build-linux** — cross-compile for x86_64 and i686 Linux
+4. **build-windows** — cross-compile for x86_64 and i686 Windows (MinGW)
+5. **build-addon** — downloads all artifacts, runs `hemtt build`, outputs PBOs
+6. **workshop** — publish to Steam Workshop (on release)
+
+On a release publish, it creates `a3sql-release.zip` with the full addon.
+
+## Standalone Server
+
+The a3sql-server binary is part of the extension workspace:
+
+```bash
+cargo run --manifest-path extension/Cargo.toml --bin a3sql-server -- --port 33307
+cargo build --release --manifest-path extension/Cargo.toml --bin a3sql-server
+```
+
+## Arma 3 Installation
+
+Deploy the addon to your Arma 3 directory:
+
+```bash
+# Linux (native)
+cp extension/target/release/a3sql_x64.so ~/.local/share/Steam/steamapps/common/Arma\ 3/@a3sql/
+
+# Windows (cross-compiled via MinGW)
+cp extension/target/x86_64-pc-windows-gnu/release/a3sql.dll "/path/to/Arma 3/@a3sql/a3sql_x64.dll"
+```
+
+The HEMTT-built PBOs go in the same `@a3sql` directory alongside the DLLs.

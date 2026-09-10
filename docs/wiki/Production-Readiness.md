@@ -1,0 +1,132 @@
+# Production Readiness
+
+Status of A3SQL for live use by units, multiplayer servers, and large mods,
+and the concrete gaps to close before you rely on it in production.
+
+## Verified working
+
+Everything below is exercised by the CI smoke test, which loads the real
+release extension binary and runs the mod's own production SQL through the
+exact C ABI Arma uses (`"a3sql" callExtension stmt`):
+
+```sh
+python3 tools/sql_smoke_test.py --bin a3sql_x64.so tools/smoke_test.sql
+```
+
+| Area | Status |
+|---|---|
+| All 4 extension binaries (x64/i686 × Linux/Windows) | Verified loading + executing via ctypes/C harnesses, incl. under wine for the DLLs |
+| STRING + ARRAY callExtension forms | Both work; every SQF call site routes correctly |
+| The mod's own schema (patch_rules, patch_presets, server_commands) | Create/CRUD/cursor/prepare/save/load round-trip green |
+| SQL injection surface | `$1` param substitution + escaping; `call compile` removed (RCE-class) |
+| TCP listener | Loopback-only, mandatory LOGIN auth (fail-closed), per-statement panic barrier |
+| Every SQL-Dialect.md documented feature | Passes against the real binary (dialect sweep, CI-gated) |
+| >30 KB responses | Fail loud with a cursor hint on every path (FFI guard + write_response backstop), never silent truncation |
+| Rust test suite + miri + clippy -D warnings + hemtt check | All green in CI |
+
+## Gap history, all closed
+
+These were real, confirmed limitations. Each is now fixed; the list is kept
+for the record and for anyone upgrading from an older build.
+
+### 1. Custom SQL engine ≠ SQLite (mitigated)
+
+The parser is `sqlparser` (mature), but execution is hand-rolled. Real bugs
+were found and fixed: UNIQUE treated as PK, `datetime('now')` in VALUES
+rejected, no numeric-to-TEXT affinity, SELECT on empty views failing,
+`STRINGS[]`/`FLOATS[]` columns downgraded to scalars, plus the FFI layer
+(STRING form empty, ARRAY form routing dead).
+
+**Mitigation (not a rewrite):** every mod must run its own SQL through the
+smoke test before shipping: `python3 tools/sql_smoke_test.py <mod.sql>`.
+A 116-case dialect sweep now gates every documented feature against the real
+binary in CI.
+
+### 2. Response buffer cap raised to 30 KB (DONE)
+
+`OUTPUT_BUF_SIZE = 30720` matches Arma 3 v2.20's `callExtension` ceiling.
+SELECTs exceeding ~30 KB fail loudly with a cursor hint and need cursor
+pagination, but the headroom is now the full platform cap.
+
+### 3. Crash-safe persistence (DONE)
+
+SAVE writes to a temp file then renames (atomic on POSIX/NTFS); a crash
+mid-write leaves the last good save untouched. The previous good save is
+kept as `*.bak`; LOAD falls back to it automatically if the main save is
+corrupt or missing, with a clear message. Binary format carries an FNV-1a
+checksum trailer verified on LOAD.
+
+### 4. Single global DB mutex (accepted)
+
+All queries serialize on one `Mutex<Database>`. Fine for Arma's
+single-threaded server and unit-scale data (thousands of rows). If a mod
+hammers the TCP listener from many clients concurrently, expect contention;
+the `RwLock` read/write split is the upgrade if profiling ever shows it
+matters. Not worth the complexity at current scale.
+
+### 5. Listener auth hardening (DONE)
+
+`listener_require_auth` in `a3sql.toml` forces `LOGIN` on every TCP
+connection, for shared hosts where any local process could otherwise connect.
+This is now the default (fail-closed): with no credentials configured,
+connections are refused until you set them. The empty-credentials LOGIN
+bypass is closed, and the error message tells the operator exactly what to
+configure. CBA credentials still work as before.
+
+### 6. Save format version pinning (DONE)
+
+Saves carry a format version. Older formats are rejected with an actionable
+message telling you to migrate via `export_sql` and re-import. Saves remain
+NOT forward/backward compatible across builds, by design.
+
+## What "production ready" means for each consumer
+
+| Consumer | Can ship today? | Notes |
+|---|---|---|
+| Small unit (single server, <10k rows) | **Yes** | No blockers |
+| Multiplayer server (public, dedicated host) | **Yes** | Set listener credentials; back up `a3sql_data/` |
+| Big mod (heavy SQL, big datasets) | **Yes with SQL pass** | Run own SQL through the smoke test; paginate >30 KB results |
+
+## Data-volume envelope (what fits in memory)
+
+A3SQL is an **in-memory** engine: the whole database lives in RAM, and every
+`SAVE` writes a full snapshot of it. That is the right shape for a mod data
+store (settings, loadouts, leaderboards, kv state, small-moderate tables) and
+the wrong shape for a telemetry sink. Know the envelope:
+
+| Volume | Works? | Notes |
+|---|---|---|
+| < 10k rows | **Yes, trivially** | Save is sub-millisecond; memory negligible |
+| 10k-100k rows | **Yes** | ~1 MB RAM per 100k simple rows; save ~ms |
+| 100k-500k rows | **Yes with care** | Watch save size: a 500k-row table saves a multi-MB snapshot every autosave (30s) |
+| > 500k rows / high-write | **No: not this engine** | Memory grows unbounded and every save rewrites the whole DB; use a real embedded DB for telemetry-scale data |
+
+Practical guidance for mods:
+- **Keep tables < ~100k rows.** Everything up to that is snappy; beyond it,
+  save time and RAM start to matter.
+- **Bulk-export large data out of the engine, not through it.** >30 KB result
+  sets fail loudly with a cursor hint on every path (FFI and server), so page
+  with `cursor create` + `cursor fetch <name> [limit]`, or export to CSV/JSON
+  files via `export_to_file` (which bypasses the response buffer entirely).
+- **The 30 KB contract** (unchanged, now explicit): any single response larger
+  than `OUTPUT_BUF_SIZE = 30720` (Arma's `callExtension` ceiling) returns
+  `ERR_EXEC "Result exceeds output buffer … use cursor"`, never silent
+  truncation. Exact-fit and smaller responses are byte-identical.
+- **Autosave cadence**: the 30s autosave thread holds the same DB mutex as
+  queries, so a large save briefly blocks new statements. At <100k rows this
+  is sub-millisecond; at hundreds of thousands of rows it becomes a visible
+  hitch. Keep data small or disable autosave and save on mission end.
+
+## The 30-minute production checklist
+
+1. `python3 tools/sql_smoke_test.py tools/smoke_test.sql`: all PASS
+2. Run your mod's own SQL through the smoke test: all PASS
+3. Set listener credentials via CBA settings (LOGIN is mandatory by default;
+   only set `listener_require_auth = false` in `a3sql.toml` for anonymous
+   access on a trusted loopback host)
+4. Point `a3sql_database_auto_save_path` somewhere backed up; test a restore
+   (corrupt the save, confirm the `.bak` fallback)
+5. Verify a >30 KB SELECT errors with the cursor hint, then paginate with
+   cursors
+6. Size-check your tables against the data-volume envelope above; keep
+   <100k rows
