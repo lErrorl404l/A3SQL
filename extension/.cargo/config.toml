@@ -13,7 +13,8 @@
 # cargo-xwin and windows-latest both provide MSVC link.exe.
 
 [target.i686-pc-windows-msvc]
-# Same as x64.
+# 32-bit Arma requires decorated __stdcall exports (_RVExtension@12 etc).
+# Win32.def is applied from build.rs — MSVC link.exe accepts the .def path.
 
 [target.x86_64-pc-windows-gnu]
 linker = "x86_64-w64-mingw32-gcc"
@@ -22,7 +23,9 @@ ar = "x86_64-w64-mingw32-gcc-ar"
 [target.i686-pc-windows-gnu]
 linker = "i686-w64-mingw32-gcc"
 ar = "i686-w64-mingw32-gcc-ar"
-rustflags = ["-C", "link-args=-Wl,--kill-at"]
+# Decorated __stdcall names (_RVExtension@12 etc.) are required by the
+# Arma 3 Publisher for 32-bit DLLs. Win32.def is applied from build.rs
+# so the path resolves correctly from any working directory.
 
 [target.i686-unknown-linux-gnu]
 linker = "i686-linux-gnu-gcc"

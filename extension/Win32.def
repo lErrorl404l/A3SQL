@@ -1,0 +1,6 @@
+LIBRARY a3sql
+EXPORTS
+    _RVExtensionVersion@8=RVExtensionVersion
+    _RVExtension@12=RVExtension
+    _RVExtensionArgs@20=RVExtensionArgs
+    _RVExtensionRegisterCallback@4=RVExtensionRegisterCallback
