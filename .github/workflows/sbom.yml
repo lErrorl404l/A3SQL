@@ -2,7 +2,8 @@
 # Runs on tag push (any tag) plus manual dispatch, so provenance for a
 # release does not depend on release-drafter. The SBOM is built from the
 # tracked extension/Cargo.lock (F-04), which pins the dependency graph.
-# The SBOM is uploaded as a workflow artifact, never committed.
+# On release tags, the SBOM is also attached to the GitHub release for
+# supply-chain evidence (Def Stan 05-138).
 
 name: SBOM
 
@@ -28,9 +29,14 @@ jobs:
         run: |
           cargo cyclonedx --manifest-path extension/Cargo.toml --format json
           test -f extension/a3sql.cdx.json
-      - name: Upload SBOM
+      - name: Upload SBOM artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: a3sql-sbom-${{ github.ref_name }}
           path: extension/a3sql.cdx.json
           if-no-files-found: error
+      - name: Attach SBOM to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        with:
+          files: extension/a3sql.cdx.json

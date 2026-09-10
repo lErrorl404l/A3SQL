@@ -8,24 +8,43 @@ book:
   date: "2026-09-10"
   chapters:
     - index.qmd
-    - Getting-Started.md
-    - SQL-Dialect.md
-    - CBA-Settings.md
-    - Module-Guide.md
-    - Patch-Framework.md
-    - Use-Cases.md
-    - Plugins.md
-    - Standalone-Server.md
-    - TCP-Connector.md
-    - SQL-Compatibility-Report.md
-    - Production-Readiness.md
-    - Security.md
-    - Building.md
-    - Development-Setup.md
+    - part: "Getting Started"
+      chapters:
+        - Getting-Started.md
+    - part: "SQL Reference"
+      chapters:
+        - SQL-Dialect.md
+        - SQL-Cheat-Sheet.md
+        - SQL-Compatibility-Report.md
+    - part: "Integration"
+      chapters:
+        - Module-Guide.md
+        - Use-Cases.md
+        - Plugins.md
+        - Patch-Framework.md
+    - part: "Networking"
+      chapters:
+        - TCP-Connector.md
+        - Standalone-Server.md
+    - part: "Operations"
+      chapters:
+        - CBA-Settings.md
+        - Security.md
+        - Production-Readiness.md
+    - part: "Development"
+      chapters:
+        - Development-Setup.md
+        - Building.md
 
 format:
   html:
-    theme: cosmo
+    theme:
+      light: cosmo
+      dark: darkly
     toc: true
+    toc-depth: 3
     code-fold: false
     code-tools: false
+    search: true
+    anchor-sections: true
+    smooth-scroll: true
