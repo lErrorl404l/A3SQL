@@ -38,6 +38,14 @@ if (_rowCount == 0) then {
     if (_logLevel >= 2) then {
         ["A3SQL Runtime", "Seeded demo on_fire rule: %1", _seedFireResult] call CBA_fnc_info;
     };
+
+    // on_killed accuracy modifier. When any unit is killed, boost the killer's
+    // aiming accuracy by 1.5x (stacking reward for kills).
+    private _seedKilled = "INSERT INTO runtime_overrides (name, event, match_type, match_value, target_property, operator, value, priority, apply_function) VALUES ('demo_kill_accuracy_boost', 'on_killed', 'all', '', '', 'mul', '1.5', 5, 'a3sql_runtime_fnc_applyAccuracy')";
+    private _seedKilledResult = _extension callExtension _seedKilled;
+    if (_logLevel >= 2) then {
+        ["A3SQL Runtime", "Seeded demo on_killed rule: %1", _seedKilledResult] call CBA_fnc_info;
+    };
 };
 
 [0, "OK", "Table ready"]

@@ -1,0 +1,473 @@
+# A3SQL Runtime Engine
+
+The runtime engine applies DB-driven override rules to live game objects via
+event handlers. Rules sit in the `runtime_overrides` table and fire on
+specific events: weapon discharge, projectile impact, or unit death. The
+engine is domain-agnostic: the `apply_function` column names any SQF function
+to handle the override, so the same engine covers ballistics, damage,
+health, environment, or anything else a modder can reach from SQF.
+
+---
+
+- [Overview](#overview)
+- [Architecture](#architecture)
+- [SQL Schema](#sql-schema)
+- [Events](#events)
+- [Apply Function Dispatch](#apply-function-dispatch)
+- [Built-in Apply Functions](#built-in-apply-functions)
+- [Generic Variable Operators](#generic-variable-operators)
+- [Writing Custom Apply Functions](#writing-custom-apply-functions)
+- [SQF API Reference](#sqf-api-reference)
+- [CBA Settings](#cba-settings)
+- [Worked Examples](#worked-examples)
+- [Limitations](#limitations)
+- [Relationship to the Patch Framework](#relationship-to-the-patch-framework)
+
+---
+
+## Overview
+
+The runtime engine is a separate system from the patch framework. Where the
+patch framework polls for rule changes and applies setVariable patches, the
+runtime engine hooks into game events and transforms values in the event
+pipeline itself.
+
+Key points:
+
+- **Event-driven.** Rules fire on Fired, HitPart, or EntityKilled events.
+  No polling, no dirty flags, no frame delay.
+- **Domain-agnostic.** The `apply_function` column names any SQF function.
+  The engine does not care whether you modify damage, velocity, weather,
+  or anything else.
+- **DB-driven.** Rules live in `runtime_overrides`. Insert a row and the
+  engine picks it up on the next matching event. No restart required.
+- **In-process.** The engine uses `callExtension` (in-process Arma
+  extension), not the TCP server. The standalone server is irrelevant for
+  runtime rule loading.
+
+---
+
+## Architecture
+
+```
+ ┌─────────────────────────────────────────────────┐
+ │  runtime_overrides table (SQL via callExtension) │
+ │  id, name, event, match_type, match_value,       │
+ │  target_property, operator, value, priority,     │
+ │  apply_function                                  │
+ └──────────────────────┬──────────────────────────┘
+                        │ fnc_reload: SELECT active rules
+                        │ into in-memory hashmap cache
+                        ▼
+ ┌──────────────────────────────────────────────────┐
+ │  Event Handlers                                  │
+ │  ┌─────────┐  ┌─────────┐  ┌──────────────────┐ │
+ │  │  Fired   │  │ HitPart │  │ EntityKilled     │ │
+ │  │ (on_fire)│  │ (on_hit)│  │ (on_killed)      │ │
+ │  └────┬────┘  └────┬────┘  └────────┬─────────┘ │
+ │       │            │                 │            │
+ │       ▼            ▼                 ▼            │
+ │  ┌──────────────────────────────────────────┐    │
+ │  │  fnc_apply: dispatch                     │    │
+ │  │  if apply_function set:                  │    │
+ │  │    call missionNamespace getVariable     │    │
+ │  │  else:                                   │    │
+ │  │    generic set/add/mul/div/clamp         │    │
+ │  └──────────────────────────────────────────┘    │
+ └──────────────────────────────────────────────────┘
+```
+
+1. **PostInit** -- `fnc_register` creates the `runtime_overrides` table
+   (with ALTER TABLE migration for older schemas), seeds demo rules if
+   the table is empty. `fnc_reload` SELECTs all active rules into an
+   in-memory hashmap cache keyed by event name.
+
+2. **Event handlers** -- `XEH_postInit` attaches a mission-wide
+   EntityKilled handler. Fired and HitPart are object-level events, so a
+   PerFrame poll cycle attaches them to each new object once.
+
+3. **Rule matching** -- On each event, the handler iterates rules for that
+   event type. Each rule is wrapped in `try {} catch {}` so one failure
+   does not block the rest. Match type filtering (exact, type_of, wildcard,
+   regex) selects which objects the rule applies to.
+
+4. **Apply dispatch** -- `fnc_apply` checks the `apply_function` column.
+   If set, it calls the named function via `missionNamespace getVariable`.
+   If empty, it falls back to generic variable operators (set/add/mul/
+   div/clamp) on the target object.
+
+---
+
+## SQL Schema
+
+### runtime_overrides
+
+| Column | Type | Default | Description |
+|--------|------|---------|-------------|
+| id | INTEGER | auto | Primary key |
+| name | TEXT | required | Rule name (human-readable identifier) |
+| active | INTEGER | 1 | 1 = enabled, 0 = disabled |
+| event | TEXT | required | Event trigger: `on_fire`, `on_hit`, `on_killed` |
+| match_type | TEXT | 'exact' | Matching: `all`, `exact`, `type_of`, `wildcard`, `regex` |
+| match_value | TEXT | '' | Classname or pattern to match against |
+| target_property | TEXT | '' | Object variable name (for generic operators) |
+| operator | TEXT | 'set' | Operation: `set`, `add`, `mul`, `div`, `clamp` |
+| value | TEXT | required | Operator argument (number, vector, or function arg) |
+| priority | INTEGER | 0 | Higher values apply first |
+| apply_function | TEXT | '' | SQF function name to call (empty = generic operators) |
+
+```sql
+CREATE TABLE IF NOT EXISTS runtime_overrides (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    active INTEGER DEFAULT 1,
+    event TEXT NOT NULL,
+    match_type TEXT DEFAULT 'exact',
+    match_value TEXT DEFAULT '',
+    target_property TEXT DEFAULT '',
+    operator TEXT DEFAULT 'set',
+    value TEXT NOT NULL,
+    priority INTEGER DEFAULT 0,
+    apply_function TEXT DEFAULT ''
+);
+```
+
+---
+
+## Events
+
+| Event | SQF Event | Fired when | Server-side |
+|-------|-----------|------------|-------------|
+| `on_fire` | Fired | A unit fires a weapon | Yes (projectile exists on server) |
+| `on_hit` | HitPart | A projectile hits an object | Camera-scoped (needs player) |
+| `on_killed` | EntityKilled | A unit is killed | Yes |
+
+`on_fire` and `on_killed` work on headless dedicated servers.
+`on_hit` requires a player connection because HitPart is camera-scoped.
+
+---
+
+## Apply Function Dispatch
+
+The `apply_function` column makes the engine domain-agnostic. When a rule
+matches an event, `fnc_apply` checks this column:
+
+```
+if apply_function is set:
+    call missionNamespace getVariable [apply_function, {}]
+    with params: [target, rule, context]
+else:
+    use generic operators (set/add/mul/div/clamp) on target_property
+```
+
+The called function receives:
+
+| Param | Type | Contents |
+|-------|------|----------|
+| `_target` | OBJECT | The object the event fired on (shooter, hit target, killed unit) |
+| `_rule` | HASHMAP | The matched rule with all columns as keys |
+| `_context` | HASHMAP | Event-specific data (ammo, projectile, incomingDamage, velocity, etc.) |
+
+The function must return `[returnCode, status, data]` following the
+standard A3SQL response format.
+
+---
+
+## Built-in Apply Functions
+
+### a3sql_runtime_fnc_applyDamage
+
+Modifies incoming damage on a hit event.
+
+| Rule field | Usage |
+|------------|-------|
+| `operator` | `mul` (multiply damage), `add`, `div`, `set`, `clamp` |
+| `value` | Numeric argument for the operator |
+| `context.incomingDamage` | The original damage value from the HitPart event |
+
+Example: multiply all .50 BMG hits by 1.5x:
+
+```sql
+INSERT INTO runtime_overrides (name, event, match_type, match_value,
+    operator, value, apply_function)
+VALUES ('heavy_50cal', 'on_hit', 'type_of', 'MSS_50_M33_Ball',
+    'mul', '1.5', 'a3sql_runtime_fnc_applyDamage');
+```
+
+### a3sql_runtime_fnc_applyVelocity
+
+Scales projectile velocity on a fire event.
+
+| Rule field | Usage |
+|------------|-------|
+| `operator` | `mul` (scale velocity), `set` (absolute), `add` (delta) |
+| `value` | Scale factor (mul), absolute vector "x,y,z" (set), or delta vector (add) |
+
+Example: give .50 BMG rounds 1.2x velocity:
+
+```sql
+INSERT INTO runtime_overrides (name, event, match_type, match_value,
+    operator, value, apply_function)
+VALUES ('hot_load_50cal', 'on_fire', 'type_of', 'MSS_50_M33_Ball',
+    'mul', '1.2', 'a3sql_runtime_fnc_applyVelocity');
+```
+
+### a3sql_runtime_fnc_applyWeather
+
+Modifies weather parameters (wind, rain, humidity). Works on any event.
+
+| Rule field | Usage |
+|------------|-------|
+| `operator` | `set` (replace), `mul` (scale), `add` (delta) |
+| `value` | Comma-separated: `"wind_x,wind_y,rain,humidity"` (any subset) |
+
+Example: set heavy rain and adjust wind on mission start:
+
+```sql
+INSERT INTO runtime_overrides (name, event, match_type, match_value,
+    operator, value, apply_function)
+VALUES ('storm_weather', 'on_fire', 'all', '',
+    'set', '5,3,0.8', 'a3sql_runtime_fnc_applyWeather');
+```
+
+### a3sql_runtime_fnc_applyAccuracy
+
+Modifies AI skill values (aiming accuracy, aiming shake, spot distance).
+Clamps all values to 0.0–1.0. Works on any event.
+
+| Rule field | Usage |
+|------------|-------|
+| `operator` | `set` (replace), `mul` (scale), `add` (delta), `clamp` (cap) |
+| `value` | Comma-separated: `"aimingAccuracy,aimingShake,spotDistance"` (any subset) |
+
+Example: boost killer's accuracy by 1.5x on each kill:
+
+```sql
+INSERT INTO runtime_overrides (name, event, match_type, match_value,
+    operator, value, priority, apply_function)
+VALUES ('kill_accuracy_boost', 'on_killed', 'all', '',
+    'mul', '1.5', 5, 'a3sql_runtime_fnc_applyAccuracy');
+```
+
+### a3sql_runtime_fnc_applySpeed
+
+Modifies unit movement speed or vehicle max speed.
+
+| Rule field | Usage |
+|------------|-------|
+| `operator` | `set` (replace), `mul` (scale) |
+| `value` | Mode string (`"walk"`, `"run"`, `"sprint"`) or numeric (km/h) |
+
+Example: set all infantry to sprint speed on spawn:
+
+```sql
+INSERT INTO runtime_overrides (name, event, match_type, match_value,
+    operator, value, apply_function)
+VALUES ('fast_movement', 'on_fire', 'all', '',
+    'set', 'sprint', 'a3sql_runtime_fnc_applySpeed');
+```
+
+---
+
+## Generic Variable Operators
+
+When `apply_function` is empty, the engine uses generic operators on
+the target object's variables via `setVariable` / `getVariable`:
+
+| Operator | Behaviour |
+|----------|-----------|
+| `set` | `_target setVariable [target_property, value]` |
+| `add` | `current + value` |
+| `mul` | `current * value` |
+| `div` | `current / value` (0 on div-by-zero) |
+| `clamp` | `current min value` |
+
+This path is useful for simple variable patching that does not need
+event-specific context (e.g. setting a flag on an object when it fires).
+
+---
+
+## Writing Custom Apply Functions
+
+Any compiled SQF function can serve as an apply function. Register it
+in `missionNamespace` and reference its name in the `apply_function`
+column.
+
+### Template
+
+```sqf
+// my_custom_apply.sqf
+params ["_target", "_rule", "_context"];
+
+private _operator = toLower (_rule getOrDefault ["operator", "set"]);
+private _value    = _rule getOrDefault ["value", ""];
+
+// Read event context
+private _eventData = _context getOrDefault ["someField", nil];
+
+// Apply your logic
+// ...
+
+// Return standard response
+[0, "OK", _result]
+```
+
+### Registration
+
+Compile and register during mission init:
+
+```sqf
+private _fnc = compileFinal "path/to/my_custom_apply.sqf";
+missionNamespace setVariable ["my_custom_apply", _fnc];
+```
+
+Or use the `call` operator to compile inline:
+
+```sqf
+missionNamespace setVariable ["my_custom_apply", {
+    params ["_target", "_rule", "_context"];
+    // Your logic here
+    [0, "OK", nil]
+}];
+```
+
+### Usage
+
+```sql
+INSERT INTO runtime_overrides (name, event, match_type, match_value,
+    operator, value, apply_function)
+VALUES ('my_rule', 'on_fire', 'all', '',
+    'set', 'some_arg', 'my_custom_apply');
+```
+
+### Context Hashmap Fields
+
+The context hashmap varies by event:
+
+| Event | Key | Type | Description |
+|-------|-----|------|-------------|
+| `on_fire` | `ammo` | STRING | Ammo classname |
+| `on_fire` | `projectile` | OBJECT | The projectile object |
+| `on_fire` | `weapon` | STRING | Weapon classname |
+| `on_hit` | `incomingDamage` | NUMBER | Damage before override |
+| `on_hit` | `projectile` | OBJECT | The projectile object |
+| `on_hit` | `selection` | ARRAY | Hit selections |
+| `on_hit` | `shooter` | OBJECT | Who fired |
+| `on_killed` | `killer` | OBJECT | Who killed the unit |
+| `on_killed` | `instigator` | OBJECT | Who caused the kill |
+
+---
+
+## SQF API Reference
+
+### Functions
+
+| Function | Description |
+|----------|-------------|
+| `a3sql_runtime_fnc_register` | Create `runtime_overrides` table, seed demo rules if empty |
+| `a3sql_runtime_fnc_reload` | SELECT active rules into in-memory cache |
+| `a3sql_runtime_fnc_apply` | Dispatch a rule to its apply function or generic operators |
+| `a3sql_runtime_fnc_applyDamage` | Built-in: modify incoming damage |
+| `a3sql_runtime_fnc_applyVelocity` | Built-in: scale projectile velocity |
+| `a3sql_runtime_fnc_applyWeather` | Built-in: modify wind, rain, humidity |
+| `a3sql_runtime_fnc_applyAccuracy` | Built-in: modify AI aiming accuracy, shake, spot distance |
+| `a3sql_runtime_fnc_applySpeed` | Built-in: modify unit movement speed or vehicle max speed |
+| `a3sql_runtime_fnc_handleFired` | Process Fired events, match rules, call apply |
+| `a3sql_runtime_fnc_handleHit` | Process HitPart events, match rules, call apply |
+| `a3sql_runtime_fnc_handleKilled` | Process EntityKilled events, match rules, call apply |
+
+### Reloading Rules
+
+Rules are loaded into memory at mission start. To reload after inserting
+new rules via TCP or in-game:
+
+```sqf
+[] call a3sql_runtime_fnc_reload;
+```
+
+---
+
+## CBA Settings
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `a3sql_runtime_enabled` | CHECKBOX | true | Enable the runtime event engine |
+| `a3sql_runtime_log_level` | LIST | 1 (WARN) | Verbosity: 0=ERROR, 1=WARN, 2=INFO, 3=DEBUG |
+| `a3sql_runtime_poll_hz` | SLIDER | 5 | Per-object event handler attach rate in Hz |
+
+---
+
+## Worked Examples
+
+### Example 1: Double all rifle damage
+
+```sql
+INSERT INTO runtime_overrides (name, event, match_type, match_value,
+    operator, value, apply_function)
+VALUES ('double_rifle_damage', 'on_hit', 'wildcard', 'MSS_*',
+    'mul', '2.0', 'a3sql_runtime_fnc_applyDamage');
+```
+
+### Example 2: Custom weather effect on fire
+
+Register a function that reads wind and adjusts projectile speed:
+
+```sqf
+missionNamespace setVariable ["my_wind_adjust", {
+    params ["_target", "_rule", "_context"];
+    private _vel = velocity (_context getOrDefault ["projectile", objNull]);
+    private _wind = wind;
+    private _crosswind = [_wind select 0, _wind select 1, 0];
+    private _adjusted = _vel vectorAdd (_crosswind vectorMultiply 0.1);
+    _target setVelocity _adjusted;
+    [0, "OK", _adjusted]
+}];
+```
+
+```sql
+INSERT INTO runtime_overrides (name, event, match_type, match_value,
+    operator, value, apply_function)
+VALUES ('wind_drift', 'on_fire', 'all', '',
+    'set', '', 'my_wind_adjust');
+```
+
+### Example 3: Disable via DB
+
+```sql
+UPDATE runtime_overrides SET active = 0 WHERE name = 'double_rifle_damage';
+[] call a3sql_runtime_fnc_reload;
+```
+
+---
+
+## Limitations
+
+- **HitPart is camera-scoped.** On a dedicated server without players,
+  HitPart events do not fire. Test on_hit rules with a player connected.
+- **Config values are static.** The runtime engine overrides values via
+  event handlers, not config. Config properties (initSpeed, airFriction)
+  are set once at game start and cannot change at runtime. Use the
+  compat PBO (Path A) for config overrides.
+- **In-memory cache.** Rules are loaded once at mission start. Use
+  `a3sql_runtime_fnc_reload` after inserting new rules via TCP.
+- **No persistence.** The `runtime_overrides` table is auto-created on
+  mission start. If you need rules to survive server restarts, save them
+  to a persistent table and INSERT into `runtime_overrides` at postInit.
+
+---
+
+## Relationship to the Patch Framework
+
+| Feature | Patch Framework | Runtime Engine |
+|---------|----------------|----------------|
+| Table | `patch_rules` | `runtime_overrides` |
+| Trigger | PerFrame poll (dirty flag) | Game events (Fired, HitPart, Killed) |
+| Apply method | setVariable on objects | apply_function dispatch or generic operators |
+| Domain | General (anything reachable via setVariable) | Event-driven (damage, velocity, kills) |
+| Speed | Next frame after dirty flag | Same event tick |
+| Persistence | Auto-save/load via CBA | Table created fresh each mission |
+
+Use the patch framework for set-and-forget value patches (fuel, skills,
+textures). Use the runtime engine for event-driven transformations that
+need the event context (damage scaling, velocity modification, kill
+tracking).

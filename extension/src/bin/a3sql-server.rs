@@ -97,7 +97,7 @@ fn main() {
         Ok(addr) => {
             eprintln!("a3sql-server v{} on {}", env!("CARGO_PKG_VERSION"), addr);
             if let Some(ref p) = db_path {
-                eprintln!("  persist: {} (auto-save every 30s)", p);
+                eprintln!("  persist: {} (auto-save every 5s)", p);
             }
 
             if interactive {

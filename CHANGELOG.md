@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+## [1.1.0]
+
+Runtime engine generalisation and built-in apply functions.
+
+### Added
+- Runtime engine: `apply_function` column makes the event-driven override engine domain-agnostic
+- Built-in apply functions: applyDamage, applyVelocity, applyWeather, applyAccuracy, applySpeed
+- Binary format v0x03: column flags (auto_increment, not_null, unique, defaults) and `next_auto_inc` persisted across save/load
+- Runtime-Engine.md: full architecture doc with schema, worked examples, and limitations
+- Arma 3 modding standard (shared reference for HEMTT, CBA, SQF conventions)
+
+### Changed
+- Runtime engine: `fnc_apply.sqf` dispatches to `apply_function` via missionNamespace instead of hardcoded damage/velocity cases
+- Auto-save interval reduced from 30s to 5s for better data durability
+- `ColumnNotFoundInTable` error now explains SQL double-quote vs single-quote convention
+
+### Fixed
+- Binary format: column `auto_increment`, `not_null`, `unique`, `default`, `default_expr` flags now survive save/load (previously hardcoded to false)
+- Binary format: `next_auto_inc` counter now persisted (previously lost on restart)
+- Pre-commit hook: clippy grep now matches `^error` only (CBA profile warnings no longer cause false failures)
+- `fnc_handleFired.sqf`: removed unused `_log_level` variable, moved Fired from addMissionEventHandler to per-object attachment
+
 ## [1.0.0]
 
 First stable release.
