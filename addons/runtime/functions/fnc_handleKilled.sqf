@@ -35,7 +35,8 @@ private _list = _rules getOrDefault ["on_killed", []];
             [_rule, _killer, _context] call FUNC(apply);
         };
 
-        if (["a3sql_runtime_log_level"] call CBA_fnc_getSetting >= 2) then {
+        private _logLevel = missionNamespace getVariable ["a3sql_runtime_log_level", 1];
+        if (_logLevel >= 2) then {
             ["A3SQL Runtime", "Applied on_killed rule %1 to %2", _rule getOrDefault ["name", ""], typeOf _killed] call CBA_fnc_info;
         };
     };

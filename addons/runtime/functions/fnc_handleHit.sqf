@@ -42,7 +42,8 @@ private _incoming = if (isNull _projectile) then { 0 } else { vectorMagnitude (v
 
         [_rule, _target, _context] call FUNC(apply);
 
-        if (["a3sql_runtime_log_level"] call CBA_fnc_getSetting >= 2) then {
+        private _logLevel = missionNamespace getVariable ["a3sql_runtime_log_level", 1];
+        if (_logLevel >= 2) then {
             ["A3SQL Runtime", "Applied on_hit rule %1 to %2 (incoming %3)", _rule getOrDefault ["name", ""], typeOf _target, _incoming] call CBA_fnc_info;
         };
     };

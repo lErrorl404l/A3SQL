@@ -8,7 +8,8 @@ params [
 private _createTable = "CREATE TABLE IF NOT EXISTS runtime_overrides (id INTEGER PRIMARY KEY, name TEXT NOT NULL, active INTEGER DEFAULT 1, event TEXT NOT NULL, match_type TEXT DEFAULT 'exact', match_value TEXT DEFAULT '', target_property TEXT DEFAULT '', operator TEXT DEFAULT 'set', value TEXT NOT NULL, priority INTEGER DEFAULT 0)";
 private _result = _extension callExtension _createTable;
 
-if (["a3sql_runtime_log_level"] call CBA_fnc_getSetting >= 2) then {
+private _logLevel = missionNamespace getVariable ["a3sql_runtime_log_level", 1];
+if (_logLevel >= 2) then {
     ["A3SQL Runtime", "Table init: %1", _result] call CBA_fnc_info;
 };
 
@@ -21,14 +22,18 @@ if (_rowCount == 0) then {
     // is camera-scoped on dedicated servers, so not verifiable headless).
     private _seedHit = "INSERT INTO runtime_overrides (name, event, match_type, match_value, target_property, operator, value, priority) VALUES ('demo_50cal_heavy_damage', 'on_hit', 'type_of', 'MSS_50_M33_Ball', 'damage', 'mul', '1.5', 10)";
     private _seedHitResult = _extension callExtension _seedHit;
-    ["A3SQL Runtime", "Seeded demo on_hit rule: %1", _seedHitResult] call CBA_fnc_info;
+    if (_logLevel >= 2) then {
+        ["A3SQL Runtime", "Seeded demo on_hit rule: %1", _seedHitResult] call CBA_fnc_info;
+    };
 
     // on_fire projectile-velocity multiplier. The runtime ballistics hook.
     // Mission-wide Fired fires on a dedicated server, so this is verifiable
     // headless: firing the M107A1 gives the round 1.2x velocity.
     private _seedFire = "INSERT INTO runtime_overrides (name, event, match_type, match_value, target_property, operator, value, priority) VALUES ('demo_50cal_hot_load', 'on_fire', 'type_of', 'MSS_50_M33_Ball', 'velocity', 'mul', '1.2', 20)";
     private _seedFireResult = _extension callExtension _seedFire;
-    ["A3SQL Runtime", "Seeded demo on_fire rule: %1", _seedFireResult] call CBA_fnc_info;
+    if (_logLevel >= 2) then {
+        ["A3SQL Runtime", "Seeded demo on_fire rule: %1", _seedFireResult] call CBA_fnc_info;
+    };
 };
 
 [0, "OK", "Table ready"]

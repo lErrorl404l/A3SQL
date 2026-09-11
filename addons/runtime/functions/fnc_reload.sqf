@@ -19,7 +19,8 @@ private _cache = createHashMap;
 
 missionNamespace setVariable [QGVAR(rules), _cache];
 
-if (["a3sql_runtime_log_level"] call CBA_fnc_getSetting >= 2) then {
+private _logLevel = missionNamespace getVariable ["a3sql_runtime_log_level", 1];
+if (_logLevel >= 2) then {
     ["A3SQL Runtime", "Loaded %1 active rules into cache", count _rows] call CBA_fnc_info;
 };
 

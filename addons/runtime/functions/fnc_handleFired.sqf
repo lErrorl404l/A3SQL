@@ -42,7 +42,10 @@ private _list = _rules getOrDefault ["on_fire", []];
             [_rule, _unit, _context] call FUNC(apply);
         };
 
-        if (["a3sql_runtime_log_level"] call CBA_fnc_getSetting >= 2) then {
+        // ponytail: read CBA setting var directly — CBA_fnc_getSetting
+        // can return nil during hot events (Fired) when CBA isn't fully init'd.
+        private _logLevel = missionNamespace getVariable ["a3sql_runtime_log_level", 1];
+        if (_logLevel >= 2) then {
             ["A3SQL Runtime", "Applied on_fire rule %1 to %2", _rule getOrDefault ["name", ""], _ammo] call CBA_fnc_info;
         };
     };
