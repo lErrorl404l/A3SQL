@@ -44,50 +44,56 @@ website:
     contents:
       - href: index.qmd
         text: Overview
-      - section: "Getting Started"
+      - section: "Chapters"
         contents:
-          - text: Getting Started
-            href: chapters/Getting-Started.md
-      - section: "SQL Reference"
+          - section: "Getting Started"
+            contents:
+              - text: Getting Started
+                href: chapters/Getting-Started.md
+          - section: "SQL Reference"
+            contents:
+              - text: SQL Dialect
+                href: chapters/SQL-Dialect.md
+          - section: "Integration"
+            contents:
+              - text: Module Guide
+                href: chapters/Module-Guide.md
+              - text: Use Cases
+                href: chapters/Use-Cases.md
+              - text: Plugins
+                href: chapters/Plugins.md
+              - text: Patch Framework
+                href: chapters/Patch-Framework.md
+              - text: Runtime Engine
+                href: chapters/Runtime-Engine.qmd
+          - section: "Networking"
+            contents:
+              - text: TCP Connector
+                href: chapters/TCP-Connector.md
+              - text: Standalone Server
+                href: chapters/Standalone-Server.md
+          - section: "Operations"
+            contents:
+              - text: CBA Settings
+                href: chapters/CBA-Settings.md
+              - text: Security
+                href: chapters/Security.md
+          - section: "Development"
+            contents:
+              - text: Development Setup
+                href: chapters/Development-Setup.md
+              - text: Building
+                href: chapters/Building.md
+      - section: "Annexes"
         contents:
-          - text: SQL Dialect
-            href: chapters/SQL-Dialect.md
           - text: SQL Cheat Sheet
             href: annexes/SQL-Cheat-Sheet.md
           - text: SQL Compatibility Report
             href: annexes/SQL-Compatibility-Report.md
-      - section: "Integration"
-        contents:
-          - text: Module Guide
-            href: chapters/Module-Guide.md
-          - text: Use Cases
-            href: chapters/Use-Cases.md
-          - text: Plugins
-            href: chapters/Plugins.md
-          - text: Patch Framework
-            href: chapters/Patch-Framework.md
-          - text: Runtime Engine
-            href: chapters/Runtime-Engine.qmd
-      - section: "Networking"
-        contents:
-          - text: TCP Connector
-            href: chapters/TCP-Connector.md
-          - text: Standalone Server
-            href: chapters/Standalone-Server.md
-      - section: "Operations"
-        contents:
-          - text: CBA Settings
-            href: chapters/CBA-Settings.md
-          - text: Security
-            href: chapters/Security.md
           - text: Production Readiness
             href: annexes/Production-Readiness.md
-      - section: "Development"
-        contents:
-          - text: Development Setup
-            href: chapters/Development-Setup.md
-          - text: Building
-            href: chapters/Building.md
+      - text: Support
+        href: support.qmd
 
 format:
   html:

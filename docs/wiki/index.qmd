@@ -98,10 +98,8 @@ Fail-closed authentication, constant-time credential comparison, sandboxed file 
 :::
 :::
 
-::: {.get-started .alt-background}
-::: {.content-block .py-5 .grid}
-::: {.g-start-4 .g-col-6 .g-start-md-5 .g-col-md-3 .pt-1}
-[Get Started](chapters/Getting-Started.md){.btn-action-primary .btn-action .btn .btn-lg .w-100 role="button"}
-:::
+::: {.get-started}
+::: {.content-block .py-5}
+[Get Started](chapters/Getting-Started.md){.btn-action-primary .btn-action .btn .btn-lg role="button"}
 :::
 :::
