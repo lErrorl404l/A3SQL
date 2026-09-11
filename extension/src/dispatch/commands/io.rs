@@ -387,12 +387,12 @@ pub(crate) fn persist_load(db: &mut engine::Database, path: &std::path::Path) ->
 /// Save a database to an absolute path (operator-trusted), atomic-write
 /// semantics (tmp + rename) so a crash never corrupts the last good save.
 pub(crate) fn persist_save(db: &engine::Database, path: &std::path::Path) -> Result<(), String> {
-    use std::io::Write;
     let bytes = engine::serialize::export_binary(db);
 
     let tmp_path = with_ext_suffix(path, "tmp");
     #[cfg(unix)]
     {
+        use std::io::Write;
         use std::os::unix::fs::OpenOptionsExt;
         let mut f = std::fs::OpenOptions::new()
             .create(true)
