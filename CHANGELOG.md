@@ -13,7 +13,7 @@ Runtime engine generalisation, full CBA integration, and built-in apply function
 - CBA keybinds: Reload Rules (Ctrl+F5), Toggle Engine (Ctrl+F6), Query Status (Ctrl+F7)
 - CBA versioning: `VERSIONING` macro registers A3SQL with CBA's version checker
 - Binary format v0x03: column flags (auto_increment, not_null, unique, defaults) and `next_auto_inc` persisted across save/load
-- Runtime-Engine.md: full architecture doc with schema, CBA events, keybinds, worked examples, and limitations
+- Runtime-Engine.qmd: full architecture doc with schema, CBA events, keybinds, worked examples, and limitations
 - Arma 3 modding standard (shared reference for HEMTT, CBA, SQF conventions)
 
 ### Changed

@@ -1,35 +1,107 @@
 ---
-title: "A3SQL Documentation"
+pagetitle: "A3SQL"
+page-layout: custom
+section-divs: false
+toc: false
+css: index.css
+editor: source
+description: |
+  An embeddable SQL database engine and management framework for Arma 3.
+hide-description: true
 ---
 
+::: {.hero-banner}
+::: {.content-block .py-4}
+::: {.hero-text}
 # A3SQL
 
-A3SQL is an SQL database engine and management framework for Arma 3. It
-provides in-memory SQLite with full dialect support, SQF integration, and
-tools for server admins and mission makers.
+### An embeddable SQL database engine for Arma 3
 
-## Features
+- In-memory SQLite with full dialect support, running inside the Arma 3 process.
+- Execute SQL from SQF with `a3sql_fnc_execute`. Parameterised queries, prepared statements, and result parsing built in.
+- Persistence, live patching, analytics, and remote admin — all driven by SQL.
 
-- **SQL database engine.** In-memory SQLite with full dialect support, running
-  inside the Arma 3 process.
-- **SQF integration.** Execute SQL from SQF with `a3sql_fnc_execute`. Parameterised
-  queries, prepared statements, and result parsing built in.
-- **Persistence.** Player stats, loadouts, and mission state survive server restarts.
-- **Dynamic live patching.** Change weapon stats, vehicle properties, and other
-  runtime values mid-mission from SQL rules.
-- **Analytics and logging.** Performance snapshots, kill events, and player
-  connections logged to SQL, exportable as CSV.
-- **Remote administration.** Manage the server from outside the game over the TCP
-  listener.
+::: {.grid .gap-3 .pb-3 .pt-4}
+::: {.g-col-12 .g-col-sm-4}
+[Getting Started](chapters/Getting-Started.md){.btn-action-primary .btn-action .btn .btn-lg .w-100 role="button"}
+:::
+::: {.g-col-12 .g-col-sm-4 .mb-2}
+[SQL Dialect](chapters/SQL-Dialect.md){.btn-action .btn-secondary .btn .btn-lg .w-100 role="button"}
+:::
+::: {.g-col-12 .g-col-sm-4 .mb-2}
+[Runtime Engine](chapters/Runtime-Engine.qmd){.btn-action .btn-secondary .btn .btn-lg .w-100 role="button"}
+:::
+:::
+:::
+:::
+:::
 
-## Quick Start
+::: {.alt-background}
+::: {.content-block .py-4}
+::: {.features}
 
-1. Download the latest release from [GitHub](https://github.com/lErrorl404l/a3sql/releases).
-2. Extract `@a3sql` into your Arma 3 directory.
-3. Add `@a3sql` to your `-mod=` parameter.
-4. See [Getting Started](Getting-Started.md) for detailed setup.
+::: {.feature}
+### SQL Engine
+Full SQLite dialect: JOINs, window functions, triggers, CTEs, transactions. Parameterised queries and prepared statements built in.
 
-## Links
+::: {.learn-more}
+[SQL Dialect »](chapters/SQL-Dialect.md)
+:::
+:::
 
-- [GitHub Repository](https://github.com/lErrorl404l/a3sql)
-- [Issue Tracker](https://github.com/lErrorl404l/a3sql/issues)
+::: {.feature}
+### Runtime Engine
+DB-driven, event-driven overrides applied live from `runtime_overrides`. Damage, velocity, weather, AI skills — any mod can hook in.
+
+::: {.learn-more}
+[Runtime Engine »](chapters/Runtime-Engine.qmd)
+:::
+:::
+
+::: {.feature}
+### Persistence
+Player stats, loadouts, and mission state survive server restarts. Auto-save, transactions, and atomic file writes.
+
+::: {.learn-more}
+[Getting Started »](chapters/Getting-Started.md)
+:::
+:::
+
+::: {.feature}
+### Live Patching
+Change weapon stats, vehicle properties, and runtime values mid-mission from SQL rules — no mission restart.
+
+::: {.learn-more}
+[Patch Framework »](chapters/Patch-Framework.md)
+:::
+:::
+
+::: {.feature}
+### Remote Admin
+Manage the server from outside the game over the TCP listener. Query, administer, and automate with any SQL client.
+
+::: {.learn-more}
+[TCP Connector »](chapters/TCP-Connector.md)
+:::
+:::
+
+::: {.feature}
+### Security
+Fail-closed authentication, constant-time credential comparison, sandboxed file paths, and injection-safe parameterised queries.
+
+::: {.learn-more}
+[Security »](chapters/Security.md)
+:::
+:::
+
+:::
+:::
+:::
+
+::: {.get-started .alt-background}
+::: {.content-block .py-5 .grid}
+::: {.g-start-4 .g-col-6 .g-start-md-5 .g-col-md-3 .pt-1}
+[Get Started](chapters/Getting-Started.md){.btn-action-primary .btn-action .btn .btn-lg .w-100 role="button"}
+:::
+:::
+:::

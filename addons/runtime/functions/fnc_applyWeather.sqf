@@ -16,7 +16,7 @@ private _value    = _rule getOrDefault ["value", ""];
 private _parts    = _value splitString " ,";
 
 // Parse optional fields (empty string = no change)
-private _windX     = if (count _parts > 0) then { parseNumber (_parts select 0) } else { -1 };
+private _windX     = if (_parts isNotEqualTo []) then { parseNumber (_parts select 0) } else { -1 };
 private _windY     = if (count _parts > 1) then { parseNumber (_parts select 1) } else { -1 };
 private _rain      = if (count _parts > 2) then { parseNumber (_parts select 2) } else { -1 };
 private _humidity  = if (count _parts > 3) then { parseNumber (_parts select 3) } else { -1 };
@@ -55,7 +55,7 @@ if (_rain > -1) do {
         case "mul": { _val = _current * _rain; };
         case "add": { _val = (_current + _rain) max 0 min 1; };
     };
-    setRain (_val max 0 min 1); // lint-ignore: setRain takes Number per Arma 3 wiki
+    0 setRain (_val max 0 min 1); // transition time 0, then value (Arma 3 wiki)
     _results pushBack "rain";
 };
 
@@ -66,6 +66,6 @@ if (_humidity > -1) do {
     _results pushBack "humidity";
 };
 
-if (count _results == 0) exitWith { [1, "ERR_PARAM", "No valid weather fields in value"] };
+if (_results isEqualTo []) exitWith { [1, "ERR_PARAM", "No valid weather fields in value"] };
 
 [0, "OK", _results]

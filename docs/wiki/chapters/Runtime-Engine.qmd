@@ -49,32 +49,20 @@ Key points:
 
 ## Architecture
 
-```
- ┌─────────────────────────────────────────────────┐
- │  runtime_overrides table (SQL via callExtension) │
- │  id, name, event, match_type, match_value,       │
- │  target_property, operator, value, priority,     │
- │  apply_function                                  │
- └──────────────────────┬──────────────────────────┘
-                        │ fnc_reload: SELECT active rules
-                        │ into in-memory hashmap cache
-                        ▼
- ┌──────────────────────────────────────────────────┐
- │  Event Handlers                                  │
- │  ┌─────────┐  ┌─────────┐  ┌──────────────────┐ │
- │  │  Fired   │  │ HitPart │  │ EntityKilled     │ │
- │  │ (on_fire)│  │ (on_hit)│  │ (on_killed)      │ │
- │  └────┬────┘  └────┬────┘  └────────┬─────────┘ │
- │       │            │                 │            │
- │       ▼            ▼                 ▼            │
- │  ┌──────────────────────────────────────────┐    │
- │  │  fnc_apply: dispatch                     │    │
- │  │  if apply_function set:                  │    │
- │  │    call missionNamespace getVariable     │    │
- │  │  else:                                   │    │
- │  │    generic set/add/mul/div/clamp         │    │
- │  └──────────────────────────────────────────┘    │
- └──────────────────────────────────────────────────┘
+```{mermaid}
+flowchart TB
+    DB[("runtime_overrides table<br/>(SQL via callExtension)")] -->|"fnc_reload: SELECT active rules"| CACHE[In-memory rule cache<br/>keyed by event]
+    CACHE --> EVENTS
+    subgraph EVENTS [Event Handlers]
+        F[Fired<br/>(on_fire)]
+        H[HitPart<br/>(on_hit)]
+        K[EntityKilled<br/>(on_killed)]
+    end
+    F --> APPLY
+    H --> APPLY
+    K --> APPLY
+    APPLY[fnc_apply: dispatch] -->|"apply_function set"| FNC["call missionNamespace getVariable<br/>(applyDamage, applyVelocity, ...)"]
+    APPLY -->|"else"| GEN["generic operators<br/>set / add / mul / div / clamp"]
 ```
 
 1. **PostInit** -- `fnc_register` creates the `runtime_overrides` table

@@ -10,7 +10,7 @@
 #
 #   --keep         Keep the Docker container running after test
 #   --build-only   Build extension and pack PBO, then exit
-#   --dir PATH     Docker test directory (default: ../a3sql-docker relative to repo root)
+#   --dir PATH     Docker test directory (default: tests/docker)
 #
 # Requirements:
 #   - Docker
@@ -26,7 +26,7 @@ set -euo pipefail
 
 # ── Configuration ──────────────────────────────────────────────────
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-DOCKER_DIR="${DOCKER_DIR:-$(cd "$REPO_ROOT/.." && pwd)/a3sql-docker}"
+DOCKER_DIR="${DOCKER_DIR:-$REPO_ROOT/tests/docker}"
 BUILD_IMAGE="debian:bookworm"
 CONTAINER_NAME="a3sql-smoke-test"
 SMOKE_TIMEOUT=120 # seconds to wait for smoke output

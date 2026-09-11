@@ -51,3 +51,9 @@ release/
 releases/
 .venv
 a3sql_data/
+
+# Docker test rig — runtime dirs (gitignored, not committed)
+tests/docker/mods/
+tests/docker/server/
+tests/docker/run.log
+tests/docker/run.*.log

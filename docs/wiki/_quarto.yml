@@ -1,50 +1,101 @@
 project:
-  type: book
+  type: website
   output-dir: _site
 
-book:
+website:
   title: "A3SQL Documentation"
-  author: "lErrorl404l"
-  date: "2026-09-10"
-  chapters:
-    - index.qmd
-    - part: "Getting Started"
-      chapters:
-        - Getting-Started.md
-    - part: "SQL Reference"
-      chapters:
-        - SQL-Dialect.md
-        - SQL-Cheat-Sheet.md
-        - SQL-Compatibility-Report.md
-    - part: "Integration"
-      chapters:
-        - Module-Guide.md
-        - Use-Cases.md
-        - Plugins.md
-        - Patch-Framework.md
-    - part: "Networking"
-      chapters:
-        - TCP-Connector.md
-        - Standalone-Server.md
-    - part: "Operations"
-      chapters:
-        - CBA-Settings.md
-        - Security.md
-        - Production-Readiness.md
-    - part: "Development"
-      chapters:
-        - Development-Setup.md
-        - Building.md
+  site-url: https://lerrorl404l.github.io/A3SQL/
+  repo-url: https://github.com/lErrorl404l/A3SQL
+  repo-actions: [edit, issue]
+  open-graph: true
+  announcement:
+    icon: info-circle
+    dismissable: true
+    content: "A3SQL 1.1.0 — CBA integration, runtime engine, apply functions"
+    type: primary
+  navbar:
+    left:
+      - href: index.qmd
+        text: Home
+      - text: "Getting Started"
+        href: chapters/Getting-Started.md
+      - text: "SQL"
+        href: chapters/SQL-Dialect.md
+      - text: "Runtime Engine"
+        href: chapters/Runtime-Engine.qmd
+      - text: "Networking"
+        href: chapters/TCP-Connector.md
+    right:
+      - icon: github
+        href: https://github.com/lErrorl404l/A3SQL
+  search:
+    location: navbar
+    type: overlay
+    copy-button: true
+    show-item-context: tree
+  sidebar:
+    style: "docked"
+    collapse-level: 1
+    contents:
+      - href: index.qmd
+        text: Overview
+      - section: "Getting Started"
+        contents:
+          - text: Getting Started
+            href: chapters/Getting-Started.md
+      - section: "SQL Reference"
+        contents:
+          - text: SQL Dialect
+            href: chapters/SQL-Dialect.md
+          - text: SQL Cheat Sheet
+            href: annexes/SQL-Cheat-Sheet.md
+          - text: SQL Compatibility Report
+            href: annexes/SQL-Compatibility-Report.md
+      - section: "Integration"
+        contents:
+          - text: Module Guide
+            href: chapters/Module-Guide.md
+          - text: Use Cases
+            href: chapters/Use-Cases.md
+          - text: Plugins
+            href: chapters/Plugins.md
+          - text: Patch Framework
+            href: chapters/Patch-Framework.md
+          - text: Runtime Engine
+            href: chapters/Runtime-Engine.qmd
+      - section: "Networking"
+        contents:
+          - text: TCP Connector
+            href: chapters/TCP-Connector.md
+          - text: Standalone Server
+            href: chapters/Standalone-Server.md
+      - section: "Operations"
+        contents:
+          - text: CBA Settings
+            href: chapters/CBA-Settings.md
+          - text: Security
+            href: chapters/Security.md
+          - text: Production Readiness
+            href: annexes/Production-Readiness.md
+      - section: "Development"
+        contents:
+          - text: Development Setup
+            href: chapters/Development-Setup.md
+          - text: Building
+            href: chapters/Building.md
 
 format:
   html:
-    theme:
-      light: cosmo
-      dark: darkly
+    theme: cosmo
+    filters:
+      - auto-dark
     toc: true
     toc-depth: 3
-    code-fold: false
-    code-tools: false
-    search: true
+    code-copy: true
+    code-tools: true
     anchor-sections: true
     smooth-scroll: true
+    mermaid-format: js
+    page-footer:
+      left: "A3SQL — SQL database engine for Arma 3"
+      right: "Licence: Arma Public License Share Alike (APL-SA)"

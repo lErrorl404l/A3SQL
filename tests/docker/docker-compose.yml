@@ -1,0 +1,45 @@
+# A3SQL docker test rig — self-contained in the repo.
+#
+# The Arma 3 server binary is NOT vendored. Two ways to provide it:
+#   1. ARMA3_SERVER_ROOT=/path/to/local/arma3server   (your own install)
+#   2. Set steam credentials in tests/docker/config.toml [steam] and let
+#      the container install the server via steamcmd (ARMA3_SERVER__SKIP_INSTALL=false).
+#
+# The a3sql mod is built from this repo by tools/docker_test.sh. CBA is
+# downloaded by that script. ACE and Project M are optional for the full
+# ballistics mission (MOD_ACE_PATH, MOD_MSS_PATH env vars).
+
+services:
+  a3sql-test:
+    image: ghcr.io/brettmayson/arma3server/arma3server:v3
+    platform: linux/amd64
+    network_mode: host
+    environment:
+      - ARMA3_CONFIG_FILE=/arma3/config.toml
+      - ARMA3_SERVER__SKIP_INSTALL=${ARMA3_SERVER__SKIP_INSTALL:-true}
+      - ARMA3_SERVER__CONFIG=server.cfg
+      - ARMA3_SERVER__PROFILE=a3sqltest
+      - ARMA3_SERVER__WORLD=Stratis
+      - ARMA3_SERVER__PARAMS=-autoInit -noBattlEye -mod=mods/@a3sql;mods/@cba_a3;mods/@ace;mods/@mss;mods/@a3sql_mss_ballistics
+      - ARMA3_HEADLESS__CLIENTS=0
+      - ARMA3_MODS__LOCAL=false
+    entrypoint: ["/bin/sh", "/arma3/entrypoint.sh"]
+    volumes:
+      - ./config.toml:/arma3/config.toml
+      - ./entrypoint.sh:/arma3/entrypoint.sh
+      - ./configs:/arma3/server/configs
+      # tmpfs for the server profile dir: the container writes it as
+      # root, which left a root-owned dir on the host and broke later
+      # runs with "Permission denied" walkdir errors.
+      - type: tmpfs
+        target: /arma3/server/configs/profiles
+      - ./mods:/arma3/server/mods
+      # Third-party mods (paths from .env if set)
+      - ${MOD_CBA_PATH:?set MOD_CBA_PATH or let docker_test.sh download it}:/arma3/server/mods/@cba_a3
+      - ${MOD_ACE_PATH:-/nonexistent}:/arma3/server/mods/@ace
+      - ${MOD_MSS_PATH:-/nonexistent}:/arma3/server/mods/@mss
+      - ./missions:/arma3/server/mpmissions
+      # Arma 3 server install: user-provided path, or a repo-local dir
+      # (gitignored) that the container populates from steamcmd.
+      - ${ARMA3_SERVER_ROOT:-./server}:/arma3/server
+    restart: "no"

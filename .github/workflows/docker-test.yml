@@ -1,0 +1,33 @@
+name: Docker Test
+
+# On-demand: the harness needs an Arma 3 server install (own install or
+# steamcmd provisioned via config.toml credentials), so it runs manually
+# or via API dispatch rather than on every push.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  headless:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: arma-actions/hemtt@a0570ddd80d2b7be9c0f052494c0f700b42668dd # v1
+      - name: Build extension (release)
+        run: cargo build --release --manifest-path extension/Cargo.toml --target x86_64-unknown-linux-gnu --target-dir extension/target
+      - name: Headless dedicated-server test
+        run: tools/docker_test.sh
+        env:
+          ARMA3_SERVER_ROOT: ${{ vars.ARMA3_SERVER_ROOT }}
+          ARMA3_SERVER__SKIP_INSTALL: ${{ vars.ARMA3_SERVER__SKIP_INSTALL }}
+          MOD_ACE_PATH: ${{ vars.MOD_ACE_PATH }}
+          MOD_MSS_PATH: ${{ vars.MOD_MSS_PATH }}
+      - name: Upload test log on failure
+        if: failure()
+        uses: actions/upload-artifact@4cec3d8aa04e39d1a68397de0c4cd6fb9d8bfd6c # v4.6.1
+        with:
+          name: a3sql-docker-log
+          path: tests/docker/run.log

@@ -17,7 +17,7 @@ private _operator = toLower (_rule getOrDefault ["operator", "set"]);
 private _value    = _rule getOrDefault ["value", ""];
 private _parts    = _value splitString " ,";
 
-private _aimAcc     = if (count _parts > 0) then { parseNumber (_parts select 0) } else { -1 };
+private _aimAcc     = if (_parts isNotEqualTo []) then { parseNumber (_parts select 0) } else { -1 };
 private _aimShake   = if (count _parts > 1) then { parseNumber (_parts select 1) } else { -1 };
 private _spotDist   = if (count _parts > 2) then { parseNumber (_parts select 2) } else { -1 };
 
@@ -65,6 +65,6 @@ if (_spotDist > -1) do {
     _results pushBack "spotDistance";
 };
 
-if (count _results == 0) exitWith { [1, "ERR_PARAM", "No valid skill fields in value"] };
+if (_results isEqualTo []) exitWith { [1, "ERR_PARAM", "No valid skill fields in value"] };
 
 [0, "OK", _results]
