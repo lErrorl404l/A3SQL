@@ -4,21 +4,29 @@
 
 ## [1.1.0]
 
-Runtime engine generalisation and built-in apply functions.
+Runtime engine generalisation, full CBA integration, and built-in apply functions.
 
 ### Added
 - Runtime engine: `apply_function` column makes the event-driven override engine domain-agnostic
 - Built-in apply functions: applyDamage, applyVelocity, applyWeather, applyAccuracy, applySpeed
+- CBA event interface: reload, toggle, query, status, ruleApplied, rulesLoaded, ready events for cross-mod control
+- CBA keybinds: Reload Rules (Ctrl+F5), Toggle Engine (Ctrl+F6), Query Status (Ctrl+F7)
+- CBA versioning: `VERSIONING` macro registers A3SQL with CBA's version checker
 - Binary format v0x03: column flags (auto_increment, not_null, unique, defaults) and `next_auto_inc` persisted across save/load
-- Runtime-Engine.md: full architecture doc with schema, worked examples, and limitations
+- Runtime-Engine.md: full architecture doc with schema, CBA events, keybinds, worked examples, and limitations
 - Arma 3 modding standard (shared reference for HEMTT, CBA, SQF conventions)
 
 ### Changed
 - Runtime engine: `fnc_apply.sqf` dispatches to `apply_function` via missionNamespace instead of hardcoded damage/velocity cases
+- DB init deferred with `CBA_fnc_waitUntilAndExecute` until mission start (time > 0)
+- Master switch (`a3sql_runtime_toggle`) overrides the CBA setting per mission; all handlers gate on it
+- requiredAddons: cba_common, cba_events, cba_keybinding, cba_settings declared; defensive version guard in postInit
+- CfgPatches names use `COMPONENT_NAME`; COMPONENT_BEAUTIFIED cleaned to un-prefixed names
 - Auto-save interval reduced from 30s to 5s for better data durability
 - `ColumnNotFoundInTable` error now explains SQL double-quote vs single-quote convention
 
 ### Fixed
+- Logging: 47 calls to nonexistent `CBA_fnc_info`/`CBA_fnc_error` replaced with CBA `INFO_N`/`ERROR_N` macros (all INFO logging was silently dead)
 - Binary format: column `auto_increment`, `not_null`, `unique`, `default`, `default_expr` flags now survive save/load (previously hardcoded to false)
 - Binary format: `next_auto_inc` counter now persisted (previously lost on restart)
 - Pre-commit hook: clippy grep now matches `^error` only (CBA profile warnings no longer cause false failures)
