@@ -22,41 +22,15 @@ if linux64.exists() {
     print("Synced a3sql_x64.so (linux x86_64)");
 }
 
-// Linux i686
-let linux32 = root_target.join("i686-unknown-linux-gnu").join("release").join("liba3sql.so");
-if !linux32.exists() { linux32 = ext_target.join("i686-unknown-linux-gnu").join("release").join("liba3sql.so"); }
-if linux32.exists() {
-    let dest = HEMTT_VFS.join("a3sql.so");
-    if dest.exists() { dest.remove_file(); }
-    linux32.copy(dest);
-    synced += 1;
-    print("Synced a3sql.so (linux i686)");
-}
-
-// Windows x86_64 (MSVC first, then GNU)
+// Windows x64 (MSVC only)
 let win64 = root_target.join("x86_64-pc-windows-msvc").join("release").join("a3sql.dll");
-if !win64.exists() { win64 = root_target.join("x86_64-pc-windows-gnu").join("release").join("a3sql.dll"); }
 if !win64.exists() { win64 = ext_target.join("x86_64-pc-windows-msvc").join("release").join("a3sql.dll"); }
-if !win64.exists() { win64 = ext_target.join("x86_64-pc-windows-gnu").join("release").join("a3sql.dll"); }
 if win64.exists() {
     let dest = HEMTT_VFS.join("a3sql_x64.dll");
     if dest.exists() { dest.remove_file(); }
     win64.copy(dest);
     synced += 1;
-    print("Synced a3sql_x64.dll (windows x86_64)");
-}
-
-// Windows i686 (MSVC first, then GNU)
-let win32 = root_target.join("i686-pc-windows-msvc").join("release").join("a3sql.dll");
-if !win32.exists() { win32 = root_target.join("i686-pc-windows-gnu").join("release").join("a3sql.dll"); }
-if !win32.exists() { win32 = ext_target.join("i686-pc-windows-msvc").join("release").join("a3sql.dll"); }
-if !win32.exists() { win32 = ext_target.join("i686-pc-windows-gnu").join("release").join("a3sql.dll"); }
-if win32.exists() {
-    let dest = HEMTT_VFS.join("a3sql.dll");
-    if dest.exists() { dest.remove_file(); }
-    win32.copy(dest);
-    synced += 1;
-    print("Synced a3sql.dll (windows i686)");
+    print("Synced a3sql_x64.dll (windows x86_64 MSVC)");
 }
 
 if synced == 0 {
