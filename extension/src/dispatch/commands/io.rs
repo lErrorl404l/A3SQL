@@ -641,7 +641,7 @@ mod tests {
         let dir = temp_data_dir("persist_abs");
         let file = dir.join("a3sql_abs.bin");
 
-        let mut db = make_db(false);
+        let db = make_db(false);
         assert!(persist_save(&db, &file).is_ok(), "persist_save on absolute path");
         assert!(file.exists(), "file written at absolute path");
 
