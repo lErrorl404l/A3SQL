@@ -4,10 +4,15 @@ project:
 
 website:
   title: "A3SQL Documentation"
+  favicon: images/favicon.png
   site-url: https://lerrorl404l.github.io/A3SQL/
   repo-url: https://github.com/lErrorl404l/A3SQL
   repo-actions: [edit, issue]
-  open-graph: true
+  open-graph:
+    image: images/social-preview.png
+  twitter-card:
+    image: images/social-preview.png
+  page-navigation: true
   announcement:
     icon: info-circle
     dismissable: true
@@ -91,6 +96,7 @@ format:
       - auto-dark
     toc: true
     toc-depth: 3
+    breadcrumbs: true
     code-copy: true
     code-tools: true
     anchor-sections: true
