@@ -24,9 +24,10 @@ use super::super::table::Table;
 use super::super::value::{Column, ColumnType, DbValue};
 
 const BINARY_MAGIC: &[u8; 4] = b"A3SQ";
-// v0x02: adds the FNV-1a checksum trailer (8 bytes). v0x01 saves (no
-// checksum) are rejected with a migration hint — pre-1.0, not portable.
-const BINARY_VERSION: u8 = 0x02;
+// v0x03: persists column flags (auto_increment, not_null, unique) and
+// defaults, plus per-table next_auto_inc counter. v0x02 saves load fine
+// (flags default to false, counter to 1). v0x01 saves rejected.
+const BINARY_VERSION: u8 = 0x03;
 const CHECKSUM_LEN: usize = 8;
 
 /// FNV-1a 64-bit — fast, no deps, good enough to catch truncation/corruption.
@@ -83,8 +84,38 @@ fn write_bin_table(buf: &mut Vec<u8>, table: &Table) {
     for col in &table.columns {
         write_bin_str(buf, &col.name);
         buf.push(col_type_tag(&col.dtype));
+        // v0x02: primary_key flag
         buf.push(if col.primary_key { 1 } else { 0 });
+        // v0x03: flag byte — bit 0=auto_inc, 1=not_null, 2=unique,
+        //         3=has_default, 4=has_default_expr
+        let mut flags: u8 = 0;
+        if col.auto_increment {
+            flags |= 1;
+        }
+        if col.not_null {
+            flags |= 1 << 1;
+        }
+        if col.unique {
+            flags |= 1 << 2;
+        }
+        if col.default.is_some() {
+            flags |= 1 << 3;
+        }
+        if col.default_expr.is_some() {
+            flags |= 1 << 4;
+        }
+        buf.push(flags);
+        // Default value (if present)
+        if let Some(ref def) = col.default {
+            write_bin_value(buf, def);
+        }
+        // Default expression (if present) — serialized as string
+        if let Some(ref expr) = col.default_expr {
+            write_bin_str(buf, &format!("{}", expr));
+        }
     }
+    // v0x03: next_auto_inc counter
+    buf.extend_from_slice(&table.next_auto_inc.to_le_bytes());
     // Rows
     let row_count = table.rows.len() as u32;
     buf.extend_from_slice(&row_count.to_le_bytes());
@@ -172,19 +203,19 @@ pub(crate) fn import_binary(data: &[u8], db: &mut Database) -> Result<(), String
     if &data[0..4] != BINARY_MAGIC {
         return Err("Invalid binary magic".into());
     }
-    if data[4] != BINARY_VERSION {
-        if data[4] < BINARY_VERSION {
-            return Err(format!(
-                "Save file uses format v{}, this build uses v{} — older saves are \
-                 not portable. Migrate via export_sql and re-import.",
-                data[4], BINARY_VERSION
-            ));
-        }
+    let version = data[4];
+    if version == 0x01 {
+        return Err(
+            "Binary version 0x01 is unsupported (pre-1.0). Re-save from a working a3sql instance to migrate.".into(),
+        );
+    }
+    if version > BINARY_VERSION {
         return Err(format!(
-            "Save file uses format v{}, this build uses v{} — upgrade a3sql to load it.",
-            data[4], BINARY_VERSION
+            "Save file uses format v{:#x}, this build supports v{:#x} — upgrade a3sql to load it.",
+            version, BINARY_VERSION
         ));
     }
+    // version is 0x02 or 0x03 — both accepted; read_bin_table dispatches on version
 
     // Verify checksum over everything before the trailer.
     let payload_end = data.len() - CHECKSUM_LEN;
@@ -209,13 +240,13 @@ pub(crate) fn import_binary(data: &[u8], db: &mut Database) -> Result<(), String
     pos += 4;
 
     for _ in 0..table_count {
-        pos = read_bin_table(data, pos, db)?;
+        pos = read_bin_table(data, pos, db, version)?;
     }
 
     Ok(())
 }
 
-fn read_bin_table(data: &[u8], mut pos: usize, db: &mut Database) -> Result<usize, String> {
+fn read_bin_table(data: &[u8], mut pos: usize, db: &mut Database, version: u8) -> Result<usize, String> {
     // Name
     let (name, new_pos) = read_bin_str(data, pos)?;
     pos = new_pos;
@@ -237,19 +268,62 @@ fn read_bin_table(data: &[u8], mut pos: usize, db: &mut Database) -> Result<usiz
         let dtype = dtype_from_tag(data[pos])?;
         let primary_key = data[pos + 1] != 0;
         pos += 2;
+
+        // v0x03: flag byte + optional defaults
+        let (auto_increment, not_null, unique, default, default_expr) = if version >= 0x03 {
+            if pos >= data.len() {
+                return Err("Truncated binary: column flags".into());
+            }
+            let flags = data[pos];
+            pos += 1;
+            let auto_inc = flags & 1 != 0;
+            let not_null = flags & (1 << 1) != 0;
+            let unique = flags & (1 << 2) != 0;
+            let has_default = flags & (1 << 3) != 0;
+            let has_default_expr = flags & (1 << 4) != 0;
+            let def = if has_default {
+                let (v, p) = read_bin_value(data, pos)?;
+                pos = p;
+                Some(v)
+            } else {
+                None
+            };
+            let expr = if has_default_expr {
+                let (s, p) = read_bin_str(data, pos)?;
+                pos = p;
+                // Parse the expression string back into an Expr
+                Some(sqlparser::ast::Expr::Identifier(sqlparser::ast::Ident::new(s)))
+            } else {
+                None
+            };
+            (auto_inc, not_null, unique, def, expr)
+        } else {
+            // v0x02: no flags, defaults to false/None
+            (false, false, false, None, None)
+        };
+
         columns.push(Column {
             name: col_name,
             dtype,
             primary_key,
-            not_null: false,
-            default: None,
-            default_expr: None,
-            auto_increment: false,
-            unique: false,
+            not_null,
+            default,
+            default_expr,
+            auto_increment,
+            unique,
         });
     }
 
     let mut table = Table::new(name.clone(), columns)?;
+
+    // v0x03: next_auto_inc counter
+    if version >= 0x03 {
+        if pos + 8 > data.len() {
+            return Err("Truncated binary: next_auto_inc".into());
+        }
+        table.next_auto_inc = i64::from_le_bytes(data[pos..pos + 8].try_into().unwrap());
+        pos += 8;
+    }
 
     // Rows
     if pos + 4 > data.len() {

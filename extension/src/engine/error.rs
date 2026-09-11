@@ -25,7 +25,9 @@ pub(crate) enum EngineError {
     #[error("Column '{0}' does not exist")]
     ColumnNotFound(String),
 
-    #[error("Column '{name}' not found in table '{table}'")]
+    #[error(
+        "Column '{name}' not found in table '{table}'. Double quotes delimit identifiers in SQL, not string literals — use single quotes for values: '{name}'"
+    )]
     ColumnNotFoundInTable { name: String, table: String },
 
     #[error("Column '{0}' already exists")]

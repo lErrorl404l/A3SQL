@@ -147,7 +147,7 @@ pub fn start_server(bind: &str, port: u16, db_path: Option<&str>) -> Result<Stri
         let path = std::path::PathBuf::from(path);
         std::thread::spawn(move || {
             loop {
-                std::thread::sleep(std::time::Duration::from_secs(30));
+                std::thread::sleep(std::time::Duration::from_secs(5));
                 let db = crate::ffi::DB.lock().unwrap_or_else(|e| e.into_inner());
                 if let Err(e) = crate::dispatch::persist_save(&db, &path) {
                     eprintln!("[a3sql-server] auto-save: {}", e);

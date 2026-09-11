@@ -683,7 +683,7 @@ mod tests {
         let bytes = engine::serialize::export_binary(&make_db(false));
         // Header: 4-byte magic "A3SQ" + 1-byte format version.
         assert_eq!(&bytes[0..4], b"A3SQ", "magic");
-        assert_eq!(bytes[4], 0x02, "format version");
+        assert_eq!(bytes[4], 0x03, "format version");
         // Trailer: 8-byte FNV-1a over everything before it, stored LE.
         let payload_end = bytes.len() - 8;
         let stored = u64::from_le_bytes(bytes[payload_end..].try_into().unwrap());
