@@ -5,7 +5,7 @@ params [
 ];
 
 // ── Load active rules into an in-memory cache keyed by event ───────
-private _rows = ["SELECT id, name, event, match_type, match_value, target_property, operator, value, priority FROM runtime_overrides WHERE active = 1 ORDER BY priority DESC", _extension] call a3sql_database_fnc_selectMap;
+private _rows = ["SELECT id, name, event, match_type, match_value, target_property, operator, value, priority, apply_function FROM runtime_overrides WHERE active = 1 ORDER BY priority DESC", _extension] call a3sql_database_fnc_selectMap;
 
 private _cache = createHashMap;
 {

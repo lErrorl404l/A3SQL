@@ -3,6 +3,10 @@
 // Apply a single rule to a target object with event context.
 // The rule is a hashmap from the in-memory cache. The context hashmap
 // carries event-specific fields (ammo, selection, projectile, shooter).
+//
+// If apply_function is set, call that function instead of the generic
+// operator switch. This makes the engine general-purpose: any SQF
+// function can be registered as an apply function via the DB.
 params [
     ["_rule", createHashMap, [createHashMap]],
     ["_target", objNull, [objNull]],
@@ -11,72 +15,42 @@ params [
 
 if (isNull _target) exitWith { [1, "ERR_PARAM", "No target"] };
 
-private _property = _rule getOrDefault ["target_property", ""];
-private _operator = toLower (_rule getOrDefault ["operator", "set"]);
-private _value    = _rule getOrDefault ["value", ""];
+private _applyFunction = toLower (_rule getOrDefault ["apply_function", ""]);
 
-// ── Special properties handled before the generic operator switch ──
-switch (toLower _property) do {
-    case "damage": {
-        // Damage multiplier: apply the operator to the incoming damage
-        // carried in the context, then add it to the target's damage.
-        private _incoming = _context getOrDefault ["incomingDamage", 0];
-        private _result = _incoming;
-        switch (_operator) do {
-            case "mul": { _result = _incoming * (parseNumber _value); };
-            case "add": { _result = _incoming + (parseNumber _value); };
-            case "div": { if ((parseNumber _value) != 0) then { _result = _incoming / (parseNumber _value); }; };
-            case "set": { _result = parseNumber _value; };
-            case "clamp": {
-                private _max = parseNumber _value;
-                _result = _incoming min _max;
-            };
-        };
-        _target setDamage ((damage _target) + _result);
-        [0, "OK", _result]
+// ── Custom apply function (general-purpose path) ───────────────────
+// When apply_function is set, call it directly. The function receives
+// [target, rule, context] and handles its own logic. This replaces
+// the old hardcoded damage/velocity cases.
+if (_applyFunction isNotEqualTo "") then {
+    private _fnc = missionNamespace getVariable [_applyFunction, {}];
+    if (_fnc isEqualTo {}) exitWith {
+        [1, "ERR_FUNC", format ["Apply function '%1' not found", _applyFunction]]
     };
-    case "velocity": {
-        // Set or scale the projectile velocity vector.
-        private _vel = velocity _target;
-        switch (_operator) do {
-            case "set": {
-                private _parts = _value splitString " ,";
-                if (count _parts >= 3) then {
-                    _target setVelocity [(parseNumber (_parts select 0)), (parseNumber (_parts select 1)), (parseNumber (_parts select 2))];
-                };
-            };
-            case "mul": {
-                private _scale = parseNumber _value;
-                _target setVelocity (_vel vectorMultiply _scale);
-            };
-            case "add": {
-                private _parts = _value splitString " ,";
-                if (count _parts >= 3) then {
-                    _target setVelocity (_vel vectorAdd [(parseNumber (_parts select 0)), (parseNumber (_parts select 1)), (parseNumber (_parts select 2))]);
-                };
-            };
+    [_target, _rule, _context] call _fnc
+} else {
+    // ── Generic variable operators (default path) ──────────────────────
+    // For rules without apply_function, use set/add/mul/div/clamp/call
+    // on object variables. This is the general-purpose fallback.
+    private _property = _rule getOrDefault ["target_property", ""];
+    private _operator = toLower (_rule getOrDefault ["operator", "set"]);
+    private _value    = _rule getOrDefault ["value", ""];
+
+    private _current = _target getVariable [_property, nil];
+    private _result = _current;
+    switch (_operator) do {
+        case "set":   { _result = _value; };
+        case "add":   { _result = (parseNumber _current) + (parseNumber _value); };
+        case "mul":   { _result = (parseNumber _current) * (parseNumber _value); };
+        case "div":   { if ((parseNumber _value) != 0) then { _result = (parseNumber _current) / (parseNumber _value); }; };
+        case "clamp": { _result = (parseNumber _current) min (parseNumber _value); };
+        case "call": {
+            private _fnc = missionNamespace getVariable [_property, {}];
+            [_target, _value, _context] call _fnc;
+            _result = nil;
         };
-        [0, "OK", velocity _target]
     };
-    default {
-        // ── Generic variable operators (mirror patch_core) ──
-        private _current = _target getVariable [_property, nil];
-        private _result = _current;
-        switch (_operator) do {
-            case "set":   { _result = _value; };
-            case "add":   { _result = (parseNumber _current) + (parseNumber _value); };
-            case "mul":   { _result = (parseNumber _current) * (parseNumber _value); };
-            case "div":   { if ((parseNumber _value) != 0) then { _result = (parseNumber _current) / (parseNumber _value); }; };
-            case "clamp": { _result = (parseNumber _current) min (parseNumber _value); };
-            case "call": {
-                private _fnc = missionNamespace getVariable [_property, {}];
-                [_target, _value, _context] call _fnc;
-                _result = nil;
-            };
-        };
-        if !(isNil "_result") then {
-            _target setVariable [_property, _result];
-        };
-        [0, "OK", _result]
+    if !(isNil "_result") then {
+        _target setVariable [_property, _result];
     };
-};
+    [0, "OK", _result]
+}

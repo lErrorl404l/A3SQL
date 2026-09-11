@@ -32,17 +32,14 @@ private _list = _rules getOrDefault ["on_fire", []];
         _context set ["ammo", _ammo];
         _context set ["projectile", _projectile];
 
-        // Projectile-scoped properties (velocity) apply only to the round;
-        // unit-scoped properties apply to the shooter.
-        private _property = toLower (_rule getOrDefault ["target_property", ""]);
+        // Apply the rule to the projectile (for velocity/speed changes)
+        // and to the unit (for variable-based rules).
         if !(isNull _projectile) then {
             [_rule, _projectile, _context] call FUNC(apply);
         };
-        if !(_property in ["velocity", "damage"]) then {
-            [_rule, _unit, _context] call FUNC(apply);
-        };
+        [_rule, _unit, _context] call FUNC(apply);
 
-        // ponytail: read CBA setting var directly — CBA_fnc_getSetting
+        // ponytail: read CBA setting var directly. CBA_fnc_getSetting
         // can return nil during hot events (Fired) when CBA isn't fully init'd.
         private _logLevel = missionNamespace getVariable ["a3sql_runtime_log_level", 1];
         if (_logLevel >= 2) then {
