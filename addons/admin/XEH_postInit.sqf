@@ -67,8 +67,9 @@ addMissionEventHandler ["HandleDisconnect", {
         ["a3sql_admin_command", [_cmd, _params, _status]] call CBA_fnc_globalEvent;
 
         if (["a3sql_admin_log_level"] call CBA_fnc_getSetting >= 2) then {
-            ["A3SQL Admin", "%1: %2 -> %3", _status, _fullCmd, _result] call CBA_fnc_info;
+            INFO_3("%1: %2 -> %3",_status,_fullCmd,_result);
         };
     } forEach _commands;
 
 }, 5, []] call CBA_fnc_addPerFrameHandler;
+

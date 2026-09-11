@@ -13,3 +13,13 @@ class CfgPatches {
         VERSION_CONFIG;
     };
 };
+
+// Register with CBA's versioning system so other mods can check our
+// version via CBA_fnc_checkCompat.
+class CfgSettings {
+    class CBA {
+        class Versioning {
+            class PREFIX {};
+        };
+    };
+};

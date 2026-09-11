@@ -175,7 +175,7 @@ private _failed  = 0;
                 } catch {};
             } else {
                 if (["a3sql_patch_log_level"] call CBA_fnc_getSetting >= 3) then {
-                    ["A3SQL Patch", "sqf_exec blocked — a3sql_patch_allow_sqf_exec is disabled"] call CBA_fnc_error;
+                    ERROR("sqf_exec blocked — a3sql_patch_allow_sqf_exec is disabled");
                 };
             };
         };
@@ -192,7 +192,7 @@ private _failed  = 0;
                 } catch {};
             } else {
                 if (["a3sql_patch_log_level"] call CBA_fnc_getSetting >= 3) then {
-                    ["A3SQL Patch", "add blocked — a3sql_patch_allow_sqf_exec is disabled"] call CBA_fnc_error;
+                    ERROR("add blocked — a3sql_patch_allow_sqf_exec is disabled");
                 };
             };
         };
@@ -303,3 +303,4 @@ private _failed  = 0;
 } forEach _matched;
 
 [0, "OK", [_applied, _failed]]
+

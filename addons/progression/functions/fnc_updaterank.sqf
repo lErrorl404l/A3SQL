@@ -59,6 +59,7 @@ private _rankOrder = ["PRIVATE", "CORPORAL", "SERGEANT", "LIEUTENANT", "CAPTAIN"
     };
 
     if (["a3sql_progression_log_verbose"] call CBA_fnc_getSetting) then {
-        ["A3SQL Progression", "Updated %1 (%2): rank=%3 score=%4 kills=%5 deaths=%6", _name, _uid, _rank, _score, _kills, _deaths] call CBA_fnc_info;
+        INFO_6("Updated %1 (%2): rank=%3 score=%4 kills=%5 deaths=%6",_name,_uid,_rank,_score,_kills,_deaths);
     };
 } forEach _units;
+

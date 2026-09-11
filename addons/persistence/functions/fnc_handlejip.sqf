@@ -14,5 +14,6 @@ if (!(["a3sql_persistence_restore_on_jip"] call CBA_fnc_getSetting)) exitWith {}
     [_uid] call a3sql_persistence_fnc_restorePlayer;
 }, [_uid], 10, {
     params ["_uid"];
-    ["A3SQL Persistence", "JIP restore timed out for UID %1", _uid] call CBA_fnc_error;
+    ERROR_1("JIP restore timed out for UID %1",_uid);
 }] call CBA_fnc_waitUntilAndExec;
+

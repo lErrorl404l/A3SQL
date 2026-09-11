@@ -19,9 +19,13 @@ private _cache = createHashMap;
 
 missionNamespace setVariable [QGVAR(rules), _cache];
 
+// Announce the reload so other addons can react to rule changes.
+["a3sql_runtime_rulesLoaded", [count _rows]] call CBA_fnc_localEvent;
+
 private _logLevel = missionNamespace getVariable ["a3sql_runtime_log_level", 1];
 if (_logLevel >= 2) then {
-    ["A3SQL Runtime", "Loaded %1 active rules into cache", count _rows] call CBA_fnc_info;
+    INFO_1("Loaded %1 active rules into cache",count _rows);
 };
 
 [0, "OK", count _rows]
+

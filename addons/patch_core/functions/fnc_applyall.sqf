@@ -63,13 +63,13 @@ while {true} do {
             } else {
                 _errors = _errors + 1;
                 if (_log_level >= 3) then {
-                    ["A3SQL Patch", "Rule %1 error: %2", _ruleId, _result select 2] call CBA_fnc_error;
+                    ERROR_2("Rule %1 error: %2",_ruleId,_result select 2);
                 };
             };
         } catch {
             _errors = _errors + 1;
             if (_log_level >= 3) then {
-                ["A3SQL Patch", "Rule %1 exception: %2", _ruleId, _exception] call CBA_fnc_error;
+                ERROR_2("Rule %1 exception: %2",_ruleId,_exception);
             };
         };
     } forEach _rows;
@@ -78,7 +78,8 @@ while {true} do {
 };
 
 if (_log_level >= 3) then {
-    ["A3SQL Patch", "applyAll: %1 applied, %2 errors", _applied, _errors] call CBA_fnc_info;
+    INFO_2("applyAll: %1 applied, %2 errors",_applied,_errors);
 };
 
 [0, "OK", [_applied, _errors]]
+

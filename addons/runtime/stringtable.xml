@@ -10,6 +10,24 @@
         <Key ID="STR_a3sql_runtime_Enabled_DisplayName">
             <English>Enable Runtime Engine</English>
         </Key>
+        <Key ID="STR_a3sql_runtime_KeyReload_Description">
+            <English>Reload the runtime override rules from the database.</English>
+        </Key>
+        <Key ID="STR_a3sql_runtime_KeyReload_DisplayName">
+            <English>Reload Rules</English>
+        </Key>
+        <Key ID="STR_a3sql_runtime_KeyStatus_Description">
+            <English>Report the runtime engine status to the log.</English>
+        </Key>
+        <Key ID="STR_a3sql_runtime_KeyStatus_DisplayName">
+            <English>Query Status</English>
+        </Key>
+        <Key ID="STR_a3sql_runtime_KeyToggle_Description">
+            <English>Enable or disable the runtime override engine.</English>
+        </Key>
+        <Key ID="STR_a3sql_runtime_KeyToggle_DisplayName">
+            <English>Toggle Engine</English>
+        </Key>
         <Key ID="STR_a3sql_runtime_LogLevel_Description">
             <English>Verbosity of diagnostic messages for the runtime engine.</English>
         </Key>

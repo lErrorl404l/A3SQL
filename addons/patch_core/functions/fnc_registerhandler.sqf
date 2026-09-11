@@ -12,7 +12,8 @@ private _varName = format [QGVAR(handler_%1), _handlerName];
 missionNamespace setVariable [_varName, _code];
 
 if (["a3sql_patch_log_level"] call CBA_fnc_getSetting >= 3) then {
-    ["A3SQL Patch", "Handler registered: %1", _varName] call CBA_fnc_info;
+    INFO_1("Handler registered: %1",_varName);
 };
 
 [0, "OK", _varName]
+

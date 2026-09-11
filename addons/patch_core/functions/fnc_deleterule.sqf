@@ -16,8 +16,9 @@ if ((_parsed select 0) == 0) then {
     if (isNil QGVAR(namespace)) then { GVAR(namespace) = [] call CBA_fnc_createNamespace; };
     GVAR(namespace) setVariable ["dirty", true];
     if (["a3sql_patch_log_level"] call CBA_fnc_getSetting >= 3) then {
-        ["A3SQL Patch", "Rule %1 deleted", _ruleId] call CBA_fnc_info;
+        INFO_1("Rule %1 deleted",_ruleId);
     };
 };
 
 _parsed
+

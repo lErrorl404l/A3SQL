@@ -9,6 +9,9 @@ params [
     ["_projectile", objNull, [objNull]]
 ];
 
+if (isNull _unit && isNull _projectile) exitWith {};
+if !(missionNamespace getVariable [QGVAR(enabled), true]) exitWith {};
+
 private _rules = missionNamespace getVariable [QGVAR(rules), createHashMap];
 private _list = _rules getOrDefault ["on_fire", []];
 
@@ -43,7 +46,8 @@ private _list = _rules getOrDefault ["on_fire", []];
         // can return nil during hot events (Fired) when CBA isn't fully init'd.
         private _logLevel = missionNamespace getVariable ["a3sql_runtime_log_level", 1];
         if (_logLevel >= 2) then {
-            ["A3SQL Runtime", "Applied on_fire rule %1 to %2", _rule getOrDefault ["name", ""], _ammo] call CBA_fnc_info;
+            INFO("");
         };
     };
 } forEach _list;
+

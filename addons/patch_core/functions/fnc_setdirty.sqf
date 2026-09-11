@@ -12,12 +12,13 @@ GVAR(namespace) setVariable ["dirty", _dirty];
 if (_dirty) then {
     [QGVAR(autosave), [], 5, {
         "save patch_rules" call a3sql_database_fnc_execute;
-        ["A3SQL Patch", "Auto-saved patch_rules"] call CBA_fnc_info;
+        INFO("Auto-saved patch_rules");
     }] call CBA_fnc_waitAndExec;
 };
 
 if (["a3sql_patch_log_level"] call CBA_fnc_getSetting >= 3) then {
-    ["A3SQL Patch", "Dirty flag set to %1", _dirty] call CBA_fnc_info;
+    INFO_1("Dirty flag set to %1",_dirty);
 };
 
 [0, "OK", _dirty]
+

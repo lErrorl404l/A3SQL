@@ -23,7 +23,7 @@ _data params ["_unitType", "_posX", "_posY", "_posZ", "_dir", "_damage", "_loado
 // but guard against edge cases)
 private _unit = missionNamespace getVariable [format ["player_%1", _uid], objNull];
 if (isNull _unit) exitWith {
-    ["A3SQL Persistence", "Restore failed: player unit null for UID %1", _uid] call CBA_fnc_error;
+    ERROR_1("Restore failed: player unit null for UID %1",_uid);
 };
 
 // Restore loadout
@@ -68,3 +68,4 @@ if (_vehicle != "") then {
 if (["a3sql_persistence_debug"] call CBA_fnc_getSetting) then {
     ["A3SQL Persistence", format ["Restored player %1", _uid]] call CBA_fnc_notify;
 };
+

@@ -12,7 +12,8 @@ private _result = [_sql, _extension] call FUNC(execute);
 private _elapsed = diag_tickTime - _start;
 
 if (_elapsed > 0.01) then {
-    ["A3SQL", "SLOW QUERY (%1 ms): %2", round (_elapsed * 1000), _sql] call CBA_fnc_error;
+    ERROR_2("SLOW QUERY (%1 ms): %2",round (_elapsed * 1000),_sql);
 };
 
 _result
+

@@ -319,6 +319,74 @@ mod tests {
         assert!("unknown".parse::<Format>().is_err());
     }
 
+    /// Regression: tables created via SQL DDL (CREATE TABLE + INSERT through the
+    /// parser/executor) must survive a binary export → import round-trip. This is
+    /// the exact path the interactive REPL and TCP server use.
+    #[test]
+    fn binary_ddl_tables_persist() {
+        let mut db = Database::new();
+
+        // Simulate what the REPL does: CREATE TABLE via SQL execution
+        let stmts =
+            crate::parser::parse_sql("CREATE TABLE runtime_overrides (id INTEGER PRIMARY KEY, name TEXT, value FLOAT)")
+                .unwrap();
+        for stmt in &stmts {
+            crate::engine::execute::execute(stmt, &mut db).unwrap();
+        }
+        // Insert via SQL too
+        let stmts = crate::parser::parse_sql("INSERT INTO runtime_overrides VALUES (1, 'test_rule', 1.5)").unwrap();
+        for stmt in &stmts {
+            crate::engine::execute::execute(stmt, &mut db).unwrap();
+        }
+
+        // Verify it's in the source db
+        assert!(db.has_table("runtime_overrides"), "table exists after DDL");
+        assert_eq!(db.table_names().len(), 1);
+
+        // Export
+        let bytes = export_binary(&db);
+
+        // Import into a fresh database
+        let mut db2 = Database::new();
+        import_binary(&bytes, &mut db2).unwrap();
+
+        // THE BUG: does the DDL-created table survive the round-trip?
+        assert!(
+            db2.has_table("runtime_overrides"),
+            "DDL table survives binary round-trip"
+        );
+        let t = db2.get_table("runtime_overrides").unwrap();
+        assert_eq!(t.rows.len(), 1, "row count preserved");
+        assert_eq!(t.columns.len(), 3, "column count preserved");
+        assert_eq!(t.columns[0].name, "id");
+        assert!(t.columns[0].primary_key, "primary key preserved");
+    }
+
+    /// Regression: multiple DDL-created tables must all persist.
+    #[test]
+    fn binary_multi_ddl_tables_persist() {
+        let mut db = Database::new();
+        let stmts = crate::parser::parse_sql(
+            "CREATE TABLE t1 (id INTEGER PRIMARY KEY, val TEXT);
+             CREATE TABLE t2 (id INTEGER PRIMARY KEY, score FLOAT);
+             INSERT INTO t1 VALUES (1, 'hello');
+             INSERT INTO t2 VALUES (1, 3.14);",
+        )
+        .unwrap();
+        for stmt in &stmts {
+            crate::engine::execute::execute(stmt, &mut db).unwrap();
+        }
+
+        let bytes = export_binary(&db);
+        let mut db2 = Database::new();
+        import_binary(&bytes, &mut db2).unwrap();
+
+        assert!(db2.has_table("t1"), "first DDL table survives");
+        assert!(db2.has_table("t2"), "second DDL table survives");
+        assert_eq!(db2.get_table("t1").unwrap().rows.len(), 1);
+        assert_eq!(db2.get_table("t2").unwrap().rows.len(), 1);
+    }
+
     /// Regression (found by T2 proptests): export writes "STRINGS[]"/"FLOATS[]",
     /// which import matched as plain "strings"/"floats" → array columns came
     /// back as STRING. The array type must survive the JSON round-trip.

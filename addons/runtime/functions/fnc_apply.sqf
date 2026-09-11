@@ -26,7 +26,11 @@ if (_applyFunction isNotEqualTo "") then {
     if (_fnc isEqualTo {}) exitWith {
         [1, "ERR_FUNC", format ["Apply function '%1' not found", _applyFunction]]
     };
-    [_target, _rule, _context] call _fnc
+    private _result = [_target, _rule, _context] call _fnc;
+    // Cross-mod notification: other addons and missions can react to
+    // rule applications by listening for this CBA event.
+    ["a3sql_runtime_ruleApplied", [_rule getOrDefault ["name", ""], _target, _result]] call CBA_fnc_localEvent;
+    _result
 } else {
     // ── Generic variable operators (default path) ──────────────────────
     // For rules without apply_function, use set/add/mul/div/clamp/call
@@ -52,5 +56,6 @@ if (_applyFunction isNotEqualTo "") then {
     if !(isNil "_result") then {
         _target setVariable [_property, _result];
     };
+    ["a3sql_runtime_ruleApplied", [_rule getOrDefault ["name", ""], _target, _result]] call CBA_fnc_localEvent;
     [0, "OK", _result]
 }

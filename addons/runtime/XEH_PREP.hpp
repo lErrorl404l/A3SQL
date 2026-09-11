@@ -1,6 +1,8 @@
 A3PREP(register);
 A3PREP(reload);
 A3PREP(apply);
+A3PREP(events);
+A3PREP(keybinds);
 A3PREP(applyDamage);
 A3PREP(applyVelocity);
 A3PREP(applyWeather);

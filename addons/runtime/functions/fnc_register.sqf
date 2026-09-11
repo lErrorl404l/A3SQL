@@ -14,7 +14,7 @@ _extension callExtension _addColumn;
 
 private _logLevel = missionNamespace getVariable ["a3sql_runtime_log_level", 1];
 if (_logLevel >= 2) then {
-    ["A3SQL Runtime", "Table init: %1", _result] call CBA_fnc_info;
+    INFO_1("Table init: %1",_result);
 };
 
 // ── Seed the demo rules only when the table is empty ────────────────
@@ -27,7 +27,7 @@ if (_rowCount == 0) then {
     private _seedHit = "INSERT INTO runtime_overrides (name, event, match_type, match_value, target_property, operator, value, priority, apply_function) VALUES ('demo_50cal_heavy_damage', 'on_hit', 'type_of', 'MSS_50_M33_Ball', '', 'mul', '1.5', 10, 'a3sql_runtime_fnc_applyDamage')";
     private _seedHitResult = _extension callExtension _seedHit;
     if (_logLevel >= 2) then {
-        ["A3SQL Runtime", "Seeded demo on_hit rule: %1", _seedHitResult] call CBA_fnc_info;
+        INFO_1("Seeded demo on_hit rule: %1",_seedHitResult);
     };
 
     // on_fire projectile-velocity multiplier. The runtime ballistics hook.
@@ -36,7 +36,7 @@ if (_rowCount == 0) then {
     private _seedFire = "INSERT INTO runtime_overrides (name, event, match_type, match_value, target_property, operator, value, priority, apply_function) VALUES ('demo_50cal_hot_load', 'on_fire', 'type_of', 'MSS_50_M33_Ball', '', 'mul', '1.2', 20, 'a3sql_runtime_fnc_applyVelocity')";
     private _seedFireResult = _extension callExtension _seedFire;
     if (_logLevel >= 2) then {
-        ["A3SQL Runtime", "Seeded demo on_fire rule: %1", _seedFireResult] call CBA_fnc_info;
+        INFO_1("Seeded demo on_fire rule: %1",_seedFireResult);
     };
 
     // on_killed accuracy modifier. When any unit is killed, boost the killer's
@@ -44,8 +44,13 @@ if (_rowCount == 0) then {
     private _seedKilled = "INSERT INTO runtime_overrides (name, event, match_type, match_value, target_property, operator, value, priority, apply_function) VALUES ('demo_kill_accuracy_boost', 'on_killed', 'all', '', '', 'mul', '1.5', 5, 'a3sql_runtime_fnc_applyAccuracy')";
     private _seedKilledResult = _extension callExtension _seedKilled;
     if (_logLevel >= 2) then {
-        ["A3SQL Runtime", "Seeded demo on_killed rule: %1", _seedKilledResult] call CBA_fnc_info;
+        INFO_1("Seeded demo on_killed rule: %1",_seedKilledResult);
     };
 };
 
+// Announce the engine is ready so other addons and missions can start
+// issuing runtime_overrides writes and reload events.
+["a3sql_runtime_ready", [true]] call CBA_fnc_globalEvent;
+
 [0, "OK", "Table ready"]
+

@@ -147,6 +147,61 @@ CREATE TABLE IF NOT EXISTS runtime_overrides (
 
 ---
 
+## CBA Event Interface
+
+The engine registers CBA events so any addon or mission can control it
+without hardcoding a dependency. Fire them with `CBA_fnc_globalEvent`.
+
+| Event (call) | Params | Action |
+|--------------|--------|--------|
+| `a3sql_runtime_reload` | none | Reload the rule cache from the database |
+| `a3sql_runtime_toggle` | `[enabled]` | Master switch, overrides the CBA setting per mission |
+| `a3sql_runtime_query` | none | Request status; engine replies on `a3sql_runtime_status` |
+| `a3sql_runtime_clearTracking` | none | Reset the per-object event-handler cache |
+
+| Event (listen) | Params | Fired when |
+|----------------|--------|------------|
+| `a3sql_runtime_status` | `[enabled, ruleCount]` | Engine answers a query event |
+| `a3sql_runtime_ruleApplied` | `[ruleName, target, result]` | A rule is applied (local event, server only) |
+| `a3sql_runtime_rulesLoaded` | `[ruleCount]` | The cache is reloaded (local event) |
+| `a3sql_runtime_ready` | `[true]` | The table exists and the engine is live |
+
+Example: reload rules from another addon after writing to the database:
+
+```sqf
+["a3sql_runtime_reload"] call CBA_fnc_globalEvent;
+```
+
+---
+
+## CBA Keybinds
+
+Three operator keybinds are registered in the CBA keybind menu (A3SQL
+Runtime category). They are client-side: pressing a key forwards the
+command to the server via the CBA event interface.
+
+| Keybind | Default | Action |
+|---------|---------|--------|
+| Reload Rules | Ctrl + F5 | Fire `a3sql_runtime_reload` |
+| Toggle Engine | Ctrl + F6 | Fire `a3sql_runtime_toggle` with the inverted state |
+| Query Status | Ctrl + F7 | Fire `a3sql_runtime_query` and log the reply |
+
+---
+
+## CBA Versioning
+
+The runtime addon (and every A3SQL addon) declares the `VERSIONING` macro
+in its `CfgPatches`. This registers the mod with CBA's versioning system:
+other addons can check the installed A3SQL version with
+`CBA_fnc_checkCompat` and warn on mismatches. The version comes from
+`addons/main/script_version.hpp` and is reported at startup, e.g.:
+
+```
+[CBA] (versioning) INFO: VERSIONING:cba=3.19.0.260808, a3sql=1.1.0.0, ace=3.21.2.113
+```
+
+---
+
 ## Apply Function Dispatch
 
 The `apply_function` column makes the engine domain-agnostic. When a rule
@@ -375,14 +430,23 @@ The context hashmap varies by event:
 | `a3sql_runtime_fnc_handleFired` | Process Fired events, match rules, call apply |
 | `a3sql_runtime_fnc_handleHit` | Process HitPart events, match rules, call apply |
 | `a3sql_runtime_fnc_handleKilled` | Process EntityKilled events, match rules, call apply |
+| `a3sql_runtime_fnc_events` | Register the cross-mod CBA event listeners |
+| `a3sql_runtime_fnc_keybinds` | Register the operator keybinds in the CBA keybind menu |
 
 ### Reloading Rules
 
-Rules are loaded into memory at mission start. To reload after inserting
-new rules via TCP or in-game:
+Rules are loaded into memory at mission start (deferred with
+`CBA_fnc_waitUntilAndExecute` until mission time > 0). To reload after
+inserting new rules via TCP or in-game:
 
 ```sqf
 [] call a3sql_runtime_fnc_reload;
+```
+
+Or from any other addon/mission, without a direct dependency:
+
+```sqf
+["a3sql_runtime_reload"] call CBA_fnc_globalEvent;
 ```
 
 ---
