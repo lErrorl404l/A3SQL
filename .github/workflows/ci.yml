@@ -59,6 +59,8 @@ jobs:
           cache-shared-key: a3sql-ci-win64-msvc-${{ hashFiles('extension/Cargo.lock') }}
       - name: Install cargo-xwin
         run: cargo install cargo-xwin
+      - name: Install LLVM (provides llvm-lib for cargo-xwin cross-compile)
+        run: sudo apt-get install -y llvm
       - name: Pre-cache Windows SDK
         run: cargo xwin cache xwin
       - name: Build
