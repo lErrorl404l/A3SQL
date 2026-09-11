@@ -7,3 +7,5 @@
 pub(crate) mod aggregate;
 pub(crate) mod builtin;
 pub(crate) mod eval;
+#[cfg(test)]
+pub(crate) mod math_verify;

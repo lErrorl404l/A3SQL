@@ -1,6 +1,7 @@
 // Test modules organized by SQL statement type
 
 pub(crate) mod constraints;
+pub(crate) mod differential;
 pub(crate) mod dml;
 pub(crate) mod edge_cases;
 pub(crate) mod explain;
@@ -12,5 +13,6 @@ pub(crate) mod order_aggregate;
 pub(crate) mod parse_cache;
 pub(crate) mod proptest_paths;
 pub(crate) mod proptest_serialize;
+pub(crate) mod sqllogictest;
 pub(crate) mod transactions;
 pub(crate) mod upsert;

@@ -91,7 +91,7 @@ pub(crate) fn values_equal(a: &DbValue, b: &DbValue) -> bool {
 // ── Numeric helpers ─────────────────────────────────────────────────────
 
 /// Convert a DbValue to f64 if it's numeric.
-fn to_f64(v: &DbValue) -> Option<f64> {
+pub(crate) fn to_f64(v: &DbValue) -> Option<f64> {
     match v {
         DbValue::Int(n) => Some(*n as f64),
         DbValue::Float(f) => Some(*f),

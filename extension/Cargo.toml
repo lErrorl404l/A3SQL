@@ -69,6 +69,8 @@ sqf-preprocessor = ["hemtt-preprocessor", "hemtt-tokens"]
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }
 proptest = "1.11"
+sqllogictest = "0.27"
+rusqlite = { version = "0.32", features = ["bundled"] }
 
 [[bench]]
 name = "queries"

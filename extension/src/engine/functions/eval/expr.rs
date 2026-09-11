@@ -158,6 +158,25 @@ pub(crate) fn eval_expr(
             Ok(DbValue::Bool(if *negated { !found } else { found }))
         }
         Expr::Function(func) => exec_function(func, row, col_map),
+        // sqlparser parses CEIL()/FLOOR() as dedicated AST nodes, not generic
+        // Function calls. Evaluate the argument and round directly so they
+        // behave like ABS()/ROUND() (which arrive as Expr::Function).
+        Expr::Ceil { expr, .. } => {
+            let v = eval_expr(expr, row, col_map)?;
+            let x = super::super::builtin::to_f64(&v).ok_or_else(|| EngineError::TypeError {
+                expected: "numeric".into(),
+                actual: format!("{:?}", v),
+            })?;
+            Ok(DbValue::Float(x.ceil()))
+        }
+        Expr::Floor { expr, .. } => {
+            let v = eval_expr(expr, row, col_map)?;
+            let x = super::super::builtin::to_f64(&v).ok_or_else(|| EngineError::TypeError {
+                expected: "numeric".into(),
+                actual: format!("{:?}", v),
+            })?;
+            Ok(DbValue::Float(x.floor()))
+        }
         Expr::Subquery(query) => eval_subquery_value(query, row, col_map),
         Expr::InSubquery {
             expr,

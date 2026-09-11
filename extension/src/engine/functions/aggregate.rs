@@ -198,6 +198,10 @@ pub(crate) fn compute_aggregate_rows(
 pub(crate) fn projection_expr_name(expr: &Expr) -> String {
     match expr {
         Expr::Function(f) => f.name.to_string().to_uppercase(),
+        // sqlparser parses CEIL/FLOOR as dedicated AST nodes; give them
+        // their proper function names for the result header.
+        Expr::Ceil { .. } => "CEIL".to_string(),
+        Expr::Floor { .. } => "FLOOR".to_string(),
         Expr::Identifier(ident) => ident.value.to_lowercase(),
         Expr::CompoundIdentifier(parts) => parts
             .iter()
