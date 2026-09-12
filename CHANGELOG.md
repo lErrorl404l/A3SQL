@@ -1,5 +1,8 @@
 # Changelog
 
+Steam Workshop change notes (BBCode) live in `workshop-changelog.bbcode`.
+Keep both files in sync when updating this changelog.
+
 ## [Unreleased]
 
 ## [1.1.0]
