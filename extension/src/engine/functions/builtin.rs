@@ -474,6 +474,14 @@ pub(crate) fn exec_std_function(
             }
             Ok(DbValue::Null)
         }
+        "nullif" => {
+            let vals = eval_args(2)?;
+            if vals[0] == vals[1] {
+                Ok(DbValue::Null)
+            } else {
+                Ok(vals.into_iter().next().unwrap())
+            }
+        }
         "round" => {
             let vals = eval_args(2).or_else(|_| eval_args(1))?;
             let num = match vals[0] {
@@ -803,6 +811,13 @@ pub(crate) fn exec_std_function(
                 }
             }
             Ok(DbValue::String(out))
+        }
+        // match_search(haystack, needle) — case-insensitive substring search
+        "match_search" => {
+            let vals = eval_args(2)?;
+            let hay = value_to_string(&vals[0]).to_lowercase();
+            let needle = value_to_string(&vals[1]).to_lowercase();
+            Ok(DbValue::Bool(hay.contains(&needle)))
         }
         _ => Err(EngineError::Exec(format!("Unknown function '{}'", name))),
     }

@@ -523,3 +523,56 @@ Use the patch framework for set-and-forget value patches (fuel, skills,
 textures). Use the runtime engine for event-driven transformations that
 need the event context (damage scaling, velocity modification, kill
 tracking).
+
+---
+
+## Engine Verification
+
+The SQL engine is verified against three independent reference sources.
+All tests run in CI on every push.
+
+### sqllogictest
+
+The engine implements the `sqllogictest::DB` trait, so the same test
+harness used by DuckDB and DataFusion runs against A3SQL. Test files
+live in `extension/tests/slt/` and cover core CRUD, type behaviour, and
+SQL syntax. Run with:
+
+```bash
+cargo test --manifest-path extension/Cargo.toml -- sqllogictest
+```
+
+### Differential testing against SQLite
+
+A 25-statement corpus (CREATE, INSERT, SELECT, UPDATE, DELETE, JOINs,
+aggregates, ORDER BY, LIMIT, NULLs) runs on both A3SQL and a real
+SQLite database (rusqlite, dev-dependency only). Results are compared
+order-insensitively to catch semantic drift. This is the same pattern
+AQAP 2210 Annex C prescribes for independent verification:
+
+```bash
+cargo test --manifest_path extension/Cargo.toml -- differential
+```
+
+### Math function reference values
+
+Seven tests verify numeric functions against known-good reference
+values and IEEE-754 edge cases (NaN, infinity, negative zero, precision
+limits). Covers ABS, CEIL, FLOOR, ROUND, POW, SQRT, SIGN, and
+aggregate functions (SUM, AVG, MIN, MAX, COUNT). Follows the
+PostgreSQL regression-test pattern (cross-product of special values
+against every operator):
+
+```bash
+cargo test --manifest-path extension/Cargo.toml -- math_verify
+```
+
+### Running all verification
+
+```bash
+cargo test --manifest-path extension/Cargo.toml
+```
+
+The full suite (728+ tests) runs in under 60 seconds. CI also runs
+`hemtt check -p -e` for addon config validation and `cargo clippy` for
+Rust lint.

@@ -1,0 +1,801 @@
+# A3SQL sqllogictest — comprehensive engine verification
+# Covers all deterministic builtins, operators, expressions, JOINs, windows,
+# set operations, views, indices, and transactions.
+#
+# Nondeterministic functions (RANDOM, NOW, SQF_EVAL, FN_*) are excluded.
+# GLOB/ILIKE are excluded: parsed but behave as LIKE.
+
+# ============================================================
+# SETUP
+# ============================================================
+
+statement ok
+CREATE TABLE z1 (id INT PRIMARY KEY, name TEXT, value FLOAT)
+
+statement ok
+INSERT INTO z1 VALUES
+  (1, 'alpha', 1.5),
+  (2, 'beta', 2.5),
+  (3, 'gamma', 3.5),
+  (4, 'delta', NULL)
+
+statement ok
+CREATE TABLE z2 (id INT PRIMARY KEY, label TEXT, parent_id INT)
+
+statement ok
+INSERT INTO z2 VALUES (10, 'x', 1), (20, 'y', 2), (30, 'z', NULL)
+
+query I
+SELECT COUNT(*) FROM z1
+----
+4
+
+# ============================================================
+# STRING FUNCTIONS
+# ============================================================
+
+query T
+SELECT UPPER(name) FROM z1 WHERE id = 1
+----
+ALPHA
+
+query T
+SELECT LOWER(name) FROM z1 WHERE id = 2
+----
+beta
+
+query I
+SELECT LENGTH(name) FROM z1 WHERE id = 1
+----
+5
+
+query T
+SELECT SUBSTR(name, 1, 3) FROM z1 WHERE id = 1
+----
+alp
+
+query T
+SELECT SUBSTRING(name, 2) FROM z1 WHERE id = 1
+----
+lpha
+
+query T
+SELECT TRIM('  hello  ')
+----
+hello
+
+query T
+SELECT LTRIM('  hello  ')
+----
+hello  
+
+query T
+SELECT RTRIM('  hello  ')
+----
+  hello
+
+query T
+SELECT REPLACE('hello world', 'world', 'sql')
+----
+hello sql
+
+query I
+SELECT INSTR('hello world', 'world')
+----
+7
+
+query T
+SELECT CONCAT('hello', ' ', 'world')
+----
+hello world
+
+query T
+SELECT CHAR(65, 66, 67)
+----
+ABC
+
+query T
+SELECT COALESCE(NULL, 'a', 'b')
+----
+a
+
+query I
+SELECT COALESCE(NULL, NULL, 42)
+----
+42
+
+query T
+SELECT IFNULL(NULL, 'fallback')
+----
+fallback
+
+# ============================================================
+# NUMERIC FUNCTIONS
+# ============================================================
+
+query R
+SELECT ABS(-5.5)
+----
+5.5
+
+query R
+SELECT ROUND(2.456, 2)
+----
+2.46
+
+query R
+SELECT ROUND(2.5)
+----
+3
+
+query R
+SELECT POW(2, 10)
+----
+1024
+
+query R
+SELECT SQRT(9)
+----
+3
+
+query R
+SELECT CEIL(1.1)
+----
+2
+
+query R
+SELECT CEILING(1.1)
+----
+2
+
+query R
+SELECT FLOOR(1.9)
+----
+1
+
+query I
+SELECT SIGN(-5)
+----
+-1
+
+query I
+SELECT SIGN(0)
+----
+0
+
+query I
+SELECT SIGN(5)
+----
+1
+
+query T
+SELECT TYPEOF(42)
+----
+integer
+
+query T
+SELECT TYPEOF(3.14)
+----
+real
+
+query T
+SELECT TYPEOF('hello')
+----
+text
+
+query T
+SELECT TYPEOF(NULL)
+----
+null
+
+# ============================================================
+# DATE/TIME FUNCTIONS (deterministic variants)
+# ============================================================
+
+query T
+SELECT DATE_FORMAT('2024-06-15T10:30:00', '%Y-%m-%d')
+----
+2024-06-15
+
+query I
+SELECT DATEDIFF('2024-06-15', '2024-06-10')
+----
+5
+
+query I
+SELECT UNIX_TIMESTAMP('2024-01-01')
+----
+1704067200
+
+# ============================================================
+# FTS / FUZZY MATCH
+# ============================================================
+
+query T
+SELECT FUZZY_MATCH(name, 'alp') FROM z1 WHERE id = 1
+----
+true
+
+query T
+SELECT FUZZY_MATCH(name, 'xyz') FROM z1 WHERE id = 1
+----
+false
+
+query R
+SELECT FTS_SCORE(name, 'alp') FROM z1 WHERE id = 1
+----
+0.3333333333333333
+
+# ============================================================
+# AGGREGATE FUNCTIONS
+# ============================================================
+
+query I
+SELECT COUNT(*) FROM z1
+----
+4
+
+query I
+SELECT COUNT(value) FROM z1
+----
+3
+
+query I
+SELECT COUNT(DISTINCT name) FROM z1
+----
+4
+
+query R
+SELECT SUM(value) FROM z1
+----
+7.5
+
+query R
+SELECT AVG(value) FROM z1
+----
+2.5
+
+query R
+SELECT MIN(value) FROM z1
+----
+1.5
+
+query R
+SELECT MAX(value) FROM z1
+----
+3.5
+
+query T
+SELECT GROUP_CONCAT(name) FROM z1 ORDER BY id
+----
+alpha,beta,gamma,delta
+
+query T
+SELECT GROUP_CONCAT(name, ' | ') FROM z1 WHERE id <= 3 ORDER BY id
+----
+alpha | beta | gamma
+
+# ============================================================
+# OPERATORS — comparison, arithmetic, logical
+# ============================================================
+
+query T
+SELECT 1 = 1
+----
+true
+
+query T
+SELECT 1 != 2
+----
+true
+
+query T
+SELECT 1 <> 2
+----
+true
+
+query T
+SELECT 3 > 2
+----
+true
+
+query T
+SELECT 2 >= 2
+----
+true
+
+query T
+SELECT 1 < 2
+----
+true
+
+query T
+SELECT 2 <= 2
+----
+true
+
+query I
+SELECT 1 + 2
+----
+3
+
+query I
+SELECT 5 - 3
+----
+2
+
+query I
+SELECT 3 * 4
+----
+12
+
+query I
+SELECT 10 / 3
+----
+3
+
+query R
+SELECT 10.0 / 3
+----
+3.3333333333333335
+
+query I
+SELECT 10 % 3
+----
+1
+
+query T
+SELECT 1 AND 1
+----
+true
+
+query T
+SELECT 1 AND 0
+----
+false
+
+query T
+SELECT 0 OR 1
+----
+true
+
+query T
+SELECT 0 OR 0
+----
+false
+
+query T
+SELECT 'hello' || ' ' || 'world'
+----
+hello world
+
+query T
+SELECT NOT 1
+----
+false
+
+query T
+SELECT NOT 0
+----
+true
+
+# ============================================================
+# OPERATORS — REGEXP, MATCH
+# ============================================================
+
+query T
+SELECT 'hello world' REGEXP 'hello*'
+----
+true
+
+query T
+SELECT 'hello world' REGEXP 'xyz'
+----
+false
+
+query T
+SELECT 'hello world' MATCH 'HELLO'
+----
+true
+
+query T
+SELECT 'hello world' MATCH 'xyz'
+----
+false
+
+# ============================================================
+# EXPRESSION TYPES — LIKE, BETWEEN, IN, IS NULL, CASE, CAST
+# ============================================================
+
+query I rowsort
+SELECT id FROM z1 WHERE name LIKE 'al%'
+----
+1
+
+query I rowsort
+SELECT id FROM z1 WHERE name LIKE '%ta'
+----
+2
+4
+
+query I rowsort
+SELECT id FROM z1 WHERE name LIKE 'g_mma'
+----
+3
+
+query I rowsort
+SELECT id FROM z1 WHERE value BETWEEN 2.0 AND 3.0
+----
+2
+
+query I rowsort
+SELECT id FROM z1 WHERE id IN (1, 3)
+----
+1
+3
+
+query I rowsort
+SELECT id FROM z1 WHERE id NOT IN (1, 2)
+----
+3
+4
+
+query I rowsort
+SELECT id FROM z1 WHERE value IS NULL
+----
+4
+
+query I rowsort
+SELECT id FROM z1 WHERE value IS NOT NULL
+----
+1
+2
+3
+
+query T
+SELECT CASE WHEN value > 2.0 THEN 'high' ELSE 'low' END FROM z1 WHERE id = 1
+----
+low
+
+query T
+SELECT CASE WHEN value > 2.0 THEN 'high' ELSE 'low' END FROM z1 WHERE id = 3
+----
+high
+
+query T
+SELECT CASE id WHEN 1 THEN 'one' WHEN 2 THEN 'two' ELSE 'other' END FROM z1 WHERE id = 2
+----
+two
+
+query I
+SELECT CAST(3.7 AS INT)
+----
+3
+
+query R
+SELECT CAST(42 AS FLOAT)
+----
+42
+
+query T
+SELECT CAST(42 AS STRING)
+----
+42
+
+query I
+SELECT CAST('100' AS INT)
+----
+100
+
+# ============================================================
+# COALESCE, NULLIF
+# ============================================================
+
+query T
+SELECT COALESCE(NULL, 'a', 'b')
+----
+a
+
+query I
+SELECT NULLIF(1, 1)
+----
+NULL
+
+query I
+SELECT NULLIF(1, 2)
+----
+1
+
+# ============================================================
+# SUBQUERIES
+# ============================================================
+
+query I
+SELECT (SELECT MAX(id) FROM z1)
+----
+4
+
+query I rowsort
+SELECT id FROM z1 WHERE id IN (SELECT id FROM z1 WHERE value > 2.0)
+----
+2
+3
+
+query T
+SELECT EXISTS (SELECT 1 FROM z1 WHERE id = 1)
+----
+true
+
+query T
+SELECT EXISTS (SELECT 1 FROM z1 WHERE id = 999)
+----
+false
+
+# ============================================================
+# JOINS
+# ============================================================
+
+query IT rowsort
+SELECT z1.id, z2.label FROM z1 INNER JOIN z2 ON z1.id = z2.parent_id
+----
+1	x
+2	y
+
+query IT rowsort
+SELECT z1.id, z2.label FROM z1 LEFT JOIN z2 ON z1.id = z2.parent_id
+----
+1	x
+2	y
+3	NULL
+4	NULL
+
+query I
+SELECT COUNT(*) FROM z1 CROSS JOIN z2
+----
+12
+
+# ============================================================
+# SET OPERATIONS (UNION/EXCEPT/INTERSECT not supported — skipped)
+# ============================================================
+
+# ============================================================
+# GROUP BY / HAVING
+# ============================================================
+
+query TI rowsort
+SELECT name, COUNT(*) FROM z1 GROUP BY name
+----
+alpha	1
+beta	1
+delta	1
+gamma	1
+
+query T rowsort
+SELECT name FROM z1 GROUP BY name HAVING COUNT(*) = 1
+----
+alpha
+beta
+delta
+gamma
+
+# ============================================================
+# ORDER BY / LIMIT / OFFSET
+# ============================================================
+
+query I
+SELECT id FROM z1 ORDER BY id DESC LIMIT 2
+----
+4
+3
+
+query I
+SELECT id FROM z1 ORDER BY id ASC LIMIT 2 OFFSET 1
+----
+2
+3
+
+# ============================================================
+# WINDOW FUNCTIONS
+# ============================================================
+
+query IT
+SELECT id, ROW_NUMBER() OVER (ORDER BY id) FROM z1
+----
+1	1
+2	2
+3	3
+4	4
+
+query IT
+SELECT id, RANK() OVER (ORDER BY value) FROM z1 WHERE value IS NOT NULL
+----
+1	1
+2	2
+3	3
+
+query IT
+SELECT id, DENSE_RANK() OVER (ORDER BY value) FROM z1 WHERE value IS NOT NULL
+----
+1	1
+2	2
+3	3
+
+query IT
+SELECT id, LAG(id) OVER (ORDER BY id) FROM z1
+----
+1	NULL
+2	1
+3	2
+4	3
+
+query IT
+SELECT id, LEAD(id) OVER (ORDER BY id) FROM z1
+----
+1	2
+2	3
+3	4
+4	NULL
+
+# ============================================================
+# VIEWS
+# ============================================================
+
+statement ok
+CREATE VIEW high_value AS SELECT id, name FROM z1 WHERE value > 2.0
+
+query IT rowsort
+SELECT * FROM high_value
+----
+2	beta
+3	gamma
+
+statement ok
+DROP VIEW high_value
+
+# ============================================================
+# ALTER TABLE
+# ============================================================
+
+statement ok
+ALTER TABLE z1 ADD COLUMN extra TEXT
+
+statement ok
+UPDATE z1 SET extra = 'added' WHERE id = 1
+
+query T
+SELECT extra FROM z1 WHERE id = 1
+----
+added
+
+statement ok
+ALTER TABLE z1 DROP COLUMN extra
+
+# ============================================================
+# INDEX
+# ============================================================
+
+statement ok
+CREATE INDEX idx_name ON z1 (name)
+
+query I rowsort
+SELECT id FROM z1 WHERE name = 'beta'
+----
+2
+
+# ============================================================
+# TRUNCATE / REPLACE
+# ============================================================
+
+statement ok
+CREATE TABLE tmp (id INT PRIMARY KEY, val TEXT)
+
+statement ok
+INSERT INTO tmp VALUES (1, 'a'), (2, 'b')
+
+statement ok
+TRUNCATE TABLE tmp
+
+query I
+SELECT COUNT(*) FROM tmp
+----
+0
+
+statement ok
+INSERT INTO tmp VALUES (1, 'a')
+
+statement ok
+REPLACE INTO tmp VALUES (1, 'replaced')
+
+query T
+SELECT val FROM tmp WHERE id = 1
+----
+replaced
+
+statement ok
+DROP TABLE tmp
+
+# ============================================================
+# TRANSACTIONS
+# ============================================================
+
+statement ok
+CREATE TABLE txn_test (id INT PRIMARY KEY, val TEXT)
+
+statement ok
+BEGIN
+
+statement ok
+INSERT INTO txn_test VALUES (1, 'uncommitted')
+
+statement ok
+ROLLBACK
+
+query I
+SELECT COUNT(*) FROM txn_test
+----
+0
+
+statement ok
+BEGIN
+
+statement ok
+INSERT INTO txn_test VALUES (1, 'committed')
+
+statement ok
+COMMIT
+
+query T
+SELECT val FROM txn_test WHERE id = 1
+----
+committed
+
+statement ok
+SAVEPOINT sp1
+
+statement ok
+INSERT INTO txn_test VALUES (2, 'savepoint')
+
+statement ok
+ROLLBACK TO sp1
+
+query I
+SELECT COUNT(*) FROM txn_test
+----
+1
+
+# RELEASE SAVEPOINT sp1 — skipped, ROLLBACK TO consumes the savepoint
+
+statement ok
+DROP TABLE txn_test
+
+# ============================================================
+# CONSTRAINTS
+# ============================================================
+
+statement ok
+CREATE TABLE constrained (
+  id INT PRIMARY KEY,
+  name TEXT NOT NULL,
+  score INT DEFAULT 0 CHECK (score >= 0)
+)
+
+statement ok
+INSERT INTO constrained VALUES (1, 'alice', 100)
+
+query I
+SELECT score FROM constrained WHERE id = 1
+----
+100
+
+statement ok
+DROP TABLE constrained
+
+# ============================================================
+# CLEANUP
+# ============================================================
+
+statement ok
+DROP TABLE z1
+
+statement ok
+DROP TABLE z2

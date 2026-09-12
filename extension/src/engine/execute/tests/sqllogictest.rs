@@ -63,6 +63,11 @@ impl sqllogictest::DB for A3sqlSlt {
 
             let types = headers.iter().map(|_| DefaultColumnType::Any).collect();
             let rendered: Vec<Vec<String>> = rows.iter().map(|row| row.iter().map(render_value).collect()).collect();
+            if sql.contains("GROUP BY name") && sql.contains("COUNT") {
+                eprintln!("[SLT DEBUG] SQL: {}", sql);
+                eprintln!("[SLT DEBUG] Raw rows: {:?}", rows);
+                eprintln!("[SLT DEBUG] Rendered: {:?}", rendered);
+            }
             Ok(DBOutput::Rows { types, rows: rendered })
         } else {
             // Statement: execute and report completion.

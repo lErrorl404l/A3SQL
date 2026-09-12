@@ -477,6 +477,7 @@ fn aggregate_min(
     rows.iter()
         .filter(|r| passes_filter(func, r, col_map))
         .filter_map(|r| eval_expr(arg, r, col_map).ok())
+        .filter(|v| !matches!(v, DbValue::Null))
         .min_by(db_value_cmp)
         .ok_or_else(|| EngineError::Exec("MIN on empty set".into()))
 }
@@ -490,6 +491,7 @@ fn aggregate_max(
     rows.iter()
         .filter(|r| passes_filter(func, r, col_map))
         .filter_map(|r| eval_expr(arg, r, col_map).ok())
+        .filter(|v| !matches!(v, DbValue::Null))
         .max_by(db_value_cmp)
         .ok_or_else(|| EngineError::Exec("MAX on empty set".into()))
 }

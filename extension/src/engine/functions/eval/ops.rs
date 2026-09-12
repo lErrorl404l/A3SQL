@@ -68,7 +68,7 @@ where
 // ── Wildcard matching (REGEXP operator) ────────────────────────────────
 
 /// Simple wildcard matching: `*` matches any sequence, `?` matches single char.
-fn wildcard_match(val: &[char], pat: &[char], vi: usize, pi: usize) -> bool {
+pub(crate) fn wildcard_match(val: &[char], pat: &[char], vi: usize, pi: usize) -> bool {
     if pi == pat.len() {
         return vi == val.len();
     }

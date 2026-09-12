@@ -150,3 +150,11 @@ fn aggregate_reference_values() {
     let got = cell(&r);
     assert_eq!(got, "3,4", "COUNT(v), COUNT(*) → {}, raw: {}", got, r);
 }
+
+#[test]
+fn regexp_basic() {
+    let mut db = Database::new();
+    let r = exec_sql(&mut db, "SELECT 'hello world' REGEXP 'hello*'");
+    println!("REGEXP result: {}", r);
+    assert!(r.contains("true"), "REGEXP should return true, got: {}", r);
+}

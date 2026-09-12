@@ -14,7 +14,7 @@ use super::super::builtin::{
 };
 use super::cast::cast_db_value;
 use super::corr::rewrite_if_correlated;
-use super::ops::{apply_binary_op, apply_unary_op, is_truthy};
+use super::ops::{apply_binary_op, apply_unary_op, is_truthy, wildcard_match};
 use crate::engine::error::EngineError;
 
 // ── Fuzzy-match / FTS helpers ──────────────────────────────────────────
@@ -143,6 +143,19 @@ pub(crate) fn eval_expr(
             let pat = eval_expr(pattern, row, col_map)?;
             // SIMILAR TO uses LIKE-style matching (%, _ wildcards)
             let matched = simple_like(&value_to_string(&val), &value_to_string(&pat));
+            Ok(DbValue::Bool(if *negated { !matched } else { matched }))
+        }
+        Expr::RLike {
+            negated, expr, pattern, ..
+        } => {
+            let val = eval_expr(expr, row, col_map)?;
+            let pat = eval_expr(pattern, row, col_map)?;
+            let matched = wildcard_match(
+                &value_to_string(&val).chars().collect::<Vec<char>>(),
+                &value_to_string(&pat).chars().collect::<Vec<char>>(),
+                0,
+                0,
+            );
             Ok(DbValue::Bool(if *negated { !matched } else { matched }))
         }
         Expr::InList { expr, list, negated } => {

@@ -238,6 +238,88 @@ pub fn preprocess(sql: &str) -> String {
         search_start = left_start + replacement.len();
     }
 
+    // Rewrite MATCH operator: left MATCH right → match_search(left, right)
+    // sqlparser's GenericDialect doesn't parse MATCH as an infix operator.
+    let mut search_start = 0;
+    while let Some(abs_pos) = find_match_keyword(&result, search_start) {
+        let before = &result[..abs_pos];
+        let before_trimmed = before.trim_end();
+        let left_content_end = before_trimmed.len();
+        let mut left_start = find_left_operand_start(&result[..left_content_end]);
+        let mut left_operand = &result[left_start..left_content_end];
+
+        // find_left_operand_start stops at `'` as a boundary. For MATCH,
+        // the left operand may be a string literal like 'hello world'.
+        // If the operand is empty, check for a closing quote and scan back.
+        if left_operand.trim().is_empty() && left_content_end > 0 {
+            let prev_byte = result.as_bytes()[left_content_end - 1];
+            if prev_byte == b'\'' {
+                // Scan backward from left_content_end - 1 to find opening quote
+                let mut k = left_content_end - 1;
+                while k > 0 {
+                    k -= 1;
+                    if result.as_bytes()[k] == b'\'' {
+                        // Check it's not an escaped quote (preceded by backslash)
+                        if k == 0 || result.as_bytes()[k - 1] != b'\\' {
+                            left_start = k;
+                            left_operand = &result[left_start..left_content_end];
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        if left_operand.trim().is_empty() {
+            search_start = abs_pos + 5; // length of "MATCH"
+            continue;
+        }
+
+        // Right operand after "MATCH"
+        let after = &result[abs_pos + 5..];
+        let after_trimmed = after.trim_start();
+        let right_trim_offset = after.len() - after_trimmed.len();
+        let right_abs_start = abs_pos + 5 + right_trim_offset;
+
+        let right_abs_end = if after_trimmed.starts_with('\'') {
+            let s = after_trimmed.as_bytes();
+            let mut j = 1;
+            while j < s.len() {
+                if s[j] == b'\\' {
+                    j += 2;
+                    continue;
+                }
+                if s[j] == b'\'' {
+                    j += 1;
+                    break;
+                }
+                j += 1;
+            }
+            right_abs_start + j
+        } else {
+            let word_len: usize = after_trimmed
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_' || *c == '.')
+                .map(char::len_utf8)
+                .sum();
+            if word_len == 0 {
+                search_start = abs_pos + 5;
+                continue;
+            }
+            right_abs_start + word_len
+        };
+
+        let right_operand = &result[right_abs_start..right_abs_end];
+        if right_operand.is_empty() {
+            search_start = abs_pos + 5;
+            continue;
+        }
+
+        let replacement = format!("match_search({},{})", left_operand, right_operand);
+        result.replace_range(left_start..right_abs_end, &replacement);
+        search_start = left_start + replacement.len();
+    }
+
     result
 }
 
@@ -254,6 +336,30 @@ fn find_unescaped_pct(s: &str, start: usize) -> Option<usize> {
         }
         if !in_string && bytes[i] == b'%' && i + 1 < n && bytes[i + 1] == b'%' {
             return Some(i);
+        }
+        i += 1;
+    }
+
+    None
+}
+
+/// Find the next `MATCH` keyword that is NOT inside a single-quoted string literal.
+fn find_match_keyword(s: &str, start: usize) -> Option<usize> {
+    let bytes = s.as_bytes();
+    let n = bytes.len();
+    let mut i = start;
+    let mut in_string = false;
+
+    while i < n {
+        if bytes[i] == b'\'' {
+            in_string = !in_string;
+        }
+        if !in_string && i + 5 <= n && &bytes[i..i + 5] == b"MATCH" {
+            let prev_ok = i == 0 || (!bytes[i - 1].is_ascii_alphanumeric() && bytes[i - 1] != b'_');
+            let next_ok = i + 5 >= n || (!bytes[i + 5].is_ascii_alphanumeric() && bytes[i + 5] != b'_');
+            if prev_ok && next_ok {
+                return Some(i);
+            }
         }
         i += 1;
     }
@@ -495,5 +601,18 @@ mod tests {
         // DATE inside function names should not be affected
         let r = preprocess("SELECT DATE_FORMAT(ts, '%Y') AS y FROM t");
         assert!(r.contains("DATE_FORMAT"), "DATE_FORMAT mangled: {}", r);
+    }
+
+    #[test]
+    fn match_rewrite() {
+        let r = preprocess("SELECT 'hello world' MATCH 'HELLO'");
+        assert_eq!(r, "SELECT match_search('hello world','HELLO')");
+    }
+
+    #[test]
+    fn match_not_inside_string() {
+        // MATCH inside a string should not be rewritten
+        let r = preprocess("SELECT 'this has MATCH in it'");
+        assert!(r.contains("'this has MATCH in it'"), "String mangled: {}", r);
     }
 }
