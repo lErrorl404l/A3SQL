@@ -49,6 +49,17 @@ private _test = {
 ["BETWEEN", "SELECT k FROM sqf_test WHERE v BETWEEN 15 AND 25", true] call _test;
 
 // ═══════════════════════════════════════════
+// REGEXP / MATCH operators
+// ═══════════════════════════════════════════
+["REGEXP star", "SELECT 'hello world' REGEXP 'hello*'", true] call _test;
+["REGEXP no-hit", "SELECT 'hello world' REGEXP 'xyz'", true] call _test;
+["REGEXP NOT", "SELECT 'hello world' NOT REGEXP 'xyz'", true] call _test;
+["MATCH case-insensitive", "SELECT 'hello world' MATCH 'HELLO'", true] call _test;
+["MATCH no-hit", "SELECT 'hello world' MATCH 'xyz'", true] call _test;
+["MATCH NOT", "SELECT 'hello world' NOT MATCH 'xyz'", true] call _test;
+["MATCH NOT hit", "SELECT 'hello world' NOT MATCH 'HELLO'", true] call _test;
+
+// ═══════════════════════════════════════════
 // INSERT INTO ... SELECT
 // ═══════════════════════════════════════════
 ["INSERT SELECT", "INSERT INTO sqf_test SELECT 'i' AS k, 100 AS v, 'insert_sel' AS name", true] call _test;

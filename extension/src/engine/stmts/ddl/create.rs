@@ -214,7 +214,10 @@ pub(crate) fn exec_create_table_as(
     let rows: Vec<Vec<serde_json::Value>> =
         serde_json::from_str(&json).map_err(|e| EngineError::Exec(format!("CTAS JSON parse: {}", e)))?;
 
-    if rows.len() < 2 {
+    // An empty JSON array (`[]`) means the SELECT produced no header at all
+    // (e.g. aggregate over an empty partition). A single-element array
+    // (`[[header]]`) is a valid header with zero data rows.
+    if rows.is_empty() {
         return Err(EngineError::Exec("CTAS: SELECT returned no columns".into()));
     }
 

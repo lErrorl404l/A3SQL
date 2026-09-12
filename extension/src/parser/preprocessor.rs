@@ -244,7 +244,7 @@ pub fn preprocess(sql: &str) -> String {
     while let Some(abs_pos) = find_match_keyword(&result, search_start) {
         let before = &result[..abs_pos];
         let before_trimmed = before.trim_end();
-        let left_content_end = before_trimmed.len();
+        let mut left_content_end = before_trimmed.len();
         let mut left_start = find_left_operand_start(&result[..left_content_end]);
         let mut left_operand = &result[left_start..left_content_end];
 
@@ -273,6 +273,37 @@ pub fn preprocess(sql: &str) -> String {
         if left_operand.trim().is_empty() {
             search_start = abs_pos + 5; // length of "MATCH"
             continue;
+        }
+
+        // `col NOT MATCH 'x'` — find_left_operand_start stops at the NOT
+        // keyword, so the operand is just "NOT". Scan one token further
+        // back to get the real left operand and wrap the call in NOT:
+        //   name NOT MATCH 'x'  →  NOT match_search(name,'x')
+        let negate = left_operand.trim().eq_ignore_ascii_case("NOT");
+        if negate {
+            let real_before = &result[..left_start];
+            let real_end = real_before.trim_end().len();
+            let mut real_start = find_left_operand_start(&result[..real_end]);
+            // The real left operand may be a quoted string ('hello world'),
+            // which find_left_operand_start stops at. Scan back for the
+            // opening quote, like the main fallback above.
+            if real_start == real_end && real_end > 0 && result.as_bytes()[real_end - 1] == b'\'' {
+                let mut k = real_end - 1;
+                while k > 0 {
+                    k -= 1;
+                    if result.as_bytes()[k] == b'\'' && (k == 0 || result.as_bytes()[k - 1] != b'\\') {
+                        real_start = k;
+                        break;
+                    }
+                }
+            }
+            if real_start < real_end && !result[real_start..real_end].trim().is_empty() {
+                // Re-point the operand to the real token (before the NOT),
+                // and shrink the replacement span so the NOT is consumed.
+                left_start = real_start;
+                left_content_end = real_end;
+                left_operand = &result[left_start..left_content_end];
+            }
         }
 
         // Right operand after "MATCH"
@@ -315,7 +346,11 @@ pub fn preprocess(sql: &str) -> String {
             continue;
         }
 
-        let replacement = format!("match_search({},{})", left_operand, right_operand);
+        let replacement = if negate {
+            format!("NOT match_search({},{})", left_operand, right_operand)
+        } else {
+            format!("match_search({},{})", left_operand, right_operand)
+        };
         result.replace_range(left_start..right_abs_end, &replacement);
         search_start = left_start + replacement.len();
     }

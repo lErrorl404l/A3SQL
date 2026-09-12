@@ -403,6 +403,26 @@ SELECT 'hello world' MATCH 'xyz'
 ----
 false
 
+query T
+SELECT 'hello world' NOT MATCH 'xyz'
+----
+true
+
+query T
+SELECT 'hello world' NOT MATCH 'HELLO'
+----
+false
+
+query T
+SELECT 'hello world' NOT REGEXP 'xyz'
+----
+true
+
+query T
+SELECT 'hello world' NOT REGEXP 'hello*'
+----
+false
+
 # ============================================================
 # EXPRESSION TYPES — LIKE, BETWEEN, IN, IS NULL, CASE, CAST
 # ============================================================

@@ -50,6 +50,8 @@ Runtime engine generalisation, full CBA integration, built-in apply functions, a
 - `fnc_handleFired.sqf`: removed unused `_log_level` variable, moved Fired from addMissionEventHandler to per-object attachment
 - `MIN` / `MAX` aggregates now ignore NULL values (NULL previously compared as greater than every number via the string fallback, so `MAX` could return NULL)
 - `REGEXP` returned a parse error for every query because sqlparser 0.62 parses it as `Expr::RLike`, not a binary operator; the evaluator now handles `Expr::RLike`
+- `NOT MATCH` produced a parse error (`match_search(NOT, ...)`) because the preprocessor's left-operand scan stopped at the `NOT` keyword; it now rewrites to `NOT match_search(left, right)`, including quoted string operands
+- `CREATE TABLE AS SELECT` failed with "no columns" when the SELECT returned zero rows (header-only result was mistaken for an absent header); a zero-row CTAS now creates the empty table
 - Boolean-typed expressions (comparisons, AND/OR/NOT, REGEXP, MATCH, EXISTS) previously surfaced as integers; SLT expectations corrected to `true`/`false`
 - Docker smoke test: extension is built in a Debian bookworm container so the `.so` links against GLIBC ≤ 2.36 and actually loads in the Arma 3 server container (a host build requiring GLIBC 2.39 silently failed to load, turning every smoke assertion into a false pass)
 - Docker smoke test: corrected armake flags, container entrypoint, CBA mod download/layout, mission pack path, and server-root mount; profiles dir is now tmpfs so the test leaves no root-owned files behind
