@@ -23,13 +23,13 @@ website:
       - href: index.qmd
         text: Home
       - text: "Getting Started"
-        href: chapters/Getting-Started.md
+        href: chapters/Getting-Started.qmd
       - text: "SQL"
-        href: chapters/SQL-Dialect.md
+        href: chapters/SQL-Dialect.qmd
       - text: "Runtime Engine"
         href: chapters/Runtime-Engine.qmd
       - text: "Networking"
-        href: chapters/TCP-Connector.md
+        href: chapters/TCP-Connector.qmd
     right:
       - icon: github
         href: https://github.com/lErrorl404l/A3SQL
@@ -49,49 +49,49 @@ website:
           - section: "Getting Started"
             contents:
               - text: Getting Started
-                href: chapters/Getting-Started.md
+                href: chapters/Getting-Started.qmd
           - section: "SQL Reference"
             contents:
               - text: SQL Dialect
-                href: chapters/SQL-Dialect.md
+                href: chapters/SQL-Dialect.qmd
           - section: "Integration"
             contents:
               - text: Module Guide
-                href: chapters/Module-Guide.md
+                href: chapters/Module-Guide.qmd
               - text: Use Cases
-                href: chapters/Use-Cases.md
+                href: chapters/Use-Cases.qmd
               - text: Plugins
-                href: chapters/Plugins.md
+                href: chapters/Plugins.qmd
               - text: Patch Framework
-                href: chapters/Patch-Framework.md
+                href: chapters/Patch-Framework.qmd
               - text: Runtime Engine
                 href: chapters/Runtime-Engine.qmd
           - section: "Networking"
             contents:
               - text: TCP Connector
-                href: chapters/TCP-Connector.md
+                href: chapters/TCP-Connector.qmd
               - text: Standalone Server
-                href: chapters/Standalone-Server.md
+                href: chapters/Standalone-Server.qmd
           - section: "Operations"
             contents:
               - text: CBA Settings
-                href: chapters/CBA-Settings.md
+                href: chapters/CBA-Settings.qmd
               - text: Security
-                href: chapters/Security.md
+                href: chapters/Security.qmd
           - section: "Development"
             contents:
               - text: Development Setup
-                href: chapters/Development-Setup.md
+                href: chapters/Development-Setup.qmd
               - text: Building
-                href: chapters/Building.md
+                href: chapters/Building.qmd
       - section: "Annexes"
         contents:
           - text: SQL Cheat Sheet
-            href: annexes/SQL-Cheat-Sheet.md
+            href: annexes/SQL-Cheat-Sheet.qmd
           - text: SQL Compatibility Report
-            href: annexes/SQL-Compatibility-Report.md
+            href: annexes/SQL-Compatibility-Report.qmd
           - text: Production Readiness
-            href: annexes/Production-Readiness.md
+            href: annexes/Production-Readiness.qmd
       - text: Support
         href: support.qmd
 

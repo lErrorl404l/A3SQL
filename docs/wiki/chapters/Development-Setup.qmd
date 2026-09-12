@@ -4,7 +4,7 @@ This page walks you through a working A3SQL development environment: build the
 extension, build the addons, and test in-game with file patching so SQF changes
 apply on the next mission restart instead of a full PBO rebuild. If you only
 want to use A3SQL inside your own mod, you do not need any of this. See the
-[Module Guide](Module-Guide.md).
+[Module Guide](Module-Guide.qmd).
 
 ## Prerequisites
 

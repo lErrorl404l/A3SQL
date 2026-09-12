@@ -13,6 +13,10 @@ CREATE TABLE players (
     score INT DEFAULT 0
 );
 
+-- Create table from a query (CTAS)
+CREATE TABLE top_players AS
+SELECT * FROM players ORDER BY score DESC LIMIT 10;
+
 -- Add column
 ALTER TABLE players ADD COLUMN kills INT;
 
@@ -56,6 +60,12 @@ SELECT * FROM players WHERE uid = '76561198000000001';
 -- Filter
 SELECT * FROM players WHERE score > 10 AND name LIKE 'S%';
 
+-- Wildcard pattern (REGEXP): * = any sequence, ? = one char
+SELECT * FROM weapons WHERE name REGEXP 'M4*';
+
+-- Case-insensitive substring (MATCH)
+SELECT * FROM weapons WHERE name MATCH 'm4';
+
 -- Top 10 leaderboard
 SELECT name, score FROM players ORDER BY score DESC LIMIT 10;
 
@@ -65,6 +75,9 @@ SELECT DISTINCT name FROM players;
 -- Count
 SELECT COUNT(*) FROM players;
 SELECT COUNT(DISTINCT uid) FROM players;
+
+-- Count with aggregate FILTER
+SELECT COUNT(*) FILTER (WHERE score > 100) AS veterans FROM players;
 ```
 
 ## Joins
@@ -172,6 +185,27 @@ SELECT strftime('%Y-%m-%d', 'now');
 -- Trigram similarity (typo-tolerant)
 SELECT * FROM players WHERE name %% 'joh';
 -- matches "John", "Johnson", "Johansson"
+
+-- Wildcard pattern (REGEXP): * = any sequence, ? = one char
+SELECT * FROM weapons WHERE name REGEXP 'M4*';
+-- matches M4A1, M4A1_carryhandle, ...
+
+-- Case-insensitive substring (MATCH)
+SELECT * FROM weapons WHERE name MATCH 'm4';
+-- matches M4A1, RHS_M4, ...
+```
+
+## Scalar Functions
+
+```sql
+-- NULL replacement
+SELECT COALESCE(score, 0), IFNULL(score, 0) FROM players;
+
+-- NULLIF: NULL when equal, else the first value
+SELECT NULLIF(score, 0) FROM players;
+
+-- Rounding
+SELECT ROUND(score, 1), ABS(score), CEIL(score), FLOOR(score) FROM players;
 ```
 
 ## Cursors (Large Results)

@@ -23,10 +23,10 @@ hide-description: true
 
 ::: {.grid .gap-3 .pb-3 .pt-4}
 ::: {.g-col-12 .g-col-sm-4}
-[Getting Started](chapters/Getting-Started.md){.btn-action-primary .btn-action .btn .btn-lg .w-100 role="button"}
+[Getting Started](chapters/Getting-Started.qmd){.btn-action-primary .btn-action .btn .btn-lg .w-100 role="button"}
 :::
 ::: {.g-col-12 .g-col-sm-4 .mb-2}
-[SQL Dialect](chapters/SQL-Dialect.md){.btn-action .btn-secondary .btn .btn-lg .w-100 role="button"}
+[SQL Dialect](chapters/SQL-Dialect.qmd){.btn-action .btn-secondary .btn .btn-lg .w-100 role="button"}
 :::
 ::: {.g-col-12 .g-col-sm-4 .mb-2}
 [Runtime Engine](chapters/Runtime-Engine.qmd){.btn-action .btn-secondary .btn .btn-lg .w-100 role="button"}
@@ -45,7 +45,7 @@ hide-description: true
 Full SQLite dialect: JOINs, window functions, triggers, CTEs, transactions. Parameterised queries and prepared statements built in.
 
 ::: {.learn-more}
-[SQL Dialect »](chapters/SQL-Dialect.md)
+[SQL Dialect »](chapters/SQL-Dialect.qmd)
 :::
 :::
 
@@ -63,7 +63,7 @@ DB-driven, event-driven overrides applied live from `runtime_overrides`. Damage,
 Player stats, loadouts, and mission state survive server restarts. Auto-save, transactions, and atomic file writes.
 
 ::: {.learn-more}
-[Getting Started »](chapters/Getting-Started.md)
+[Getting Started »](chapters/Getting-Started.qmd)
 :::
 :::
 
@@ -72,7 +72,7 @@ Player stats, loadouts, and mission state survive server restarts. Auto-save, tr
 Change weapon stats, vehicle properties, and runtime values mid-mission from SQL rules — no mission restart.
 
 ::: {.learn-more}
-[Patch Framework »](chapters/Patch-Framework.md)
+[Patch Framework »](chapters/Patch-Framework.qmd)
 :::
 :::
 
@@ -81,7 +81,7 @@ Change weapon stats, vehicle properties, and runtime values mid-mission from SQL
 Manage the server from outside the game over the TCP listener. Query, administer, and automate with any SQL client.
 
 ::: {.learn-more}
-[TCP Connector »](chapters/TCP-Connector.md)
+[TCP Connector »](chapters/TCP-Connector.qmd)
 :::
 :::
 
@@ -90,7 +90,7 @@ Manage the server from outside the game over the TCP listener. Query, administer
 Fail-closed authentication, constant-time credential comparison, sandboxed file paths, and injection-safe parameterised queries.
 
 ::: {.learn-more}
-[Security »](chapters/Security.md)
+[Security »](chapters/Security.qmd)
 :::
 :::
 
@@ -100,6 +100,6 @@ Fail-closed authentication, constant-time credential comparison, sandboxed file 
 
 ::: {.get-started}
 ::: {.content-block .py-5}
-[Get Started](chapters/Getting-Started.md){.btn-action-primary .btn-action .btn .btn-lg role="button"}
+[Get Started](chapters/Getting-Started.qmd){.btn-action-primary .btn-action .btn .btn-lg role="button"}
 :::
 :::

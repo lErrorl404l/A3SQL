@@ -78,17 +78,17 @@ Joined queries keep prefixed column names:
 
 | Category | Features |
 |---|---|
-| **Schema** | CREATE/DROP TABLE, CREATE/DROP INDEX (BTREE, TRIGRAM), CREATE/DROP VIEW, ALTER TABLE ADD/DROP/RENAME COLUMN, ALTER TABLE RENAME, TRUNCATE, VACUUM, REINDEX |
+| **Schema** | CREATE/DROP TABLE, CREATE TABLE AS SELECT (CTAS), CREATE/DROP INDEX (BTREE, TRIGRAM), CREATE/DROP VIEW, ALTER TABLE ADD/DROP/RENAME COLUMN, ALTER TABLE RENAME, TRUNCATE, VACUUM, REINDEX |
 | **Types** | INT (BIGINT/SMALLINT/TINYINT/INTEGER), FLOAT (DECIMAL/NUMERIC/DOUBLE/REAL), STRING (VARCHAR/CHAR/TEXT), BOOL/BOOLEAN, DATE/TIMESTAMP, STRINGS[], FLOATS[] |
 | **Constraints** | PRIMARY KEY (single + composite), NOT NULL, DEFAULT (incl. expression defaults), CHECK (enforced), FOREIGN KEY ... REFERENCES (enforced, ON DELETE CASCADE), UNIQUE, AUTO_INCREMENT |
 | **DML** | INSERT (multi-row VALUES), INSERT OR REPLACE, UPSERT (`ON CONFLICT ... DO UPDATE`), UPDATE, DELETE, REPLACE INTO, RETURNING |
-| **SELECT** | WHERE (`= <> < <= > >=`), AND/OR/NOT, IN, NOT IN, BETWEEN, LIKE/NOT LIKE, IS NULL/IS NOT NULL, EXISTS, CASE WHEN, CAST, `%%` fuzzy match, subqueries, derived tables, DISTINCT |
+| **SELECT** | WHERE (`= <> < <= > >=`), AND/OR/NOT, IN, NOT IN, BETWEEN, LIKE/NOT LIKE, REGEXP/NOT REGEXP, MATCH, IS NULL/IS NOT NULL, EXISTS, CASE WHEN, CAST, `%%` fuzzy match, subqueries, derived tables, DISTINCT |
 | **JOINs** | CROSS, INNER, LEFT, FULL OUTER, NATURAL, USING, ON (incl. subqueries) |
-| **Aggregates** | COUNT (incl. DISTINCT and NULL-skipping), SUM, AVG, MIN, MAX, GROUP_CONCAT — with GROUP BY, HAVING, ORDER BY, LIMIT/OFFSET |
+| **Aggregates** | COUNT (incl. DISTINCT and NULL-skipping), SUM, AVG, MIN, MAX, GROUP_CONCAT — with GROUP BY, HAVING, aggregate `FILTER (WHERE ...)`, ORDER BY, LIMIT/OFFSET |
 | **Window** | ROW_NUMBER, RANK, DENSE_RANK, LAG, LEAD, FIRST_VALUE, LAST_VALUE, SUM/COUNT/AVG/MIN/MAX OVER (PARTITION BY, ORDER BY, ROWS BETWEEN) |
 | **Set ops** | UNION, UNION ALL, EXCEPT, INTERSECT |
 | **CTE** | WITH, WITH RECURSIVE (termination enforced) |
-| **Functions** | UPPER, LOWER, LENGTH, SUBSTR, TRIM, LTRIM, RTRIM, CONCAT, COALESCE, IFNULL, ROUND, ABS, INSTR, CHAR, TYPEOF, NOW(), CURRENT_TIMESTAMP/CURRENT_DATE/CURRENT_TIME, datetime()/date()/time()/strftime() with modifiers, GROUP_CONCAT |
+| **Functions** | UPPER, LOWER, LENGTH, SUBSTR, TRIM, LTRIM, RTRIM, CONCAT, COALESCE, IFNULL, NULLIF, ROUND, ABS, CEIL, FLOOR, INSTR, CHAR, TYPEOF, match_search, NOW(), CURRENT_TIMESTAMP/CURRENT_DATE/CURRENT_TIME, datetime()/date()/time()/strftime() with modifiers, GROUP_CONCAT |
 | **Arithmetic** | `+ - * / %` (i64 wraps on overflow like SQLite, never panics; NULL propagates) |
 | **Transactions** | BEGIN/COMMIT/ROLLBACK (no-op when idle), SAVEPOINT/RELEASE SAVEPOINT/ROLLBACK TO SAVEPOINT |
 | **Persistence** | save/load, export/import JSON/CSV/SQL, export_to_file, cursor paging |
@@ -133,6 +133,15 @@ DROP TABLE weapons;
 ```
 
 `CREATE TABLE IF NOT EXISTS` and `DROP TABLE IF EXISTS` are supported.
+
+`CREATE TABLE AS SELECT` (CTAS) creates a table from a query's result set.
+Column types and names come from the SELECT; primary keys are not carried
+over:
+
+```sql
+CREATE TABLE heavy_weapons_copy AS SELECT * FROM weapons WHERE barrelLength > 400.0;
+CREATE TABLE caliber_list AS SELECT DISTINCT caliber FROM weapons;
+```
 
 ### Indices
 
@@ -266,6 +275,22 @@ combine with `AND`, `OR`, `NOT`.
 TRIGRAM index on the column accelerates prefix and mid/end containment
 searches.
 
+**REGEXP** — wildcard pattern matching. `*` matches any sequence, `?` matches
+one character. Unlike LIKE, `REGEXP` does not use the trigram index:
+
+```sql
+SELECT * FROM weapons WHERE name REGEXP 'M4*';       -- names starting M4
+SELECT * FROM weapons WHERE name REGEXP '*a1';       -- names ending a1
+SELECT * FROM weapons WHERE name NOT REGEXP 'AK*';
+```
+
+**MATCH** — case-insensitive substring search. Equivalent to a `%needle%`
+LIKE, but reads clearly and ignores case:
+
+```sql
+SELECT * FROM weapons WHERE name MATCH 'm4';         -- matches M4A1, RHS_M4...
+```
+
 ### CASE, CAST, DISTINCT
 
 ```sql
@@ -351,7 +376,18 @@ SELECT caliber, COUNT(*) AS cnt FROM weapons GROUP BY caliber;
 -- HAVING filters on aggregate results
 SELECT caliber, AVG(barrelLength) AS avg_len FROM weapons
 GROUP BY caliber HAVING AVG(barrelLength) > 350.0;
+
+-- FILTER (WHERE ...) restricts which rows feed an aggregate, without a
+-- GROUP BY / HAVING rewrite
+SELECT COUNT(*) FILTER (WHERE barrelLength > 400.0) AS heavy_count FROM weapons;
+SELECT caliber,
+       COUNT(*) FILTER (WHERE barrelLength > 400.0) AS heavy,
+       COUNT(*) FILTER (WHERE barrelLength <= 400.0) AS light
+FROM weapons GROUP BY caliber;
 ```
+
+`MIN` and `MAX` ignore NULL values: a column of `{10, NULL, 5}` returns 5 and
+10 respectively, not NULL.
 
 ## Window functions
 
@@ -409,13 +445,16 @@ SELECT UPPER(name), LOWER(name), LENGTH(name), SUBSTR(name, 1, 3) FROM weapons;
 SELECT TRIM(name), LTRIM(name), RTRIM(name) FROM weapons;
 SELECT CONCAT(id, ' / ', caliber) FROM weapons;
 SELECT COALESCE(barrelLength, 0.0), IFNULL(barrelLength, 0.0) FROM weapons;
-SELECT ROUND(barrelLength, 1), ABS(barrelLength) FROM weapons;
+SELECT ROUND(barrelLength, 1), ABS(barrelLength), CEIL(barrelLength), FLOOR(barrelLength) FROM weapons;
+SELECT NULLIF(barrelLength, 0.0) FROM weapons;
 SELECT INSTR(name, 'M4'), CHAR(65), TYPEOF(barrelLength) FROM weapons;
 ```
 
 - `SUBSTR` — 1-indexed, 2 or 3 args.
 - `INSTR` — 1-based position, 0 when the substring is absent.
 - `TYPEOF` — returns `null`, `integer`, `real`, `text`, or `array`.
+- `CEIL` / `FLOOR` — round up / down to the nearest integer (returned as a float).
+- `NULLIF(a, b)` — returns NULL when `a` equals `b`, otherwise `a`.
 
 ### Date/time
 

@@ -20,7 +20,7 @@ python3 tools/sql_smoke_test.py --bin a3sql_x64.so tools/smoke_test.sql
 | The mod's own schema (patch_rules, patch_presets, server_commands) | Create/CRUD/cursor/prepare/save/load round-trip green |
 | SQL injection surface | `$1` param substitution + escaping; `call compile` removed (RCE-class) |
 | TCP listener | Loopback-only, mandatory LOGIN auth (fail-closed), per-statement panic barrier |
-| Every SQL-Dialect.md documented feature | Passes against the real binary (dialect sweep, CI-gated) |
+| Every SQL-Dialect.qmd documented feature | Passes against the real binary (dialect sweep, CI-gated) |
 | >30 KB responses | Fail loud with a cursor hint on every path (FFI guard + write_response backstop), never silent truncation |
 | Rust test suite + miri + clippy -D warnings + hemtt check | All green in CI |
 

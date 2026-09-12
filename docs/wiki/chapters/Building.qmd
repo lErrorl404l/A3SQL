@@ -2,7 +2,7 @@
 
 This page is for building A3SQL itself from source. If you just want to use
 A3SQL in your own mod, grab a release, add `a3sql_main` + `a3sql_database` to
-your `requiredAddons[]`, and skip straight to the [Module Guide](Module-Guide.md).
+your `requiredAddons[]`, and skip straight to the [Module Guide](Module-Guide.qmd).
 None of this is needed to ship your mod.
 
 For A3SQL development there are two build steps: the **Rust extension**

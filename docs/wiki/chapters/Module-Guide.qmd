@@ -88,7 +88,7 @@ else uses the full `a3sql_database_fnc_*` name:
 
 CBA settings are registered automatically at preInit, and the auto-save /
 auto-load hooks are wired up at postInit. Your mod does not call those steps
-itself. See [CBA Settings](CBA-Settings.md).
+itself. See [CBA Settings](CBA-Settings.qmd).
 
 ### Basic usage
 
