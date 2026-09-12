@@ -1,0 +1,26 @@
+[server]
+binary = "./arma3server_x64"
+config = "server.cfg"
+profile = "a3sqltest"
+world = "Stratis"
+mission = "test.Stratis"
+limit_fps = 1000
+params = "-autoInit -noBattlEye -mod=mods/@a3sql"
+port = 2302
+skip_install = true
+clear_keys = true
+cdlc = []
+
+[mods]
+local = false
+preset = ""
+
+[headless]
+clients = 0
+profile = "$profile-hc-$i"
+
+[steam]
+user = ""
+password = ""
+branch = "public"
+branch_password = ""

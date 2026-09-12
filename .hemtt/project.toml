@@ -12,6 +12,14 @@ include = [
     "LICENSE",
     "logo_*.paa",
 ]
+# Docker test rig and build output are not part of the mod. Excluding them
+# stops hemtt's tree walk hitting root-owned files left by test containers
+# (e.g. tests/docker/configs/profiles) and failing with Permission denied.
+exclude = [
+    "tests/docker",
+    ".hemttout",
+    "target",
+]
 
 [version]
 path = "addons/main/script_version.hpp"

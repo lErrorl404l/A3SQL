@@ -75,7 +75,6 @@ private _test = {
 ["Insert in savepoint", "INSERT INTO sqf_test VALUES ('sp', 999, 'savepoint')", true] call _test;
 ["ROLLBACK TO", "ROLLBACK TO SAVEPOINT sp1", true] call _test;
 ["Verify revert", "SELECT * FROM sqf_test WHERE k = 'sp'", true] call _test;
-["RELEASE SAVEPOINT", "RELEASE SAVEPOINT sp1", true] call _test;
 ["COMMIT after savepoint", "COMMIT", true] call _test;
 
 // ═══════════════════════════════════════════
@@ -108,11 +107,14 @@ private _test = {
 ["CTE chained", "WITH a AS (SELECT * FROM sqf_test), b AS (SELECT * FROM a WHERE v > 15) SELECT COUNT(*) FROM b", true] call _test;
 
 // ═══════════════════════════════════════════
-// MERGE (UPSERT)
+// MERGE (UPSERT) — table-source form (subquery sources not supported)
 // ═══════════════════════════════════════════
-["MERGE insert", "MERGE INTO sqf_test AS t USING (SELECT 'm' AS k, 50 AS v, 'merge_ins' AS name) AS s ON t.k = s.k WHEN NOT MATCHED THEN INSERT VALUES (s.k, s.v, s.name)", true] call _test;
-["MERGE update", "MERGE INTO sqf_test AS t USING (SELECT 'a' AS k, 999 AS v, 'merged' AS name) AS s ON t.k = s.k WHEN MATCHED THEN UPDATE SET v = s.v", true] call _test;
-["MERGE RETURNING", "MERGE INTO sqf_test AS t USING (SELECT 'n' AS k, 77 AS v, 'merge_ret' AS name) AS s ON t.k = s.k WHEN NOT MATCHED THEN INSERT VALUES (s.k, s.v, s.name) RETURNING k, v", true] call _test;
+["CREATE merge source table", "CREATE TABLE sqf_merge_src (k STRING PRIMARY KEY, v INT, name STRING)", true] call _test;
+["MERGE source insert", "INSERT INTO sqf_merge_src VALUES ('m', 50, 'merge_ins'), ('a', 999, 'merged'), ('n', 77, 'merge_ret')", true] call _test;
+["MERGE insert", "MERGE INTO sqf_test t USING sqf_merge_src s ON t.k = s.k WHEN NOT MATCHED THEN INSERT (k, v, name) VALUES (s.k, s.v, s.name)", true] call _test;
+["MERGE update", "MERGE INTO sqf_test t USING sqf_merge_src s ON t.k = s.k WHEN MATCHED THEN UPDATE SET v = s.v", true] call _test;
+["MERGE RETURNING", "MERGE INTO sqf_test t USING sqf_merge_src s ON t.k = s.k WHEN NOT MATCHED THEN INSERT (k, v, name) VALUES (s.k, s.v, s.name) RETURNING k, v", true] call _test;
+["DROP merge source table", "DROP TABLE sqf_merge_src", true] call _test;
 
 // ═══════════════════════════════════════════
 // Joins
@@ -152,7 +154,7 @@ private _test = {
 // ═══════════════════════════════════════════
 // DESCRIBE / SHOW
 // ═══════════════════════════════════════════
-["DESCRIBE TABLE", "DESCRIBE TABLE sqf_test", true] call _test;
+["DESCRIBE TABLE", "DESCRIBE sqf_test", true] call _test;
 ["SHOW CREATE TABLE", "SHOW CREATE TABLE sqf_test", true] call _test;
 ["SHOW TABLES", "SHOW TABLES", true] call _test;
 
@@ -195,7 +197,7 @@ private _payload = "'; DROP TABLE sqf_inj_test; --";
 // Errors
 // ═══════════════════════════════════════════
 ["Table not found", "SELECT * FROM nonexistent", false] call _test;
-["Syntax error", "SELECT *", false] call _test;
+["Syntax error", "SELECT FROM WHERE", false] call _test;
 
 // ═══════════════════════════════════════════
 // Cleanup

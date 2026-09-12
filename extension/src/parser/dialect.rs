@@ -25,6 +25,10 @@ impl Dialect for A3sqlDialect {
         ch.is_alphanumeric() || ch == '_' || ch == '$'
     }
 
+    fn supports_filter_during_aggregation(&self) -> bool {
+        true
+    }
+
     fn parse_statement(&self, _parser: &mut Parser) -> Option<Result<Statement, ParserError>> {
         None
     }

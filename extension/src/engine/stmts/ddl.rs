@@ -10,8 +10,8 @@ mod inspect;
 mod misc;
 
 pub(crate) use create::{
-    exec_create_index, exec_create_sequence, exec_create_table, exec_create_trigger, exec_create_view,
-    exec_create_virtual_table,
+    exec_create_index, exec_create_sequence, exec_create_table, exec_create_table_as, exec_create_trigger,
+    exec_create_view, exec_create_virtual_table,
 };
 pub(crate) use inspect::{describe_table, show_create_table};
 pub(crate) use misc::{

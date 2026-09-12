@@ -195,7 +195,6 @@ pub(crate) fn exec_create_view(cv: &sqlparser::ast::CreateView, db: &mut Databas
 
 // ── CREATE TABLE AS SELECT (CTAS) ──────────────────────────────────────
 
-#[allow(dead_code, reason = "CTAS not yet wired into DDL dispatch")]
 pub(crate) fn exec_create_table_as(
     def: &sqlparser::ast::CreateTable,
     db: &mut Database,

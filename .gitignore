@@ -57,3 +57,4 @@ tests/docker/mods/
 tests/docker/server/
 tests/docker/run.log
 tests/docker/run.*.log
+tests/docker/configs/profiles/

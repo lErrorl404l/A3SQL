@@ -32,6 +32,19 @@ CONTAINER_NAME="a3sql-smoke-test"
 SMOKE_TIMEOUT=120 # seconds to wait for smoke output
 KEEP_CONTAINER=false
 BUILD_ONLY=false
+# Arma 3 dedicated server install (the arma3server_x64 binary lives here).
+# Point ARMA3_SERVER_ROOT at your own server directory; without it the test
+# cannot launch Arma.
+ARMA3_SERVER_ROOT="${ARMA3_SERVER_ROOT:-/ext/a3sql-docker/server}"
+
+# ── Profiles cleanup ───────────────────────────────────────────────
+# The Arma server container runs as root and writes its profile state to
+# tests/docker/configs/profiles, leaving a root-owned dir on the host.
+# HEMTT's git check walks the whole project tree and hard-fails on an
+# unreadable dir, so remove it before building.
+clean_profiles() {
+	docker run --rm -v "$DOCKER_DIR/configs:/c" alpine:latest rm -rf /c/profiles 2>/dev/null || true
+}
 
 # ── Parse args ─────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
@@ -84,24 +97,25 @@ echo ""
 
 # ── Step 1: Build extension in Debian 12 container ─────────────────
 echo "── Step 1: Build extension (GLIBC 2.36) ──────────────────────"
-# Check if we already have a valid build
+clean_profiles
+# Check if we already have a valid build (the .so HEMTT will pack)
+EXT_SO="$EXTENSION_SRC/target/release/liba3sql.so"
 NEED_BUILD=true
-if [[ -f "$MOD_DIR/a3sql_x64.so" ]]; then
-	# Check GLIBC version of existing build
-	GLIBC_MAX=$(ldd "$MOD_DIR/a3sql_x64.so" 2>/dev/null | grep -oP 'GLIBC_\K[0-9.]+' | sort -V | tail -1 || echo "0")
-	if [[ "$(printf '%s\n' "2.36" "$GLIBC_MAX" | sort -V | tail -1)" == "2.36" ]]; then
+if [[ -f "$EXT_SO" ]]; then
+	# Check GLIBC version of existing build (objdump -T is robust)
+	GLIBC_MAX=$(objdump -T "$EXT_SO" 2>/dev/null | grep -oP 'GLIBC_\K[0-9.]+' | sort -V | tail -1 || echo "0")
+	if [[ -n "$GLIBC_MAX" ]] && [[ "$(printf '%s\n' "2.36" "$GLIBC_MAX" | sort -V | tail -1)" == "2.36" ]]; then
 		echo "  Existing build GLIBC max: $GLIBC_MAX (within 2.36 limit)"
 		NEED_BUILD=false
 	else
-		echo "  Existing build requires GLIBC $GLIBC_MAX (> 2.36), rebuilding"
+		echo "  Existing build requires GLIBC ${GLIBC_MAX:-unknown} (> 2.36), rebuilding"
 	fi
 fi
 
 if $NEED_BUILD; then
-	echo "  Building in $BUILD_IMAGE container..."
+	echo "  Building in $BUILD_IMAGE container (clean target dir)..."
 	docker run --rm \
 		-v "$REPO_ROOT":/src \
-		-v "$MOD_DIR":/output \
 		"$BUILD_IMAGE" bash -c '
             set -e
             export DEBIAN_FRONTEND=noninteractive
@@ -112,12 +126,23 @@ if $NEED_BUILD; then
                 sh -s -- -y --default-toolchain stable --profile minimal >/dev/null 2>&1
             export PATH="$HOME/.cargo/bin:$PATH"
             cd /src/extension
+            # Clean CARGO_TARGET_DIR so no host-built artifacts leak in
+            export CARGO_TARGET_DIR=/tmp/ctarget
             cargo build --release 2>&1 | tail -5
-            cp target/release/liba3sql.so /output/a3sql_x64.so
-            echo "  Build complete: $(ls -lh /output/a3sql_x64.so)"
+            cp /tmp/ctarget/release/liba3sql.so /src/extension/target/release/liba3sql.so
+            echo "  Build complete: $(ls -lh /src/extension/target/release/liba3sql.so)"
         '
 	echo "  Extension built successfully"
 fi
+
+# ── Step 1b: Build mod with HEMTT (packs the GLIBC-2.36 .so + PBOs) ─
+echo "── Step 1b: HEMTT build (packs PBOs + extension) ─────────────"
+(cd "$REPO_ROOT" && hemtt build 2>&1 | tail -3)
+# The mod dir may be root-owned from a previous container run; assemble it
+# inside docker so the rm/copy work, then hand ownership back to the host user.
+docker run --rm -v "$DOCKER_DIR:/d" -v "$REPO_ROOT/.hemttout/build:/build:ro" alpine:latest \
+	sh -c 'rm -rf /d/mods/@a3sql && mkdir -p /d/mods/@a3sql && cp -r /build/* /d/mods/@a3sql/ && chmod +x /d/mods/@a3sql/a3sql_x64.so && chown -R 1000:1000 /d/mods/@a3sql'
+echo "  Mod assembled: $(ls "$MOD_DIR" | tr '\n' ' ')"
 
 # ── Step 2: Pack mission PBO ───────────────────────────────────────
 echo ""
@@ -194,28 +219,57 @@ EXT
 # Create init.sqf that runs the comprehensive smoke test
 cat >"$TEST_MIN/init.sqf" <<'SQF'
 /* A3SQL Docker smoke test — runs the comprehensive test suite
- * Waits for CBA initialization, executes all tests, ends mission.
+ * Runs on server, logs pass/fail to RPT, ends mission.
  */
 
-// Wait for CBA to be ready
-[] spawn {
-    waitUntil {!isNull player && {time > 0} && {[] call CBA_fnc_isFeature}};
+if (!isServer) exitWith {};
 
-    // Run the comprehensive smoke test
-    private _handle = execVM "\z\a3sql\addons\main\tests\a3sql_smoke_test.sqf";
+[] spawn {
+    waitUntil {time > 2};
+
+    private _handle = execVM "smoke_test.sqf";
     waitUntil {scriptDone _handle};
 
-    // The test logs pass/fail to RPT. End with END1 (success for autotest).
-    // If any test failed, diag_log already warned.
     diag_log text "[A3SQL-TEST] Smoke test complete, ending mission";
     endMission "END1";
 };
 SQF
 
-# Pack with armake
+# Copy the smoke test suite into the mission (the mod PBOs do not carry it)
+cp "$REPO_ROOT/tests/a3sql_smoke_test.sqf" "$TEST_MIN/smoke_test.sqf"
+
+# Pack with armake (v0.6.x uses -f -p, not -A -P)
 echo "  Packing test.Stratis.pbo..."
-(cd "$TEST_MIN" && armake build -A -P . "$TEST_PBO" 2>&1 | tail -3)
+(cd "$TEST_MIN" && armake build -f -p . "$TEST_PBO" 2>&1 | tail -3)
 echo "  PBO packed: $(ls -lh "$TEST_PBO" 2>/dev/null || echo 'FAILED')"
+
+# ── CBA mod — needed for XEH + CBA_fnc_parseJSON. Download if missing ──
+MODS="$DOCKER_DIR/mods"
+CBA_DIR="$MODS/@cba_a3"
+if [[ ! -d "$CBA_DIR" ]] || [[ ! -d "$CBA_DIR/addons" ]]; then
+	echo "  Downloading CBA_A3 v3.19.0..."
+	mkdir -p "$MODS"
+	curl -fsSL "https://github.com/CBATeam/CBA_A3/releases/download/v3.19.0/CBA_A3_v3.19.0.zip" -o /tmp/cba.zip
+	rm -rf "$CBA_DIR" /tmp/cba-x
+	mkdir -p /tmp/cba-x
+	unzip -oq /tmp/cba.zip -d /tmp/cba-x
+	rm -f /tmp/cba.zip
+	# The release zip contains a single @CBA_A3 folder; normalise the case
+	# for the case-sensitive linux filesystem and flatten any nesting.
+	SRC=$(find /tmp/cba-x -maxdepth 2 -type d -name "@cba_a3" -o -maxdepth 2 -type d -name "@CBA_A3" | head -1)
+	if [[ -n "$SRC" ]]; then
+		mv "$SRC" "$CBA_DIR"
+	else
+		echo "  ERROR: CBA zip did not contain @cba_a3 folder"
+		exit 1
+	fi
+	rm -rf /tmp/cba-x
+	[[ -d "$CBA_DIR/addons" ]] || {
+		echo "  ERROR: CBA @cba_a3 has no addons/"
+		exit 1
+	}
+fi
+echo "  CBA: $CBA_DIR"
 
 if $BUILD_ONLY; then
 	echo ""
@@ -240,15 +294,18 @@ docker run -d \
 	-e ARMA3_SERVER__CONFIG=server.cfg \
 	-e ARMA3_SERVER__PROFILE=a3sqltest \
 	-e ARMA3_SERVER__WORLD=Stratis \
-	-e ARMA3_SERVER__PARAMS="-autoInit -noBattlEye" \
-	-e ARMA3_HEADLESS__CLIENTS=1 \
-	-v "$DOCKER_DIR/config.toml:/arma3/config.toml" \
+	-e 'ARMA3_SERVER__CDLC=[]' \
+	-e ARMA3_SERVER__PARAMS="-autoInit -noBattlEye -mod=mods/@a3sql;mods/@cba_a3" \
+	-e ARMA3_HEADLESS__CLIENTS=0 \
+	-v "$DOCKER_DIR/config.smoke.toml:/arma3/config.toml" \
 	-v "$DOCKER_DIR/configs:/arma3/server/configs" \
 	-v "$DOCKER_DIR/mods:/arma3/server/mods" \
 	-v "$MISSIONS_DIR:/arma3/server/mpmissions" \
-	-v "$DOCKER_DIR/server:/arma3/server" \
-	--entrypoint '["/bin/sh", "-c", "unset ARMA3_SERVER__CDLC; cp /arma3/server/mods/@a3sql/a3sql_x64.so /arma3/server/a3sql_x64.so 2>/dev/null; exec /usr/local/bin/arma3server"]' \
+	-v "$ARMA3_SERVER_ROOT:/arma3/server" \
+	--mount type=tmpfs,target=/arma3/server/configs/profiles \
+	--entrypoint /bin/sh \
 	ghcr.io/brettmayson/arma3server/arma3server:v3 \
+	-c 'unset ARMA3_SERVER__CDLC; cp /arma3/server/mods/@a3sql/a3sql_x64.so /arma3/server/a3sql_x64.so 2>/dev/null; for m in /arma3/server/mods/@*; do [ -e "$m" ] || continue; ln -sfn "$m" "/arma3/server/$(basename "$m")"; done; exec /usr/local/bin/arma3server' \
 	2>/dev/null
 
 echo "  Container started: $CONTAINER_NAME"

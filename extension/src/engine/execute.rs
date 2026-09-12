@@ -41,6 +41,7 @@ pub(crate) fn execute(stmt: &Statement, db: &mut Database) -> Result<String, Eng
     }
     match stmt {
         Statement::CreateView(cv) => stmts::ddl::exec_create_view(cv, db),
+        Statement::CreateTable(def) if def.query.is_some() => stmts::ddl::exec_create_table_as(def, db),
         Statement::CreateTable(def) => stmts::ddl::exec_create_table(def, db),
         Statement::Insert(ins) => stmts::insert::exec_insert(ins, db),
         Statement::Query(q) => exec_cte_query(q, db),
