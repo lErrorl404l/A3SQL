@@ -1,3 +1,21 @@
+[h1]Version 1.1.1[/h1]
+
+[quote]Patch release fixing two engine defects found by the expanded release test suite.[/quote]
+
+[b]Fixed[/b]
+[list]
+[*]NOT MATCH produced a parse error (match_search(NOT, ...)); it now rewrites to NOT match_search(left, right), including quoted string operands
+[*]CREATE TABLE AS SELECT failed with "no columns" when the SELECT returned zero rows; a zero-row CTAS now creates the empty table
+[/list]
+
+[b]Tests[/b]
+[list]
+[*]43 new unit tests for REGEXP, MATCH (incl. NOT), NULLIF, CEIL/FLOOR, CTAS, aggregate FILTER, MIN/MAX NULL semantics
+[*]Docker smoke test expanded to 99 tests, all passing in an Arma 3 server
+[/list]
+
+[hr][/hr]
+
 [h1]Version 1.1.0[/h1]
 
 [quote]Runtime engine generalisation, full CBA integration, built-in apply functions, and SQL-compatibility fixes verified in a live Arma 3 dedicated server.[/quote]
