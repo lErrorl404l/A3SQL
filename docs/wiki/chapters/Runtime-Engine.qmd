@@ -185,7 +185,7 @@ other addons can check the installed A3SQL version with
 `addons/main/script_version.hpp` and is reported at startup, e.g.:
 
 ```
-[CBA] (versioning) INFO: VERSIONING:cba=3.19.0.260808, a3sql=1.1.0.0, ace=3.21.2.113
+[CBA] (versioning) INFO: VERSIONING:cba=3.19.0.260808, a3sql=1.1.1.0, ace=3.21.2.113
 ```
 
 ---

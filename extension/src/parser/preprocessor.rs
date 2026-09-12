@@ -202,7 +202,11 @@ pub fn preprocess(sql: &str) -> String {
             let mut j = 1; // skip opening quote
             while j < s.len() {
                 if s[j] == b'\\' {
-                    j += 2; // skip escaped char and backslash
+                    // Skip escaped char and backslash, but never past the
+                    // end of the input: a trailing backslash (unterminated
+                    // string) must clamp, or the operand slice below runs
+                    // out of bounds and panics.
+                    j = (j + 2).min(s.len());
                     continue;
                 }
                 if s[j] == b'\'' {
@@ -317,7 +321,11 @@ pub fn preprocess(sql: &str) -> String {
             let mut j = 1;
             while j < s.len() {
                 if s[j] == b'\\' {
-                    j += 2;
+                    // Skip escaped char and backslash, but never past the
+                    // end of the input: a trailing backslash (unterminated
+                    // string) must clamp, or the operand slice below runs
+                    // out of bounds and panics.
+                    j = (j + 2).min(s.len());
                     continue;
                 }
                 if s[j] == b'\'' {

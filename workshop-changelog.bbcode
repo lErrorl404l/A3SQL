@@ -6,11 +6,12 @@
 [list]
 [*]NOT MATCH produced a parse error (match_search(NOT, ...)); it now rewrites to NOT match_search(left, right), including quoted string operands
 [*]CREATE TABLE AS SELECT failed with "no columns" when the SELECT returned zero rows; a zero-row CTAS now creates the empty table
+[*]Preprocessor no longer panics on a trailing backslash before a missing closing quote (MATCH 'abc\); the escaped-char skip clamps at the input end in both the MATCH and %% rewriters
 [/list]
 
 [b]Tests[/b]
 [list]
-[*]43 new unit tests for REGEXP, MATCH (incl. NOT), NULLIF, CEIL/FLOOR, CTAS, aggregate FILTER, MIN/MAX NULL semantics
+[*]44 new unit tests for REGEXP, MATCH (incl. NOT), NULLIF, CEIL/FLOOR, CTAS, aggregate FILTER, MIN/MAX NULL semantics
 [*]Docker smoke test expanded to 99 tests, all passing in an Arma 3 server
 [/list]
 

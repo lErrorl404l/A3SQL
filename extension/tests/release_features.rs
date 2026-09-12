@@ -134,6 +134,18 @@ fn match_inside_string_literal_not_rewritten() {
     assert!(r.contains("this MATCH is literal"), "literal preserved: {r}");
 }
 
+#[test]
+fn match_trailing_backslash_no_panic() {
+    let _g = setup();
+    // Regression: a trailing backslash before the closing quote used to
+    // overshoot the operand slice and panic in the rewriter. The backslash
+    // is a literal character, so the query is valid and must return false
+    // ('x' does not contain 'abc\'), never panic.
+    let r = dispatch("SELECT 'x' MATCH 'abc\\'", &[]);
+    assert!(r.contains("\"OK\""), "no panic, valid query: {r}");
+    assert!(r.contains("false"), "no match → false: {r}");
+}
+
 // ── NULLIF ──────────────────────────────────────────────────────────────
 
 #[test]

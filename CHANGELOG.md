@@ -62,9 +62,10 @@ Patch release fixing two engine defects found by the expanded release test suite
 ### Fixed
 - `NOT MATCH` produced a parse error (`match_search(NOT, ...)`) because the preprocessor's left-operand scan stopped at the `NOT` keyword; it now rewrites to `NOT match_search(left, right)`, including quoted string operands
 - `CREATE TABLE AS SELECT` failed with "no columns" when the SELECT returned zero rows (header-only result was mistaken for an absent header); a zero-row CTAS now creates the empty table
+- Preprocessor panicked on a trailing backslash before a missing closing quote (`MATCH 'abc\`); the escaped-char skip now clamps at the input end instead of overshooting the operand slice (found by security review, fixed in both the `MATCH` and `%%` rewriters)
 
 ### Tests
-- `release_features.rs`: 43 unit tests for REGEXP, MATCH (incl. NOT), NULLIF, CEIL/FLOOR, CTAS, aggregate FILTER, MIN/MAX NULL semantics
+- `release_features.rs`: 44 unit tests for REGEXP, MATCH (incl. NOT), NULLIF, CEIL/FLOOR, CTAS, aggregate FILTER, MIN/MAX NULL semantics, trailing-backslash no-panic regression
 - SLT corpus: NOT MATCH / NOT REGEXP expectations
 - Docker smoke test: REGEXP/MATCH operator section (99 tests, 99/99 passing in Arma 3 server)
 

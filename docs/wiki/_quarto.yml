@@ -16,7 +16,7 @@ website:
   announcement:
     icon: info-circle
     dismissable: true
-    content: "A3SQL 1.1.0 — CBA integration, runtime engine, apply functions"
+    content: "A3SQL 1.1.1 — CBA integration, runtime engine, apply functions"
     type: primary
   navbar:
     left:
