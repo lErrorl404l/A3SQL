@@ -2,8 +2,10 @@
 // Local `cargo build --release` emits liba3sql.so (or a3sql.dll on Windows);
 // Arma expects a3sql_x64.so / a3sql_x64.dll (forceRenameLib = "a3sql").
 //
-// With the root workspace Cargo.toml, cargo outputs to target/ (root level).
-// Without it, cargo outputs to extension/target/. This hook searches both.
+// Prefer extension/target/: that is where the GLIBC-2.36-compatible build
+// lands (docker smoke test, Debian bookworm build, CI). The workspace-root
+// target/ is a host build that may require a newer GLIBC than the Arma 3
+// server container provides, so it is only a fallback.
 // In CI the binaries are already renamed correctly before `hemtt build`,
 // so the hook is a no-op there. Skipped sources are reported, not fatal.
 let root_target = HEMTT_VFS.join("target");
@@ -11,9 +13,9 @@ let ext_target = HEMTT_VFS.join("extension").join("target");
 
 let synced = 0;
 
-// Linux x86_64 — try root target first, then extension target
-let linux64 = root_target.join("release").join("liba3sql.so");
-if !linux64.exists() { linux64 = ext_target.join("release").join("liba3sql.so"); }
+// Linux x86_64 — try extension target first, then workspace root
+let linux64 = ext_target.join("release").join("liba3sql.so");
+if !linux64.exists() { linux64 = root_target.join("release").join("liba3sql.so"); }
 if linux64.exists() {
     let dest = HEMTT_VFS.join("a3sql_x64.so");
     if dest.exists() { dest.remove_file(); }
@@ -23,8 +25,8 @@ if linux64.exists() {
 }
 
 // Windows x64 (MSVC only)
-let win64 = root_target.join("x86_64-pc-windows-msvc").join("release").join("a3sql.dll");
-if !win64.exists() { win64 = ext_target.join("x86_64-pc-windows-msvc").join("release").join("a3sql.dll"); }
+let win64 = ext_target.join("x86_64-pc-windows-msvc").join("release").join("a3sql.dll");
+if !win64.exists() { win64 = root_target.join("x86_64-pc-windows-msvc").join("release").join("a3sql.dll"); }
 if win64.exists() {
     let dest = HEMTT_VFS.join("a3sql_x64.dll");
     if dest.exists() { dest.remove_file(); }
