@@ -1,6 +1,9 @@
 # Changelog
 
-Steam Workshop change notes (BBCode) live in `workshop-changelog.bbcode`.
+Steam Workshop files (BBCode) live alongside this changelog:
+- `workshop-description.bbcode` — store page description
+- `workshop-changelog.bbcode` — change notes tab
+
 Keep both files in sync when updating this changelog.
 
 ## [Unreleased]
